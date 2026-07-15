@@ -11,8 +11,8 @@ RUN apt-get update \
         libxt6 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir camoufox \
-    && python -m camoufox fetch
+RUN pip install --no-cache-dir camoufox "playwright==1.55.0"
+RUN python -m camoufox fetch
 
 WORKDIR /app
 COPY server.py ./server.py
