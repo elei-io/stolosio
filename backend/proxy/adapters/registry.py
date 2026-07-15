@@ -1,3 +1,4 @@
+from backend.proxy.adapters.camoufox import CamoufoxAdapter
 from backend.proxy.adapters.cdp import DirectCdpAdapter, DiscoveredCdpAdapter
 from backend.proxy.contracts import ProviderAdapter, ProviderName
 from backend.settings import settings
@@ -12,4 +13,4 @@ def get_provider_adapter(provider: ProviderName) -> ProviderAdapter:
         case ProviderName.LIGHTPANDA:
             return DirectCdpAdapter(provider, str(settings.lightpanda_url))
         case ProviderName.CAMOUFOX:
-            raise NotImplementedError("Camoufox requires CDP protocol mapping")
+            return CamoufoxAdapter(str(settings.camoufox_url))

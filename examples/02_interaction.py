@@ -7,7 +7,7 @@ from playwright.async_api import async_playwright
 
 HARBOR_CDP_URL = os.getenv(
     "HARBOR_CDP_URL",
-    "ws://localhost:8000/v1/connect/chromium",
+    "ws://localhost:8000/v1/connect",
 )
 
 

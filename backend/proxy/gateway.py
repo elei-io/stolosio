@@ -1,76 +1,106 @@
 import asyncio
+import logging
 from contextlib import suppress
 
-from fastapi import WebSocket, WebSocketDisconnect
-from websockets.asyncio.client import ClientConnection, connect
-from websockets.exceptions import ConnectionClosed
+from fastapi import WebSocket
 
-from backend.proxy.contracts import ProviderConnection
+from backend.proxy.adapters import get_provider_adapter
+from backend.proxy.capabilities import CapabilityRegistry
+from backend.proxy.contracts import RequestedSessionSettings, ResolvedSessionSettings
+from backend.proxy.errors import (
+    ConnectionRejected,
+    ProviderAcquisitionTimeout,
+    ProviderConnectionLost,
+    ProviderUnavailable,
+    SessionLeaseLost,
+)
+from backend.proxy.sessions import SessionManager
+from backend.proxy.transport import relay_cdp
+
+logger = logging.getLogger(__name__)
 
 
-async def proxy_cdp(websocket: WebSocket, connection: ProviderConnection) -> None:
-    transport: dict[str, str | int] = {}
-    if connection.transport_host is not None:
-        transport["host"] = connection.transport_host
-    if connection.transport_port is not None:
-        transport["port"] = connection.transport_port
+class Gateway:
+    def __init__(
+        self,
+        sessions: SessionManager,
+        capabilities: CapabilityRegistry,
+        acquisition_timeout_seconds: float,
+    ) -> None:
+        self._sessions = sessions
+        self._capabilities = capabilities
+        self._acquisition_timeout_seconds = acquisition_timeout_seconds
 
-    try:
-        async with connect(
-            connection.websocket_url,
-            max_size=None,
-            proxy=None,
-            **transport,
-        ) as upstream:
+    async def connect(
+        self,
+        websocket: WebSocket,
+        requested: RequestedSessionSettings,
+        resolved: ResolvedSessionSettings,
+    ) -> None:
+        try:
+            lease = await self._sessions.admit(requested, resolved)
+        except ConnectionRejected:
+            raise
+        except Exception as error:
+            raise ProviderUnavailable from error
+        provider_session = None
+        accepted = False
+        failed = False
+        reason = "client_disconnected"
+        try:
+            adapter = get_provider_adapter(resolved.provider.slug)
+            try:
+                async with asyncio.timeout(self._acquisition_timeout_seconds):
+                    provider_session = await adapter.acquire(lease.session, resolved)
+            except TimeoutError as error:
+                raise ProviderAcquisitionTimeout from error
+            except NotImplementedError as error:
+                raise ProviderUnavailable from error
+            except Exception as error:
+                raise ProviderUnavailable from error
+
+            await lease.connected()
             await websocket.accept()
-            await _relay(websocket, upstream)
-    except NotImplementedError:
-        raise
-    except Exception:
-        with suppress(RuntimeError):
-            await websocket.close(code=1011, reason="Upstream browser connection failed")
-        raise
+            accepted = True
 
-
-async def _relay(downstream: WebSocket, upstream: ClientConnection) -> None:
-    downstream_task = asyncio.create_task(_downstream_to_upstream(downstream, upstream))
-    upstream_task = asyncio.create_task(_upstream_to_downstream(upstream, downstream))
-    tasks = {downstream_task, upstream_task}
-
-    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-
-    await asyncio.gather(*pending, return_exceptions=True)
-
-    for task in done:
-        error = task.exception()
-        if error is not None and not isinstance(error, (ConnectionClosed, WebSocketDisconnect)):
-            raise error
-
-
-async def _downstream_to_upstream(
-    downstream: WebSocket,
-    upstream: ClientConnection,
-) -> None:
-    while True:
-        message = await downstream.receive()
-        message_type = message["type"]
-
-        if message_type == "websocket.disconnect":
-            raise WebSocketDisconnect(message.get("code", 1000))
-        if text := message.get("text"):
-            await upstream.send(text)
-        elif data := message.get("bytes"):
-            await upstream.send(data)
-
-
-async def _upstream_to_downstream(
-    upstream: ClientConnection,
-    downstream: WebSocket,
-) -> None:
-    async for message in upstream:
-        if isinstance(message, str):
-            await downstream.send_text(message)
-        else:
-            await downstream.send_bytes(message)
+            relay_task = asyncio.create_task(
+                relay_cdp(
+                    websocket,
+                    provider_session,
+                    resolved.provider.slug,
+                    self._capabilities,
+                )
+            )
+            lost_task = asyncio.create_task(lease.wait_lost())
+            done, pending = await asyncio.wait(
+                {relay_task, lost_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            if lost_task in done:
+                raise SessionLeaseLost
+            await relay_task
+        except ConnectionRejected as error:
+            failed = True
+            reason = error.reason
+            if accepted:
+                with suppress(RuntimeError):
+                    await websocket.close(code=error.close_code, reason=error.reason)
+            raise
+        except Exception as error:
+            failed = True
+            reason = "provider_connection_lost"
+            if accepted:
+                with suppress(RuntimeError):
+                    await websocket.close(code=1011, reason=reason)
+            raise ProviderConnectionLost from error
+        finally:
+            if provider_session is not None:
+                with suppress(Exception):
+                    await provider_session.close()
+            try:
+                await lease.release(failed=failed, reason=reason)
+            except Exception:
+                logger.exception("Failed to release Harbor session %s", lease.session.session_id)

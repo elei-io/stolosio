@@ -38,12 +38,13 @@ blank cell has not yet been established by Harbor tests.
 | Browser fingerprint rotation | No | Default browser identity | Default browser identity unless separately configured | Not its primary purpose | Yes, per browser instance |
 | Built-in queueing | No | No | Yes | No | No |
 | Built-in session lifecycle | No | No | Yes | No | Experimental remote server |
-| Native Harbor passthrough today | Not implemented | Yes | Yes | Yes | No |
+| Native Harbor transport today | Not implemented | Yes | Yes | Yes | Mapped subset |
 
 ## Locally verified common behavior
 
 On 2026-07-16, the same unmodified Playwright clients connected through Harbor and
-passed against Plain Chromium, Browserless Chromium, and Lightpanda for:
+passed against Plain Chromium, Browserless Chromium, Lightpanda, and Harbor's bounded
+Camoufox mapping for:
 
 - Navigation followed by page content retrieval.
 - Navigation followed by a link interaction.
@@ -109,8 +110,9 @@ protocol rather than CDP.
 Its remote server is explicitly experimental and uses undocumented Playwright methods.
 The server hosts one browser instance, so fingerprints do not rotate merely because a
 new client session connects; the browser instance must be rotated. Current 2026 releases
-are also described upstream as highly experimental. Harbor therefore needs both CDP
-mapping and deliberate instance lifecycle management before enabling this provider.
+are also described upstream as highly experimental. Harbor currently maps only the
+commands and events proven by its initial navigation, interaction, and evaluation
+conformance cases. The mapping must grow one explicitly tested behavior at a time.
 
 ## Sources
 

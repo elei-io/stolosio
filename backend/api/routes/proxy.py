@@ -1,65 +1,71 @@
 from fastapi import APIRouter, WebSocket
+from starlette.websockets import WebSocketState
 
-from backend.proxy.adapters import get_provider_adapter
-from backend.proxy.contracts import ProviderName
-from backend.proxy.gateway import proxy_cdp
+from backend.proxy.errors import ConnectionRejected
+from backend.proxy.settings import harbor_settings_resolver
 
-router = APIRouter(prefix="/v1/connect", tags=["proxy"])
-
-
-@router.websocket("/{provider}")
-async def connect(websocket: WebSocket, provider: ProviderName) -> None:
-    adapter = get_provider_adapter(provider)
-    connection = await adapter.connect()
-    await proxy_cdp(websocket, connection)
+router = APIRouter(tags=["proxy"])
 
 
-@router.get("/{provider}/json/version")
-@router.get("/{provider}/json/version/")
-async def browser_version(provider: ProviderName) -> None:
+@router.websocket("/v1/connect")
+@router.websocket("/v1/connect/")
+async def connect(websocket: WebSocket) -> None:
+    try:
+        requested, resolved = await harbor_settings_resolver.resolve(
+            list(websocket.query_params.multi_items())
+        )
+        await websocket.app.state.gateway.connect(websocket, requested, resolved)
+    except ConnectionRejected as error:
+        if websocket.application_state is WebSocketState.CONNECTING:
+            await websocket.accept()
+        if websocket.application_state is WebSocketState.CONNECTED:
+            await websocket.close(code=error.close_code, reason=error.reason)
+
+
+@router.get("/v1/connect/json/version")
+@router.get("/v1/connect/json/version/")
+async def browser_version() -> None:
     raise NotImplementedError
 
 
-@router.get("/{provider}/json")
-@router.get("/{provider}/json/list")
-async def list_targets(provider: ProviderName) -> None:
+@router.get("/v1/connect/json")
+@router.get("/v1/connect/json/list")
+async def list_targets() -> None:
     raise NotImplementedError
 
 
-@router.get("/{provider}/json/protocol")
-@router.get("/{provider}/json/protocol/")
-async def protocol(provider: ProviderName) -> None:
+@router.get("/v1/connect/json/protocol")
+@router.get("/v1/connect/json/protocol/")
+async def protocol() -> None:
     raise NotImplementedError
 
 
-@router.put("/{provider}/json/new")
-async def create_target(provider: ProviderName) -> None:
+@router.put("/v1/connect/json/new")
+async def create_target() -> None:
     raise NotImplementedError
 
 
-@router.get("/{provider}/json/activate/{target_id}")
-async def activate_target(provider: ProviderName, target_id: str) -> None:
+@router.get("/v1/connect/json/activate/{target_id}")
+async def activate_target(target_id: str) -> None:
     raise NotImplementedError
 
 
-@router.get("/{provider}/json/close/{target_id}")
-async def close_target(provider: ProviderName, target_id: str) -> None:
+@router.get("/v1/connect/json/close/{target_id}")
+async def close_target(target_id: str) -> None:
     raise NotImplementedError
 
 
-@router.websocket("/{provider}/devtools/browser/{session_id}")
+@router.websocket("/v1/connect/devtools/browser/{session_id}")
 async def connect_browser_target(
     websocket: WebSocket,
-    provider: ProviderName,
     session_id: str,
 ) -> None:
     raise NotImplementedError
 
 
-@router.websocket("/{provider}/devtools/page/{target_id}")
+@router.websocket("/v1/connect/devtools/page/{target_id}")
 async def connect_page_target(
     websocket: WebSocket,
-    provider: ProviderName,
     target_id: str,
 ) -> None:
     raise NotImplementedError
