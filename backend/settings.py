@@ -19,6 +19,21 @@ class Settings(BaseSettings):
     camoufox_url: AnyUrl = AnyUrl("ws://localhost:1234/harbor")
     chromium_url: AnyUrl = AnyUrl("ws://localhost:9223")
     lightpanda_url: AnyUrl = AnyUrl("ws://localhost:9222")
+    session_lease_seconds: int = 30
+    session_heartbeat_seconds: float = 10
+    session_queue_poll_ms: int = 100
+    session_queue_timeout_seconds: int = 30
+    provider_acquisition_timeout_seconds: int = 10
+    terminal_session_ttl_seconds: int = 3600
+    session_event_stream_maxlen: int = 100_000
+    chromium_max_active_sessions: int = 1
+    chromium_max_queued_sessions: int = 100
+    browserless_max_active_sessions: int = 5
+    browserless_max_queued_sessions: int = 100
+    lightpanda_max_active_sessions: int = 1
+    lightpanda_max_queued_sessions: int = 100
+    camoufox_max_active_sessions: int = 1
+    camoufox_max_queued_sessions: int = 100
 
 
 @lru_cache

@@ -1,6 +1,10 @@
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
 from enum import StrEnum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from backend.proxy.contracts.session import HarborSession
+    from backend.proxy.contracts.settings import ResolvedSessionSettings
 
 
 class ProviderName(StrEnum):
@@ -10,13 +14,18 @@ class ProviderName(StrEnum):
     CAMOUFOX = "camoufox"
 
 
-@dataclass(frozen=True, slots=True)
-class ProviderConnection:
+class ProviderSession(Protocol):
     provider: ProviderName
-    websocket_url: str
-    transport_host: str | None = None
-    transport_port: int | None = None
 
+    async def send(self, message: str) -> None: ...
+    def messages(self) -> AsyncIterator[str]: ...
+    async def close(self) -> None: ...
 
 class ProviderAdapter(Protocol):
-    async def connect(self) -> ProviderConnection: ...
+    provider: ProviderName
+
+    async def acquire(
+        self,
+        session: "HarborSession",
+        settings: "ResolvedSessionSettings",
+    ) -> ProviderSession: ...

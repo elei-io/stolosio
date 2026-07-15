@@ -37,5 +37,17 @@ another platform.
 
 Browserless Chromium, Chromium, and Lightpanda expose CDP-compatible endpoints.
 Camoufox is Firefox-based and exposes Playwright's Firefox/Juggler protocol instead;
-clients connect with `playwright.firefox.connect(...)`. Its remote server support is
-experimental upstream.
+Harbor maps the explicitly tested CDP subset to it.
+
+Downstream clients use the provider-neutral Harbor endpoint:
+
+```text
+ws://localhost:8000/v1/connect
+```
+
+Omitting `harbor.provider.slug` uses Harbor's automatic plan. Development and
+conformance tests can force a provider without changing the endpoint:
+
+```text
+ws://localhost:8000/v1/connect?harbor.provider.slug=camoufox
+```

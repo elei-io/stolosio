@@ -1,8 +1,15 @@
 # Dependable Browser Gateway
 
-Status: implementation-ready design  
-Roadmap package: 1  
+Status: implemented and verified on 2026-07-16
+Roadmap package: 1
 Target: the first dependable Harbor session gateway
+
+Verification at completion:
+
+- Repository suite: 47 passed, 13 opt-in E2E tests skipped.
+- Compose provider conformance suite: 13 passed across Chromium, Browserless,
+  Lightpanda, Camoufox, and the omitted-provider automatic path.
+- Fresh production API image build: passed.
 
 ## Purpose
 
@@ -70,16 +77,16 @@ These connections are equivalent:
 
 ```text
 ws://harbor/v1/connect
-ws://harbor/v1/connect?harbor.provider=auto
+ws://harbor/v1/connect?harbor.provider.slug=auto
 ```
 
 An explicit provider override uses the same route:
 
 ```text
-ws://harbor/v1/connect?harbor.provider=chromium
-ws://harbor/v1/connect?harbor.provider=browserless
-ws://harbor/v1/connect?harbor.provider=lightpanda
-ws://harbor/v1/connect?harbor.provider=camoufox
+ws://harbor/v1/connect?harbor.provider.slug=chromium
+ws://harbor/v1/connect?harbor.provider.slug=browserless
+ws://harbor/v1/connect?harbor.provider.slug=lightpanda
+ws://harbor/v1/connect?harbor.provider.slug=camoufox
 ```
 
 `/v1/connect/{provider}` is removed. Harbor must not teach clients to encode browser
@@ -103,43 +110,57 @@ The only setting implemented in this package is:
 
 | Key | Allowed values | Omitted value |
 | --- | --- | --- |
-| `harbor.provider` | `auto`, `chromium`, `browserless`, `lightpanda`, `camoufox` | `auto` |
+| `harbor.provider.slug` | `auto`, `chromium`, `browserless`, `lightpanda`, `camoufox` | `auto` |
 
-The parser returns two immutable objects:
+The settings registry is the canonical inventory of supported `harbor.*` keys. Each
+setting definition owns a typed Pydantic schema, a query prefix, its defaults, and
+whether it supports automatic resolution. Schema fields become dotted query keys. For
+example, the `slug` field of the provider schema becomes `harbor.provider.slug`.
+
+The resolver returns requested and resolved settings as distinct immutable objects:
 
 ```python
 @dataclass(frozen=True, slots=True)
 class RequestedSessionSettings:
-    provider: ProviderSelection
+    overrides: dict[str, Any]
+    auto_fields: frozenset[str]
 
 
 @dataclass(frozen=True, slots=True)
 class ResolvedSessionSettings:
-    provider: ProviderName
+    provider: ProviderSettingSchema
+    sources: dict[str, SettingSource]
 ```
 
-The requested and resolved values remain distinct for the entire session. This is
-required for future decision logging: `auto` is an input, while `chromium` is a
-decision.
+Resolution precedence is explicit query override, automatic planner result, then schema
+default. The requested and resolved values remain distinct for the entire session, and
+each resolved field records its source. This is required for future decision logging:
+`auto` is an input, while `chromium` is a decision. The planner resolves the complete
+settings set in one call so future settings can be selected coherently rather than by
+independent per-setting algorithms.
 
 ### Automatic provider policy
 
 The initial planner always resolves `auto` to `chromium`:
 
 ```python
-class SessionPlanner(Protocol):
-    async def resolve(
+class HarborPlanner(Protocol):
+    async def plan(
         self,
+        context: SettingsResolutionContext,
         requested: RequestedSessionSettings,
-    ) -> ResolvedSessionSettings: ...
+        defaults: dict[str, Any],
+    ) -> dict[str, Any]: ...
 ```
 
-An explicit provider bypasses automatic selection but still passes through the
-planner. The resolved value is therefore produced in one place for every connection.
+The planner sees the complete request and defaults so its choices can account for
+interactions between settings. The resolver applies explicit overrides after planning,
+so a caller's explicit value always wins. The resolved value is therefore produced in
+one place for every connection.
 
 This package does not fall back if Chromium is full or unavailable. It returns the
 corresponding stable error. Later roadmap packages can replace the planner without
-changing the route or settings parser.
+changing the route or settings registry.
 
 ## Session model
 
@@ -385,20 +406,25 @@ backend/proxy/
 ├── sessions/
 │   ├── capacity.py
 │   └── manager.py
+├── settings/
+│   ├── base.py
+│   ├── provider.py
+│   ├── registry.py
+│   └── resolver.py
 ├── transport/
 │   ├── cdp.py
 │   └── websocket.py
 ├── errors.py
 ├── gateway.py
-├── planner.py
-└── settings_parser.py
+└── planner.py
 ```
 
 Responsibilities are fixed:
 
 - API route: hand the WebSocket to `Gateway`; no provider logic.
-- Settings parser: validate `harbor.*` keys and create requested settings.
-- Planner: turn requested settings into resolved settings.
+- Settings registry: declare and validate every supported `harbor.*` key.
+- Settings resolver: merge explicit values, planner output, and schema defaults.
+- Planner: choose all automatic setting values from one resolution context.
 - Session manager: own lifecycle, Redis admission, leases, and cleanup.
 - Adapter: acquire and close one provider session.
 - Capability registry: authorize downstream CDP methods for the resolved provider.
@@ -690,8 +716,8 @@ The required matrix is:
 | link interaction | required | required | required | required |
 | JavaScript evaluation | required | required | required | required |
 
-Every test connects to `/v1/connect` and changes only `harbor.provider`. A separate run
-omits the setting and proves that `auto` currently selects Chromium.
+Every test connects to `/v1/connect` and changes only `harbor.provider.slug`. A
+separate run omits the setting and proves that `auto` currently selects Chromium.
 
 ### Lifecycle end-to-end tests
 
@@ -712,7 +738,7 @@ Using Docker Compose:
 
 Implementation proceeds in this order; every step lands with its tests:
 
-1. Replace provider path routing with `/v1/connect` and the typed settings parser.
+1. Replace provider path routing with `/v1/connect` and the typed settings registry.
 2. Add requested/resolved setting contracts and the static planner.
 3. Add Redis lifecycle wiring to FastAPI startup and shutdown.
 4. Implement the session model, Redis repository, Lua scripts, and multi-client Redis
@@ -733,7 +759,8 @@ Implementation proceeds in this order; every step lands with its tests:
 This work package is complete when all of the following are true:
 
 - The public browser connection is `/v1/connect` with optional `harbor.*` settings.
-- Omitting `harbor.provider` is identical to specifying `harbor.provider=auto`.
+- Omitting `harbor.provider.slug` is identical to specifying
+  `harbor.provider.slug=auto`.
 - The first automatic plan deterministically resolves to Chromium.
 - All four explicit provider overrides use the same route.
 - Invalid, duplicate, and unknown Harbor settings fail consistently.

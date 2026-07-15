@@ -18,11 +18,11 @@ existing automation. The selected provider can then be changed through the URL o
 Harbor routing policy:
 
 ```text
-wss://harbor.example/v1/connect/chromium
-wss://harbor.example/v1/connect/browserless
-wss://harbor.example/v1/connect/lightpanda
-wss://harbor.example/v1/connect/camoufox
-wss://harbor.example/v1/connect/auto
+wss://harbor.example/v1/connect
+wss://harbor.example/v1/connect?harbor.provider.slug=chromium
+wss://harbor.example/v1/connect?harbor.provider.slug=browserless
+wss://harbor.example/v1/connect?harbor.provider.slug=lightpanda
+wss://harbor.example/v1/connect?harbor.provider.slug=camoufox
 ```
 
 Harbor will target the common 80 percent of browser automation behavior across all
@@ -92,9 +92,9 @@ provider supports behavior that cannot be implemented faithfully.
 
 ### Progressive compatibility
 
-Compatibility expands domain by domain and command by command. Native passthrough gives
-CDP providers broad coverage immediately; translated providers begin with high-value
-operations and grow from observed usage.
+Compatibility expands domain by domain and command by command. Native CDP providers
+use passthrough only for explicitly verified methods; translated providers begin with
+high-value operations and grow from observed usage.
 
 ### External orchestration
 

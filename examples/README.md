@@ -8,7 +8,7 @@ Set `HARBOR_CDP_URL` to the Harbor WebSocket endpoint. It defaults to the planne
 Chromium route:
 
 ```bash
-export HARBOR_CDP_URL=ws://localhost:8000/v1/connect/chromium
+export HARBOR_CDP_URL='ws://localhost:8000/v1/connect?harbor.provider.slug=chromium'
 ```
 
 Run each example from the repository root:
@@ -21,7 +21,7 @@ uv run python examples/03_evaluate.py
 
 The examples intentionally use only the standard Playwright client. They contain no
 Harbor-specific SDK code; switching between Harbor routes requires changing only
-`HARBOR_CDP_URL`.
+`HARBOR_CDP_URL`. Omitting `harbor.provider.slug` selects Harbor's automatic plan.
 
 ## Targets
 

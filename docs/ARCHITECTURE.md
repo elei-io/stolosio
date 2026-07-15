@@ -28,36 +28,35 @@ Chromium  Browserless  Lightpanda    v
 
 ## External connection contract
 
-Harbor supports the HTTP discovery behavior expected by CDP clients as well as direct
-WebSocket connections. A provider route may expose:
+Harbor's implemented connection contract is a direct provider-neutral WebSocket:
 
 ```text
-GET /v1/connect/{provider}/json/version
-GET /v1/connect/{provider}/json/list
-GET /v1/connect/{provider}/json/protocol
-WS  /v1/connect/{provider}/devtools/browser/{session_id}
+WS /v1/connect
+WS /v1/connect?harbor.provider.slug=camoufox
 ```
 
-The discovery responses always contain Harbor URLs. Internal provider addresses must
-not leak to clients because doing so would bypass authorization, metrics, normalization,
-and session cleanup.
+Omitting `harbor.provider.slug` is equivalent to
+`harbor.provider.slug=auto`. Every Harbor-owned connection setting uses the
+`harbor.*` prefix, and an explicit value overrides the automatic plan. Internal
+provider addresses never reach clients because doing so would bypass authorization,
+metrics, normalization, and session cleanup.
 
-`{provider}` initially accepts `chromium`, `browserless`, `lightpanda`, `camoufox`, and
-`auto`. The `auto` route selects a provider from requested capabilities, availability,
-policy, and queue pressure.
+The registered HTTP discovery and target-management routes remain unimplemented. When
+implemented, they use the same provider-neutral paths and `harbor.*` settings rather
+than placing a provider in the URL path.
 
 Authentication may also carry tenant policy and provider constraints, but browser
-selection remains explicit in the path when a caller requests a particular provider.
+selection remains an explicit query override when a caller requests a particular
+provider.
 
 ## Session lifecycle
 
 A connection progresses through these states:
 
 ```text
-requested -> queued -> acquiring -> active -> closing -> closed
-                         |            |
-                         v            v
-                       failed       expired
+requested -> queued -> acquiring -> connected -> closing -> closed
+     |          |           |           |            |
+     +----------+-----------+-----------+------------+-> failed
 ```
 
 The gateway creates a Harbor session before acquiring provider capacity. The session
