@@ -1,9 +1,9 @@
 import asyncio
-import random
 from contextlib import suppress
 from dataclasses import replace
 from uuid import uuid4
 
+from backend.messaging import CapacityNotifier, PollingNotifier
 from backend.proxy.contracts import (
     HarborSession,
     RequestedSessionSettings,
@@ -11,7 +11,7 @@ from backend.proxy.contracts import (
     SessionState,
 )
 from backend.proxy.errors import ProviderQueueFull, SessionLeaseLost, SessionQueueTimeout
-from backend.proxy.redis import AdmissionStatus, RedisSessionRepository
+from backend.proxy.postgres import AdmissionStatus, PostgresSessionRepository
 from backend.proxy.sessions.capacity import provider_capacity
 from backend.settings import Settings
 
@@ -20,11 +20,13 @@ class SessionLease:
     def __init__(
         self,
         session: HarborSession,
-        repository: RedisSessionRepository,
+        repository: PostgresSessionRepository,
+        notifier: CapacityNotifier,
         heartbeat_seconds: float,
     ) -> None:
         self.session = session
         self._repository = repository
+        self._notifier = notifier
         self._heartbeat_seconds = heartbeat_seconds
         self._lost = asyncio.Event()
         self._heartbeat_task = asyncio.create_task(self._heartbeat())
@@ -48,7 +50,10 @@ class SessionLease:
 
         if self.session.state is SessionState.CONNECTED:
             await self._repository.transition(self.session, SessionState.CLOSING)
-        await self._repository.release(self.session, failed=failed, reason=reason)
+        released = await self._repository.release(self.session, failed=failed, reason=reason)
+        if released:
+            with suppress(Exception):
+                await self._notifier.notify(self.session.resolved_provider)
 
     async def _heartbeat(self) -> None:
         try:
@@ -66,14 +71,16 @@ class SessionLease:
 class SessionManager:
     def __init__(
         self,
-        repository: RedisSessionRepository,
+        repository: PostgresSessionRepository,
         settings: Settings,
         *,
         owner_id: str | None = None,
+        notifier: CapacityNotifier | None = None,
     ) -> None:
         self._repository = repository
         self._settings = settings
         self._owner_id = owner_id or str(uuid4())
+        self._notifier = notifier or PollingNotifier()
 
     async def admit(
         self,
@@ -93,6 +100,14 @@ class SessionManager:
             session,
             max_active=capacity.max_active,
             max_queued=capacity.max_queued,
+            requested_settings={
+                **{field: "auto" for field in requested.auto_fields},
+                **requested.overrides,
+            },
+            resolved_settings={"harbor.provider.slug": resolved.provider.slug.value},
+            setting_sources={
+                field: source.value for field, source in resolved.sources.items()
+            },
         )
         if status is AdmissionStatus.FULL:
             raise ProviderQueueFull
@@ -104,8 +119,10 @@ class SessionManager:
                         session,
                         max_active=capacity.max_active,
                     ):
-                        jitter = random.uniform(0, 0.02)  # noqa: S311
-                        await asyncio.sleep(self._settings.session_queue_poll_ms / 1000 + jitter)
+                        await self._notifier.wait(
+                            resolved.provider.slug,
+                            self._settings.session_queue_poll_ms / 1000,
+                        )
             except TimeoutError as error:
                 await self._repository.release(
                     session,
@@ -125,5 +142,6 @@ class SessionManager:
         return SessionLease(
             session,
             self._repository,
+            self._notifier,
             self._settings.session_heartbeat_seconds,
         )

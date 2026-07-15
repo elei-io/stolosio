@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from backend.messaging import PollingNotifier
 from backend.proxy.capabilities import CapabilityRegistry
 from backend.proxy.contracts import (
     HarborSession,
@@ -22,10 +23,10 @@ async def connection_settings():
 
 
 @pytest.mark.asyncio
-async def test_redis_admission_failure_fails_closed() -> None:
+async def test_postgres_admission_failure_fails_closed() -> None:
     class FailingSessions:
         async def admit(self, requested, resolved):
-            raise ConnectionError("redis unavailable")
+            raise ConnectionError("postgres unavailable")
 
     requested, resolved = await connection_settings()
     gateway = Gateway(
@@ -74,10 +75,10 @@ async def test_provider_acquisition_failure_releases_capacity(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_redis_heartbeat_failure_marks_lease_lost() -> None:
+async def test_postgres_heartbeat_failure_marks_lease_lost() -> None:
     class FailingRepository:
         async def heartbeat(self, session) -> bool:
-            raise ConnectionError("redis unavailable")
+            raise ConnectionError("postgres unavailable")
 
         async def transition(self, session, state) -> bool:
             return True
@@ -96,6 +97,7 @@ async def test_redis_heartbeat_failure_marks_lease_lost() -> None:
     lease = SessionLease(
         session,
         FailingRepository(),  # type: ignore[arg-type]
+        PollingNotifier(),
         heartbeat_seconds=0.01,
     )
 

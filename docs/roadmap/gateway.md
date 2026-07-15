@@ -6,7 +6,7 @@ Target: the first dependable Harbor session gateway
 
 Verification at completion:
 
-- Repository suite: 47 passed, 13 opt-in E2E tests skipped.
+- Repository suite: 49 passed, 13 opt-in E2E tests skipped.
 - Compose provider conformance suite: 13 passed across Chromium, Browserless,
   Lightpanda, Camoufox, and the omitted-provider automatic path.
 - Fresh production API image build: passed.
@@ -34,7 +34,7 @@ making it intelligent is not part of this package.
 - Accept Harbor settings through collision-resistant `harbor.*` query parameters.
 - Treat an omitted setting as `auto` whenever automatic selection is meaningful.
 - Allow an explicit provider override without changing the endpoint path.
-- Own session admission, queuing, capacity, leases, and terminal cleanup in Redis so
+- Own session admission, queuing, capacity, leases, and terminal cleanup in PostgreSQL so
   multiple Harbor replicas behave as one gateway.
 - Pass CDP through to Chromium, Browserless, and Lightpanda only for commands Harbor
   has explicitly verified for that provider.
@@ -51,7 +51,7 @@ making it intelligent is not part of this package.
 - HTTP/no-browser execution.
 - Proxy selection or proxy credentials.
 - Persistent user or tenant configuration.
-- Postgres analytics models or Redis-to-Postgres consumers.
+- Analytical Postgres projections or JetStream-to-Postgres consumers.
 - Prometheus or Kubernetes metrics.
 - The downstream DEBUG stream.
 - The web UI.
@@ -165,7 +165,7 @@ changing the route or settings registry.
 ## Session model
 
 A Harbor session is the lifetime of one downstream WebSocket connection, beginning
-before admission and ending after all provider resources and Redis capacity have been
+before admission and ending after all provider resources and PostgreSQL capacity have been
 released.
 
 ### States
@@ -187,7 +187,7 @@ Allowed transitions are:
 | `closing` | `closed`, `failed` |
 
 `closed` and `failed` are terminal. A transition not listed above is a programming
-error and must not be written to Redis.
+error and must not be written to PostgreSQL.
 
 ### Identity and ownership
 
@@ -200,7 +200,7 @@ active session. Release is idempotent.
 
 ### Session data
 
-The Redis session hash contains:
+The PostgreSQL `gateway_sessions` row contains:
 
 | Field | Meaning |
 | --- | --- |
@@ -210,26 +210,27 @@ The Redis session hash contains:
 | `state` | Current session state |
 | `requested_provider` | Query value, including `auto` |
 | `resolved_provider` | Concrete provider selected by the planner |
-| `created_at_ms` | Request creation time |
-| `queued_at_ms` | Queue entry time, if queued |
-| `acquiring_at_ms` | Capacity acquisition time |
-| `connected_at_ms` | Upstream connection completion time |
-| `closed_at_ms` | Terminal time |
+| `created_at` | Request creation time |
+| `queued_at` | Queue entry time, if queued |
+| `acquiring_at` | Capacity acquisition time |
+| `connected_at` | Upstream connection completion time |
+| `closed_at` | Terminal time |
+| `lease_expires_at` | Current lease deadline for queued or active work |
+| `queue_sequence` | Database sequence used for FIFO ordering |
 | `terminal_reason` | Stable Harbor reason code, if terminal |
 
-Times use Unix epoch milliseconds from Harbor. Redis server time is used inside atomic
-scripts for queue and lease comparisons so replicas do not make admission decisions
-using different local clocks.
+Times are timezone-aware PostgreSQL timestamps. Database server time is read inside
+each admission transaction so replicas do not make queue or lease decisions using
+different local clocks.
 
 ## State ownership
 
 The rule for state is:
 
 ```text
-Truly process-local state          -> memory
-Shared ephemeral operational state -> Redis
-Durable analytical history         -> Postgres
-Persistent user-facing config       -> Postgres
+Truly process-local state              -> memory
+Transactional coordination and history -> PostgreSQL
+Live notifications and future replay   -> NATS / JetStream
 ```
 
 ### In-memory state
@@ -238,37 +239,41 @@ Only the API process handling a connection stores:
 
 - Downstream and upstream WebSocket objects.
 - Relay tasks and cancellation primitives.
-- The local handle associated with the Redis lease.
+- The local handle associated with the PostgreSQL lease.
 - Immutable adapter and capability-registry objects.
-- Parsed request data before the Redis session is created.
+- Parsed request data before the PostgreSQL session row is created.
 
-There is no in-memory fallback for admission or capacity. If Redis is unavailable,
+There is no in-memory fallback for admission or capacity. If PostgreSQL is unavailable,
 Harbor fails closed because admitting sessions independently on multiple replicas
 would violate capacity guarantees.
 
-This package requires one logical Redis primary, optionally protected by replication
-and Sentinel or supplied as a managed HA service. Redis Cluster sharding is not
-supported because each admission script atomically updates session, provider, and
-event-stream keys. Harbor API replicas are horizontally scalable; Redis is a shared
-coordination dependency rather than state embedded in an API pod.
+NATS capacity notifications are an optimization only. A missed notification or NATS
+outage cannot admit too many sessions, reorder the queue, or leak capacity. Queued
+connections fall back to periodic PostgreSQL claims until NATS returns.
 
-### Redis keys
+### PostgreSQL tables
 
-All keys are versioned so the layout can change without ambiguous mixed deployments:
+Package 1 owns three tables and one database sequence:
 
 ```text
-harbor:v1:sessions:{session_id}              HASH
-harbor:v1:providers:{provider}:active        ZSET
-harbor:v1:providers:{provider}:queue         ZSET
-harbor:v1:providers:{provider}:queue_sequence STRING
-harbor:v1:session_events                     STREAM
+gateway_provider_state
+gateway_sessions
+session_events
+harbor_gateway_queue_sequence
 ```
 
-The active sorted-set member is `session_id`; its score is the lease expiry in Unix
-milliseconds. The queue member is `session_id`; its score is a monotonically
-increasing sequence produced with `INCR`. Sequence scores provide FIFO ordering without
-depending on replica clocks. UUID lexical order breaks ties, although ties should not
-occur.
+`gateway_provider_state` contains one row per provider. The row exists to provide a
+stable `SELECT FOR UPDATE` lock that serializes capacity decisions for that provider;
+providers do not block each other.
+
+`gateway_sessions` contains ownership, state, requested and resolved settings,
+timestamps, queue sequence, and lease deadline. A global PostgreSQL sequence provides
+FIFO order. `session_events` records lifecycle transitions in the same
+transaction that changes the session row.
+
+Schema changes are managed by Alembic. Application startup never creates tables. Local
+Compose runs `alembic upgrade head` before starting the API; production deployments
+must run migrations as a separate deployment step.
 
 ### Default operational settings
 
@@ -278,11 +283,10 @@ All values are environment-backed global settings in `backend/settings.py`:
 | --- | ---: |
 | `session_lease_seconds` / `SESSION_LEASE_SECONDS` | 30 seconds |
 | `session_heartbeat_seconds` / `SESSION_HEARTBEAT_SECONDS` | 10 seconds |
-| `session_queue_poll_ms` / `SESSION_QUEUE_POLL_MS` | 100 milliseconds |
+| `session_queue_poll_ms` / `SESSION_QUEUE_POLL_MS` | 1,000 milliseconds |
 | `session_queue_timeout_seconds` / `SESSION_QUEUE_TIMEOUT_SECONDS` | 30 seconds |
 | `provider_acquisition_timeout_seconds` / `PROVIDER_ACQUISITION_TIMEOUT_SECONDS` | 10 seconds |
-| `terminal_session_ttl_seconds` / `TERMINAL_SESSION_TTL_SECONDS` | 3,600 seconds |
-| `session_event_stream_maxlen` / `SESSION_EVENT_STREAM_MAXLEN` | 100,000 |
+| `nats_connect_timeout_seconds` / `NATS_CONNECT_TIMEOUT_SECONDS` | 1 second |
 
 Provider capacity defaults are conservative for the current local containers:
 
@@ -296,74 +300,77 @@ Provider capacity defaults are conservative for the current local containers:
 Production deployments must configure capacity to match the independently managed
 provider fleet. All Harbor replicas in one deployment must use the same values.
 
-### Atomic Redis operations
+### Transactional PostgreSQL operations
 
-Admission, claiming, heartbeat, and release are implemented as checked-in Lua scripts
-invoked through the async Redis client.
+Admission, claiming, heartbeat, transition, and release use SQLAlchemy async sessions.
+Each operation is one database transaction and reads PostgreSQL server time. Provider
+admission and release lock the corresponding provider row before counting or changing
+capacity.
 
 #### Admit
 
-In one script:
+In one transaction:
 
-1. Remove expired members from the provider active set.
-2. Remove queued members whose session hash no longer exists.
-3. Create the session hash and its lease token.
-4. If the queue is empty and active capacity is available, add the session to active
-   and transition it to `acquiring`.
-5. Otherwise, if queue capacity is available, allocate a queue sequence, append the
-   session, and transition it to `queued`.
-6. Otherwise, transition it to `failed` with `provider_queue_full`.
-7. Append the transition to the session event stream.
+1. Lock the provider-state row.
+2. Mark expired active and queued leases as `failed` with
+   `session_lease_expired` and append their lifecycle events.
+3. Insert the requested session and `session.requested` event.
+4. Count unexpired active and queued sessions.
+5. If no queue exists and capacity is available, transition to `acquiring`.
+6. Otherwise, if queue capacity is available, transition to `queued`.
+7. Otherwise, transition to `failed` with `provider_queue_full`.
+8. Insert every resulting lifecycle event and commit atomically.
 
 New requests never bypass an existing queue.
 
-A queued session hash expires after the queue timeout plus one lease duration. The
-waiting process does not heartbeat it. Each queue poll verifies the hash still exists;
-disconnect and timeout cleanup remove it immediately, while expiry recovers a waiter
-whose Harbor process died.
+A queued row receives a deadline equal to the queue timeout plus one lease duration.
+The waiting process does not heartbeat it. Cancellation and timeout mark it failed
+immediately; lease expiry recovers a waiter whose Harbor process died.
 
 #### Claim queue head
 
-A queued request polls with 100 ms delay plus up to 20 ms random jitter. In one script:
+A queued request wakes on a Core NATS capacity notification or after the one-second
+fallback interval. In one transaction it:
 
-1. Prune expired active members and stale queued members.
-2. Confirm the supplied session is the queue head.
-3. Confirm active capacity is available.
-4. Remove it from the queue, add it to active with a 30-second lease, and transition it
-   to `acquiring`.
+1. Locks the provider-state row.
+2. Expires stale active and queued leases.
+3. Confirms the supplied owner and fencing token.
+4. Confirms the session is the FIFO queue head.
+5. Confirms active capacity is available.
+6. Transitions it to `acquiring`, creates its active lease, and appends the event.
 
-Polling avoids relying on Redis Pub/Sub, whose notifications can be lost during a pod
-restart. The queue timeout bounds polling.
+Correctness never relies on Core NATS delivery. Notifications reduce latency; polling
+bounds recovery when a notification is missed or NATS is unavailable.
 
 #### Heartbeat
 
-In one script:
+In one transaction:
 
-1. Confirm the session hash exists.
+1. Lock the session row.
 2. Confirm `owner_id` and `lease_token` match.
 3. Confirm the session is in an active state.
-4. Extend the active-set score and session-hash expiry.
+4. Extend `lease_expires_at` using database server time.
 
 Failure means lease ownership has been lost. The local process closes both sockets and
 must not attempt a second release under a stale token.
 
 #### Release
 
-In one script:
+In one transaction:
 
 1. Confirm `owner_id` and `lease_token` match unless the session has already reached a
    terminal state.
-2. Remove the session from both the active and queue sets.
-3. Write `closed` or `failed`, its stable reason, and `closed_at_ms`.
-4. Set terminal retention to one hour.
-5. Append the terminal transition to the event stream.
+2. Lock the provider row and session row.
+3. Write `closed` or `failed`, its stable reason, and terminal timestamp.
+4. Clear the lease deadline.
+5. Append the terminal lifecycle event and commit.
+6. Publish a best-effort NATS capacity notification after commit.
 
 Running release more than once returns success without changing capacity twice.
 
-### Future Postgres ingestion boundary
+### Package 2 event boundary
 
-Every accepted Redis transition is appended to `harbor:v1:session_events` in the same
-Lua script that changes the session state. Stream entries contain:
+Every accepted lifecycle transition is already durable in PostgreSQL. Rows contain:
 
 - event type
 - session ID
@@ -371,9 +378,9 @@ Lua script that changes the session state. Stream entries contain:
 - timestamp
 - stable reason, when present
 
-The stream contains no URL, headers, cookies, CDP payloads, or credentials. A later
-analytics package may consume completed session events into Postgres in batches. No
-Postgres writer is implemented here.
+The table contains no URL, headers, cookies, CDP payloads, or credentials. Package 2
+will publish the normalized event contract to JetStream for live fan-out and replay
+without moving session coordination out of PostgreSQL.
 
 ## Internal architecture
 
@@ -395,14 +402,8 @@ backend/proxy/
 │   ├── provider.py
 │   ├── session.py
 │   └── settings.py
-├── redis/
-│   ├── repository.py
-│   └── scripts/
-│       ├── admit.lua
-│       ├── claim.lua
-│       ├── heartbeat.lua
-│       ├── release.lua
-│       └── transition.lua
+├── postgres/
+│   └── repository.py
 ├── sessions/
 │   ├── capacity.py
 │   └── manager.py
@@ -425,11 +426,12 @@ Responsibilities are fixed:
 - Settings registry: declare and validate every supported `harbor.*` key.
 - Settings resolver: merge explicit values, planner output, and schema defaults.
 - Planner: choose all automatic setting values from one resolution context.
-- Session manager: own lifecycle, Redis admission, leases, and cleanup.
+- Session manager: own lifecycle, PostgreSQL admission, leases, and cleanup.
 - Adapter: acquire and close one provider session.
 - Capability registry: authorize downstream CDP methods for the resolved provider.
 - CDP transport: decode commands, enforce capabilities, and relay messages.
-- Redis repository: expose typed operations backed by atomic scripts.
+- PostgreSQL repository: expose typed operations backed by row-locked transactions.
+- Capacity notifier: wake queued replicas through NATS without owning correctness.
 
 ### Provider session contract
 
@@ -464,7 +466,7 @@ For every downstream connection, Harbor performs this sequence:
 1. Parse and validate all `harbor.*` query parameters.
 2. Resolve requested settings through the planner.
 3. Create a session ID, owner ID reference, and lease token.
-4. Admit or enqueue the session atomically in Redis.
+4. Admit or enqueue the session atomically in PostgreSQL.
 5. Wait for FIFO capacity until admitted or timed out.
 6. Acquire the resolved provider within the acquisition timeout.
 7. Start the lease heartbeat.
@@ -473,7 +475,7 @@ For every downstream connection, Harbor performs this sequence:
 9. Run the capability-aware bidirectional transport.
 10. When either side ends, cancel the opposite relay task.
 11. Close the provider session.
-12. Release Redis capacity exactly once.
+12. Release PostgreSQL capacity exactly once and notify waiters through NATS.
 13. Close the downstream WebSocket if it remains open.
 
 A successful downstream socket is accepted only after provider acquisition. A
@@ -591,7 +593,7 @@ behavior, not an automatic passthrough condition.
 - Keep provider query details and credentials inside the adapter.
 - Limit Harbor to five concurrent sessions by default, matching local Compose.
 - Treat Browserless queue and timeout failures as provider acquisition failures;
-  Harbor's Redis queue is the public queue.
+  Harbor's PostgreSQL queue is the public queue.
 - Closing the provider session must end the corresponding Browserless session.
 
 ### Lightpanda
@@ -629,7 +631,7 @@ Camoufox generally CDP compatible.
 ## Errors
 
 All errors are Harbor domain errors before they are rendered for a transport. Error
-messages never include credentials, upstream URLs, container hostnames, Redis keys, or
+messages never include credentials, upstream URLs, container hostnames, database details, or
 tracebacks.
 
 ### Before CDP transport starts
@@ -646,8 +648,8 @@ when a connection cannot start:
 | `4504` | `provider_acquisition_timeout` |
 | `1011` | `harbor_internal_error` |
 
-Redis unavailability maps to `provider_unavailable` in this package because Harbor
-cannot safely admit a distributed session without Redis. Detailed causes are logged
+PostgreSQL unavailability maps to `provider_unavailable` in this package because Harbor
+cannot safely admit a distributed session without its transactional coordinator. Detailed causes are logged
 internally.
 
 ### After CDP transport starts
@@ -657,7 +659,7 @@ internally.
 - Malformed CDP message: close with `4400`, reason `invalid_cdp_message`.
 - Unexpected upstream disconnect: close with `1011`, reason
   `provider_connection_lost`.
-- Lost Redis lease: close with `1011`, reason `session_lease_lost`.
+- Lost PostgreSQL lease: close with `1011`, reason `session_lease_lost`.
 - Normal downstream close: close upstream, release capacity, and record `closed`.
 
 ## Testing strategy
@@ -675,9 +677,9 @@ internally.
 - Stable error mapping and sanitization.
 - Camoufox virtual ID isolation and individual command mappings.
 
-### Redis integration tests
+### PostgreSQL integration tests
 
-Run against the Compose Redis service and use two independent repository/client
+Run against the Compose PostgreSQL service and use two independent sessions
 instances to represent separate Harbor replicas:
 
 - Immediate admission below capacity.
@@ -691,9 +693,9 @@ instances to represent separate Harbor replicas:
 - Duplicate release changes capacity only once.
 - A stale lease token cannot heartbeat, transition, or release a replacement lease.
 - A killed owner's capacity becomes available no later than the lease duration.
-- Redis loss during an active session closes the session rather than continuing
+- PostgreSQL loss during an active session closes the session rather than continuing
   without ownership.
-- State transition and stream event are written atomically.
+- State transition and lifecycle event row are written atomically.
 
 ### Provider conformance tests
 
@@ -723,7 +725,7 @@ separate run omits the setting and proves that `auto` currently selects Chromium
 
 Using Docker Compose:
 
-- Ten sequential sessions leave no active or queued Redis members.
+- Ten sequential sessions leave no active or queued PostgreSQL rows.
 - Two clients competing for a capacity-one provider are served FIFO.
 - Client cancellation while queued removes the queue entry.
 - Client cancellation during navigation closes the provider session and releases
@@ -740,9 +742,9 @@ Implementation proceeds in this order; every step lands with its tests:
 
 1. Replace provider path routing with `/v1/connect` and the typed settings registry.
 2. Add requested/resolved setting contracts and the static planner.
-3. Add Redis lifecycle wiring to FastAPI startup and shutdown.
-4. Implement the session model, Redis repository, Lua scripts, and multi-client Redis
-   integration tests.
+3. Add PostgreSQL lifecycle wiring and Alembic migrations.
+4. Implement the session model, row-locked repository transactions, NATS capacity
+   notifications, and multi-session PostgreSQL integration tests.
 5. Replace `connect()` URL results with acquired provider-session contracts.
 6. Separate gateway orchestration from WebSocket/CDP transport.
 7. Implement default-deny capability manifests and CDP error rendering.
@@ -764,10 +766,11 @@ This work package is complete when all of the following are true:
 - The first automatic plan deterministically resolves to Chromium.
 - All four explicit provider overrides use the same route.
 - Invalid, duplicate, and unknown Harbor settings fail consistently.
-- All shared session, queue, capacity, and lease state is held in Redis.
+- All shared session, queue, capacity, and lease state is held in PostgreSQL.
 - Multiple Harbor replicas cannot exceed configured provider capacity.
 - Pod death cannot leak capacity beyond the 30-second lease duration.
-- Redis failure never causes an unsafe in-memory admission fallback.
+- PostgreSQL failure never causes an unsafe in-memory admission fallback.
+- NATS failure degrades queue wakeups to bounded polling without changing correctness.
 - Every provider begins with no enabled CDP methods.
 - Every enabled method has a provider-specific conformance test and explicit manifest
   entry.
@@ -776,5 +779,5 @@ This work package is complete when all of the following are true:
 - Camoufox exposes only its tested mapping slice and makes no general CDP claim.
 - Disconnects, cancellations, acquisition failures, timeouts, lease loss, and shutdown
   all release capacity exactly once.
-- Tests cover two independent Harbor replicas contending through Redis.
+- Tests cover two independent Harbor replicas contending through PostgreSQL.
 - Documentation and the provider matrix match the behavior proven by tests.

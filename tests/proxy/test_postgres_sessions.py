@@ -1,10 +1,13 @@
 import asyncio
 from collections.abc import AsyncIterator
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from redis.asyncio import Redis
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from backend.db.session import Base
 from backend.proxy.contracts import (
     HarborSession,
     ProviderName,
@@ -12,31 +15,42 @@ from backend.proxy.contracts import (
     SessionState,
 )
 from backend.proxy.errors import ProviderQueueFull, SessionQueueTimeout
-from backend.proxy.redis import RedisSessionRepository
-from backend.proxy.redis.repository import RepositorySettings
+from backend.proxy.postgres import PostgresSessionRepository
+from backend.proxy.postgres.repository import RepositorySettings
 from backend.proxy.sessions import SessionManager
 from backend.proxy.settings import harbor_settings_resolver
 from backend.settings import Settings
 
 
 @pytest_asyncio.fixture
-async def redis_client() -> AsyncIterator[Redis]:
-    client = Redis.from_url("redis://localhost:6379/15", decode_responses=True)
+async def database_sessions() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    settings = Settings()
+    admin_engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    schema = f"harbor_test_{uuid4().hex}"
     try:
-        await client.ping()
+        async with admin_engine.begin() as connection:
+            await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     except Exception:
-        await client.aclose()
-        pytest.skip("Redis integration service is not available")
-    await client.flushdb()
-    yield client
-    await client.flushdb()
-    await client.aclose()
+        await admin_engine.dispose()
+        pytest.skip("Postgres integration service is not available")
+
+    engine = create_async_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        connect_args={"server_settings": {"search_path": schema}},
+    )
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+    async with admin_engine.begin() as connection:
+        await connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+    await admin_engine.dispose()
 
 
 @pytest.fixture
 def session_settings() -> Settings:
     return Settings(
-        redis_url="redis://localhost:6379/15",
         session_lease_seconds=2,
         session_heartbeat_seconds=0.1,
         session_queue_poll_ms=10,
@@ -47,18 +61,18 @@ def session_settings() -> Settings:
 
 
 @pytest.fixture
-def repository(redis_client: Redis, session_settings: Settings) -> RedisSessionRepository:
-    return RedisSessionRepository(
-        redis_client,
+def repository(
+    database_sessions: async_sessionmaker[AsyncSession],
+    session_settings: Settings,
+) -> PostgresSessionRepository:
+    return PostgresSessionRepository(
+        database_sessions,
         RepositorySettings(
-            lease_ms=session_settings.session_lease_seconds * 1000,
-            queue_ttl_ms=(
+            lease_seconds=session_settings.session_lease_seconds,
+            queue_ttl_seconds=(
                 session_settings.session_queue_timeout_seconds
                 + session_settings.session_lease_seconds
-            )
-            * 1000,
-            terminal_ttl_ms=session_settings.terminal_session_ttl_seconds * 1000,
-            event_stream_maxlen=session_settings.session_event_stream_maxlen,
+            ),
         ),
     )
 
@@ -71,7 +85,7 @@ async def requested_and_resolved():
 
 @pytest.mark.asyncio
 async def test_admits_below_capacity_and_releases_once(
-    repository: RedisSessionRepository,
+    repository: PostgresSessionRepository,
     session_settings: Settings,
 ) -> None:
     requested, resolved = await requested_and_resolved()
@@ -86,11 +100,16 @@ async def test_admits_below_capacity_and_releases_once(
     assert await repository.active_count("chromium") == 0
     stored = await repository.read_session(lease.session.session_id)
     assert stored["state"] == "closed"
+    assert await repository.events(lease.session.session_id) == [
+        "session.requested",
+        "session.acquiring",
+        "session.closed",
+    ]
 
 
 @pytest.mark.asyncio
 async def test_two_replicas_serve_waiter_after_release(
-    repository: RedisSessionRepository,
+    repository: PostgresSessionRepository,
     session_settings: Settings,
 ) -> None:
     requested, resolved = await requested_and_resolved()
@@ -112,7 +131,7 @@ async def test_two_replicas_serve_waiter_after_release(
 
 @pytest.mark.asyncio
 async def test_stale_token_cannot_heartbeat_or_release(
-    repository: RedisSessionRepository,
+    repository: PostgresSessionRepository,
     session_settings: Settings,
 ) -> None:
     requested, resolved = await requested_and_resolved()
@@ -135,7 +154,7 @@ async def test_stale_token_cannot_heartbeat_or_release(
 
 @pytest.mark.asyncio
 async def test_rejects_when_provider_queue_is_full(
-    repository: RedisSessionRepository,
+    repository: PostgresSessionRepository,
     session_settings: Settings,
 ) -> None:
     requested, resolved = await requested_and_resolved()
@@ -154,7 +173,7 @@ async def test_rejects_when_provider_queue_is_full(
 
 @pytest.mark.asyncio
 async def test_queue_timeout_removes_waiter(
-    repository: RedisSessionRepository,
+    repository: PostgresSessionRepository,
     session_settings: Settings,
 ) -> None:
     requested, resolved = await requested_and_resolved()
@@ -172,28 +191,48 @@ async def test_queue_timeout_removes_waiter(
 
 @pytest.mark.asyncio
 async def test_three_replicas_are_admitted_in_fifo_order(
-    repository: RedisSessionRepository,
+    repository: PostgresSessionRepository,
     session_settings: Settings,
 ) -> None:
+    class TrackingNotifier:
+        def __init__(self) -> None:
+            self.two_waiters = asyncio.Event()
+
+        async def wait(self, provider, wait_seconds: float) -> None:
+            if len(await repository.queue(provider.value)) == 2:
+                self.two_waiters.set()
+            await asyncio.sleep(wait_seconds)
+
+        async def notify(self, provider) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
     requested, resolved = await requested_and_resolved()
-    first = await SessionManager(repository, session_settings, owner_id="one").admit(
+    notifier = TrackingNotifier()
+    first = await SessionManager(
+        repository, session_settings, owner_id="one", notifier=notifier
+    ).admit(
         requested, resolved
     )
     second_task = asyncio.create_task(
-        SessionManager(repository, session_settings, owner_id="two").admit(
+        SessionManager(
+            repository, session_settings, owner_id="two", notifier=notifier
+        ).admit(
             requested, resolved
         )
     )
     await asyncio.sleep(0.03)
     third_task = asyncio.create_task(
-        SessionManager(repository, session_settings, owner_id="three").admit(
+        SessionManager(
+            repository, session_settings, owner_id="three", notifier=notifier
+        ).admit(
             requested, resolved
         )
     )
-    await asyncio.sleep(0.03)
-
-    queued = await repository.queue("chromium")
-    assert len(queued) == 2
+    await asyncio.wait_for(notifier.two_waiters.wait(), timeout=1)
+    assert len(await repository.queue("chromium")) == 2
 
     await first.release()
     second = await asyncio.wait_for(second_task, timeout=1)
@@ -206,7 +245,7 @@ async def test_three_replicas_are_admitted_in_fifo_order(
 
 @pytest.mark.asyncio
 async def test_cancelling_waiter_removes_it_from_queue(
-    repository: RedisSessionRepository,
+    repository: PostgresSessionRepository,
     session_settings: Settings,
 ) -> None:
     requested, resolved = await requested_and_resolved()
@@ -230,18 +269,15 @@ async def test_cancelling_waiter_removes_it_from_queue(
 
 
 @pytest.mark.asyncio
-async def test_expired_owner_cannot_leak_capacity(redis_client: Redis) -> None:
-    repository = RedisSessionRepository(
-        redis_client,
-        RepositorySettings(
-            lease_ms=50,
-            queue_ttl_ms=100,
-            terminal_ttl_ms=1_000,
-            event_stream_maxlen=100,
-        ),
+async def test_expired_owner_cannot_leak_capacity(
+    database_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    repository = PostgresSessionRepository(
+        database_sessions,
+        RepositorySettings(lease_seconds=0.05, queue_ttl_seconds=0.1),
     )
     first = HarborSession(
-        session_id="expired-session",
+        session_id=str(uuid4()),
         owner_id="dead-replica",
         lease_token="dead-token",
         requested_provider=ProviderSelection.CHROMIUM,
@@ -249,7 +285,7 @@ async def test_expired_owner_cannot_leak_capacity(redis_client: Redis) -> None:
         state=SessionState.REQUESTED,
     )
     second = HarborSession(
-        session_id="replacement-session",
+        session_id=str(uuid4()),
         owner_id="live-replica",
         lease_token="live-token",
         requested_provider=ProviderSelection.CHROMIUM,
@@ -262,24 +298,21 @@ async def test_expired_owner_cannot_leak_capacity(redis_client: Redis) -> None:
 
     assert (await repository.admit(second, max_active=1, max_queued=1)).value == "acquiring"
     assert await repository.active_count("chromium") == 1
+    assert (await repository.read_session(first.session_id))["state"] == "failed"
     await repository.release(second, failed=False, reason="test_complete")
 
 
 @pytest.mark.asyncio
-async def test_two_redis_clients_cannot_claim_the_final_slot(redis_client: Redis) -> None:
-    second_client = Redis.from_url("redis://localhost:6379/15", decode_responses=True)
-    repository_settings = RepositorySettings(
-        lease_ms=1_000,
-        queue_ttl_ms=2_000,
-        terminal_ttl_ms=1_000,
-        event_stream_maxlen=100,
-    )
-    first_repository = RedisSessionRepository(redis_client, repository_settings)
-    second_repository = RedisSessionRepository(second_client, repository_settings)
+async def test_two_database_clients_cannot_claim_the_final_slot(
+    database_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    settings = RepositorySettings(lease_seconds=1, queue_ttl_seconds=2)
+    first_repository = PostgresSessionRepository(database_sessions, settings)
+    second_repository = PostgresSessionRepository(database_sessions, settings)
 
-    def candidate(session_id: str, owner_id: str) -> HarborSession:
+    def candidate(owner_id: str) -> HarborSession:
         return HarborSession(
-            session_id=session_id,
+            session_id=str(uuid4()),
             owner_id=owner_id,
             lease_token=f"{owner_id}-token",
             requested_provider=ProviderSelection.CHROMIUM,
@@ -287,18 +320,15 @@ async def test_two_redis_clients_cannot_claim_the_final_slot(redis_client: Redis
             state=SessionState.REQUESTED,
         )
 
-    first = candidate("concurrent-one", "replica-one")
-    second = candidate("concurrent-two", "replica-two")
-    try:
-        statuses = await asyncio.gather(
-            first_repository.admit(first, max_active=1, max_queued=1),
-            second_repository.admit(second, max_active=1, max_queued=1),
-        )
+    first = candidate("replica-one")
+    second = candidate("replica-two")
+    statuses = await asyncio.gather(
+        first_repository.admit(first, max_active=1, max_queued=1),
+        second_repository.admit(second, max_active=1, max_queued=1),
+    )
 
-        assert sorted(status.value for status in statuses) == ["acquiring", "queued"]
-        assert await first_repository.active_count("chromium") == 1
-        assert len(await first_repository.queue("chromium")) == 1
-    finally:
-        await first_repository.release(first, failed=False, reason="test_complete")
-        await second_repository.release(second, failed=False, reason="test_complete")
-        await second_client.aclose()
+    assert sorted(status.value for status in statuses) == ["acquiring", "queued"]
+    assert await first_repository.active_count("chromium") == 1
+    assert len(await first_repository.queue("chromium")) == 1
+    await first_repository.release(first, failed=False, reason="test_complete")
+    await second_repository.release(second, failed=False, reason="test_complete")

@@ -71,9 +71,15 @@ owns:
 - Activity and expiry timestamps.
 - Cleanup state and termination reason.
 
-Redis is intended for ephemeral session coordination, leases, and queue state.
-PostgreSQL stores durable session history, provider observations, and later the data
-used for placement optimization.
+PostgreSQL transactions own session coordination, FIFO queues, leases, capacity, and
+durable lifecycle history. A row lock per provider serializes admission decisions
+without blocking other providers. NATS capacity notifications wake queued replicas;
+one-second PostgreSQL polling is the correctness fallback when a notification is missed
+or NATS is unavailable.
+
+NATS Core provides live fan-out. JetStream stores normalized observations for durable
+consumers and replay. PostgreSQL stores the analytical projections later used for
+placement optimization.
 
 The proxy must close provider resources when a client disconnects, a lease expires, or
 an acquisition fails. Cleanup must be idempotent.
@@ -224,9 +230,10 @@ Kubernetes or another external platform decides how browser workloads scale.
 
 ## Debugging
 
-The proxy observes the downstream and upstream protocol streams. It can therefore emit
-a normalized debug stream containing session lifecycle, commands, responses, browser
-events, network activity, console output, and provider failures.
+The proxy observes the downstream and upstream protocol streams. It publishes a
+normalized event contract to NATS subjects captured by JetStream. Live DEBUG consumers
+subscribe through Core NATS while recorders and analytical consumers use independent
+durable JetStream consumers.
 
 Sensitive content must be redacted according to policy before storage or fan-out. The
 debug abstraction must not delay the primary protocol path; slow debug consumers require

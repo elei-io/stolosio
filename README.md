@@ -10,6 +10,7 @@ Install the Python environment and run the API directly:
 
 ```bash
 uv sync
+uv run alembic upgrade head
 uv run uvicorn backend.api.main:app --reload
 ```
 
@@ -23,6 +24,9 @@ The local endpoints are:
 
 - API: <http://localhost:8000>
 - OpenAPI documentation: <http://localhost:8000/docs>
+- PostgreSQL: `postgresql://harbor:harbor@localhost:5432/harbor`
+- NATS client endpoint: `nats://localhost:4222`
+- NATS monitoring: <http://localhost:8222>
 - Browserless Chromium: `ws://localhost:3000`
 - Camoufox Playwright/Firefox: `ws://localhost:1234/harbor`
 - Plain Chromium CDP: `ws://localhost:9223`
@@ -34,6 +38,10 @@ service-network defaults, while the application defaults target host-local servi
 Browser containers are development infrastructure only. Harbor addresses browsers via
 configured endpoints so production orchestration can be delegated to Kubernetes or
 another platform.
+
+PostgreSQL owns transactional session admission, FIFO queues, leases, capacity, and
+durable history. NATS provides live capacity notifications and, with JetStream enabled,
+the event backbone used by the observability roadmap. Harbor has no Redis dependency.
 
 Browserless Chromium, Chromium, and Lightpanda expose CDP-compatible endpoints.
 Camoufox is Firefox-based and exposes Playwright's Firefox/Juggler protocol instead;

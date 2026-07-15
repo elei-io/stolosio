@@ -3,13 +3,15 @@ name: harbor
 services:
   api:
     build: .
-    command: uv run uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload
+    command: >-
+      sh -c "uv run alembic upgrade head &&
+      uv run uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload"
     env_file:
       - path: .env
         required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://harbor:harbor@postgres:5432/harbor
-      REDIS_URL: redis://redis:6379/0
+      NATS_URL: nats://nats:4222
       BROWSERLESS_URL: ws://browserless:3000
       CAMOUFOX_URL: ws://camoufox:1234/harbor
       CHROMIUM_URL: ws://chromium:9222
@@ -22,8 +24,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      nats:
+        condition: service_started
 
   postgres:
     image: postgres:latest
@@ -41,18 +43,14 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:latest
-    command: redis-server --appendonly yes
+  nats:
+    image: nats:latest
+    command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "6379:6379"
+      - "4222:4222"
+      - "8222:8222"
     volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      - nats_data:/data
 
   browserless:
     image: ghcr.io/browserless/chromium:latest
@@ -85,4 +83,4 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
+  nats_data:

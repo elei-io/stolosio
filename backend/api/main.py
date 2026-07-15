@@ -1,35 +1,43 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from redis.asyncio import Redis
 
 from backend.api.routes.health import router as health_router
 from backend.api.routes.proxy import router as proxy_router
+from backend.db.session import engine, session_factory
+from backend.messaging import NatsCapacityNotifier, PollingNotifier
 from backend.proxy.capabilities import capability_registry
 from backend.proxy.gateway import Gateway
-from backend.proxy.redis import RedisSessionRepository
-from backend.proxy.redis.repository import RepositorySettings
+from backend.proxy.postgres import PostgresSessionRepository
+from backend.proxy.postgres.repository import RepositorySettings
 from backend.proxy.sessions import SessionManager
 from backend.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    redis = Redis.from_url(str(settings.redis_url), decode_responses=True)
-    repository = RedisSessionRepository(
-        redis,
+    repository = PostgresSessionRepository(
+        session_factory,
         RepositorySettings(
-            lease_ms=settings.session_lease_seconds * 1000,
-            queue_ttl_ms=(
+            lease_seconds=settings.session_lease_seconds,
+            queue_ttl_seconds=(
                 settings.session_queue_timeout_seconds + settings.session_lease_seconds
-            )
-            * 1000,
-            terminal_ttl_ms=settings.terminal_session_ttl_seconds * 1000,
-            event_stream_maxlen=settings.session_event_stream_maxlen,
+            ),
         ),
     )
-    sessions = SessionManager(repository, settings)
+    try:
+        notifier = await NatsCapacityNotifier.connect(
+            str(settings.nats_url),
+            connect_timeout_seconds=settings.nats_connect_timeout_seconds,
+        )
+    except Exception:
+        logger.warning("NATS unavailable; capacity waiters will use polling", exc_info=True)
+        notifier = PollingNotifier()
+    sessions = SessionManager(repository, settings, notifier=notifier)
     app.state.gateway = Gateway(
         sessions,
         capability_registry,
@@ -38,7 +46,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        await repository.close()
+        await notifier.close()
+        await engine.dispose()
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
