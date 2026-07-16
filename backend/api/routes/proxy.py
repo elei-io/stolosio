@@ -1,8 +1,4 @@
 from fastapi import APIRouter, WebSocket
-from starlette.websockets import WebSocketState
-
-from backend.proxy.errors import ConnectionRejected
-from backend.proxy.settings import harbor_settings_resolver
 
 router = APIRouter(tags=["proxy"])
 
@@ -10,16 +6,7 @@ router = APIRouter(tags=["proxy"])
 @router.websocket("/v1/connect")
 @router.websocket("/v1/connect/")
 async def connect(websocket: WebSocket) -> None:
-    try:
-        requested, resolved = await harbor_settings_resolver.resolve(
-            list(websocket.query_params.multi_items())
-        )
-        await websocket.app.state.gateway.connect(websocket, requested, resolved)
-    except ConnectionRejected as error:
-        if websocket.application_state is WebSocketState.CONNECTING:
-            await websocket.accept()
-        if websocket.application_state is WebSocketState.CONNECTED:
-            await websocket.close(code=error.close_code, reason=error.reason)
+    await websocket.app.state.gateway.connect(websocket)
 
 
 @router.get("/v1/connect/json/version")
@@ -56,16 +43,10 @@ async def close_target(target_id: str) -> None:
 
 
 @router.websocket("/v1/connect/devtools/browser/{session_id}")
-async def connect_browser_target(
-    websocket: WebSocket,
-    session_id: str,
-) -> None:
+async def connect_browser_target(websocket: WebSocket, session_id: str) -> None:
     raise NotImplementedError
 
 
 @router.websocket("/v1/connect/devtools/page/{target_id}")
-async def connect_page_target(
-    websocket: WebSocket,
-    target_id: str,
-) -> None:
+async def connect_page_target(websocket: WebSocket, target_id: str) -> None:
     raise NotImplementedError

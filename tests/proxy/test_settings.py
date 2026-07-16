@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import pytest
 
 from backend.proxy.contracts import (
@@ -36,9 +38,7 @@ async def test_resolves_explicit_provider_and_ignores_non_harbor_keys() -> None:
 
 @pytest.mark.asyncio
 async def test_explicit_auto_uses_the_planner() -> None:
-    requested, resolved = await harbor_settings_resolver.resolve(
-        [("harbor.provider.slug", "auto")]
-    )
+    requested, resolved = await harbor_settings_resolver.resolve([("harbor.provider.slug", "auto")])
 
     assert requested.provider is ProviderSelection.AUTO
     assert requested.auto_fields == frozenset({"harbor.provider.slug"})
@@ -47,7 +47,20 @@ async def test_explicit_auto_uses_the_planner() -> None:
 
 
 def test_registry_exposes_the_canonical_query_contract() -> None:
-    assert harbor_settings_registry.queries == frozenset({"harbor.provider.slug"})
+    assert harbor_settings_registry.queries == frozenset(
+        {"harbor.provider.slug", "harbor.session.reference"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolves_client_generated_session_reference() -> None:
+    requested, resolved = await harbor_settings_resolver.resolve(
+        [("harbor.session.reference", "3a10fc5f-1b31-45d4-b95f-3981ea833a91")]
+    )
+
+    assert requested.session_reference == UUID("3a10fc5f-1b31-45d4-b95f-3981ea833a91")
+    assert resolved.session.reference == requested.session_reference
+    assert resolved.sources["harbor.session.reference"] is SettingSource.EXPLICIT
 
 
 @pytest.mark.asyncio
@@ -77,9 +90,7 @@ async def test_explicit_value_takes_precedence_over_the_automatic_plan() -> None
 
     resolver = HarborSettingsResolver(harbor_settings_registry, Planner())
 
-    _, resolved = await resolver.resolve(
-        [("harbor.provider.slug", "browserless")]
-    )
+    _, resolved = await resolver.resolve([("harbor.provider.slug", "browserless")])
 
     assert resolved.provider.slug is ProviderName.BROWSERLESS
     assert resolved.sources["harbor.provider.slug"] is SettingSource.EXPLICIT
@@ -95,6 +106,8 @@ async def test_explicit_value_takes_precedence_over_the_automatic_plan() -> None
         [("harbor.unknown", "value")],
         [("harbor.provider", "chromium")],
         [("harbor.provider.slug", "auto"), ("harbor.provider.slug", "auto")],
+        [("harbor.session.reference", "not-a-uuid")],
+        [("harbor.session.reference", "auto")],
     ],
 )
 async def test_rejects_invalid_harbor_settings(query: list[tuple[str, str]]) -> None:

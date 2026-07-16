@@ -72,6 +72,7 @@ async def test_discovered_adapter_separates_websocket_and_transport_hosts(monkey
         "backend.proxy.adapters.cdp.httpx.AsyncClient",
         lambda **kwargs: FakeClient(),
     )
+
     async def fake_connect(url: str, **kwargs):
         request["websocket_url"] = url
         request["websocket_kwargs"] = kwargs

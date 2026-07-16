@@ -1,7 +1,12 @@
+import asyncio
+import json
 import os
+from uuid import uuid4
 
 import pytest
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
+from websockets.asyncio.client import connect
 
 from backend.proxy.contracts import ProviderName
 
@@ -15,7 +20,7 @@ pytestmark = [
 
 
 def harbor_url(provider: ProviderName) -> str:
-    base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8000/v1/connect")
+    base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
     return f"{base}?harbor.provider.slug={provider.value}"
 
 
@@ -60,7 +65,7 @@ async def test_evaluate(provider: ProviderName) -> None:
 
 @pytest.mark.asyncio
 async def test_omitted_provider_uses_automatic_plan() -> None:
-    base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8000/v1/connect")
+    base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
     async with async_playwright() as playwright:
         browser = await playwright.chromium.connect_over_cdp(base)
         page = await browser.new_page()
@@ -68,3 +73,60 @@ async def test_omitted_provider_uses_automatic_plan() -> None:
 
         assert "Example Domain" in await page.content()
         await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
+    async with async_playwright() as playwright:
+        blocker = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.CHROMIUM))
+
+        async def abandon_waiter() -> None:
+            with pytest.raises(PlaywrightTimeoutError):
+                await playwright.chromium.connect_over_cdp(
+                    harbor_url(ProviderName.CHROMIUM),
+                    timeout=100,
+                )
+
+        await asyncio.gather(*(abandon_waiter() for _ in range(6)))
+        await blocker.close()
+
+        browser = await playwright.chromium.connect_over_cdp(
+            harbor_url(ProviderName.CHROMIUM),
+            timeout=5_000,
+        )
+        page = await browser.new_page()
+        await page.goto("https://example.com")
+        assert "Example Domain" in await page.content()
+        await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_debug_stream_replays_session_start_and_tails_until_close() -> None:
+    reference = str(uuid4())
+    base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
+    separator = "&" if "?" in base else "?"
+    cdp_url = f"{base}{separator}harbor.provider.slug=chromium&harbor.session.reference={reference}"
+    debug_base = os.getenv("HARBOR_DEBUG_URL", "ws://localhost:8411/v1/debug")
+    debug_url = f"{debug_base}?harbor.session.reference={reference}"
+
+    async def observe() -> list[dict]:
+        observed = []
+        async with connect(debug_url) as websocket:
+            async for raw_event in websocket:
+                observed.append(json.loads(raw_event))
+        return observed
+
+    debug = asyncio.create_task(observe())
+    await asyncio.sleep(0)
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.connect_over_cdp(cdp_url)
+        page = await browser.new_page()
+        await page.goto("https://example.com")
+        await browser.close()
+
+    events = await asyncio.wait_for(debug, timeout=10)
+    event_types = [event["event_type"] for event in events]
+    assert event_types[0] == "session.requested"
+    assert event_types[-1] == "session.closed"
+    assert "navigation.response" in event_types
+    assert len({event["event_id"] for event in events}) == len(events)

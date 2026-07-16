@@ -17,11 +17,44 @@ services:
       CHROMIUM_URL: ws://chromium:9222
       LIGHTPANDA_URL: ws://lightpanda:9222
     ports:
-      - "8000:8000"
+      - "${HARBOR_API_PORT:-8411}:8000"
     volumes:
       - .:/app
       - /app/.venv
     depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - uv
+        - run
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  maintenance:
+    build: .
+    command: uv run python -m backend.workers.maintenance
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://harbor:harbor@postgres:5432/harbor
+      NATS_URL: nats://nats:4222
+    expose:
+      - "9000"
+    volumes:
+      - .:/app
+      - /app/.venv
+    depends_on:
+      api:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       nats:
@@ -34,7 +67,7 @@ services:
       POSTGRES_USER: harbor
       POSTGRES_PASSWORD: harbor
     ports:
-      - "5432:5432"
+      - "${HARBOR_POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
@@ -47,7 +80,7 @@ services:
     image: nats:latest
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "4222:4222"
+      - "4223:4222"
       - "8222:8222"
     volumes:
       - nats_data:/data

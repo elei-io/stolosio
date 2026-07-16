@@ -7,6 +7,7 @@ from backend.proxy.contracts import RequestedSessionSettings
 from backend.proxy.errors import InvalidHarborSettings
 from backend.proxy.settings.base import BaseHarborSetting
 from backend.proxy.settings.provider import HarborProviderSetting
+from backend.proxy.settings.session import HarborSessionSetting
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,9 +85,7 @@ class HarborSettingsRegistry:
         return values
 
     def build_models(self, values: dict[str, Any]) -> dict[str, Any]:
-        model_values: dict[str, dict[str, Any]] = {
-            setting.slug: {} for setting in self._settings
-        }
+        model_values: dict[str, dict[str, Any]] = {setting.slug: {} for setting in self._settings}
         for query, value in values.items():
             field = self._fields[query]
             model_values[field.setting_slug][field.model_field] = value
@@ -96,4 +95,4 @@ class HarborSettingsRegistry:
         }
 
 
-harbor_settings_registry = HarborSettingsRegistry((HarborProviderSetting,))
+harbor_settings_registry = HarborSettingsRegistry((HarborProviderSetting, HarborSessionSetting))

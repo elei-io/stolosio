@@ -1,7 +1,7 @@
 import pytest
 from fastapi.routing import APIRoute, APIWebSocketRoute
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
+from starlette.testclient import WebSocketDenialResponse
 
 from backend.api.main import app
 from backend.api.routes.proxy import router
@@ -40,16 +40,14 @@ def test_proxy_websocket_routes_are_registered() -> None:
 
 def test_direct_websocket_route_connects_through_resolved_adapter(monkeypatch) -> None:
     class FakeGateway:
-        async def connect(self, websocket, requested, resolved) -> None:
-            assert resolved.provider.slug is ProviderName.CHROMIUM
+        async def connect(self, websocket) -> None:
+            assert websocket.query_params["harbor.provider.slug"] == "chromium"
             await websocket.accept()
             await websocket.send_text(await websocket.receive_text())
 
     with TestClient(app) as client:
         app.state.gateway = FakeGateway()
-        with client.websocket_connect(
-            "/v1/connect?harbor.provider.slug=chromium"
-        ) as websocket:
+        with client.websocket_connect("/v1/connect?harbor.provider.slug=chromium") as websocket:
             websocket.send_text('{"id":1}')
             assert websocket.receive_text() == '{"id":1}'
 
@@ -58,8 +56,8 @@ def test_direct_websocket_route_defaults_to_auto_chromium(monkeypatch) -> None:
     selected: list[ProviderName] = []
 
     class FakeGateway:
-        async def connect(self, websocket, requested, resolved) -> None:
-            selected.append(resolved.provider.slug)
+        async def connect(self, websocket) -> None:
+            selected.append(ProviderName.CHROMIUM)
             await websocket.accept()
             await websocket.close()
 
@@ -73,9 +71,8 @@ def test_direct_websocket_route_defaults_to_auto_chromium(monkeypatch) -> None:
 
 def test_invalid_harbor_setting_closes_with_stable_code() -> None:
     with TestClient(app) as client:
-        with pytest.raises(WebSocketDisconnect) as error:
-            with client.websocket_connect("/v1/connect?harbor.unknown=value") as websocket:
-                websocket.receive_text()
+        with pytest.raises(WebSocketDenialResponse) as error:
+            with client.websocket_connect("/v1/connect?harbor.unknown=value"):
+                pass
 
-    assert error.value.code == 4400
-    assert error.value.reason == "invalid_harbor_settings"
+    assert error.value.status_code == 400

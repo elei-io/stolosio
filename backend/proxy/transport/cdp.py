@@ -4,6 +4,7 @@ import json
 from fastapi import WebSocket, WebSocketDisconnect
 from websockets.exceptions import ConnectionClosed
 
+from backend.events.cdp import CdpEventObserver
 from backend.proxy.capabilities import CapabilityRegistry
 from backend.proxy.contracts import ProviderName, ProviderSession
 from backend.proxy.errors import InvalidCdpMessage, ProviderConnectionLost
@@ -14,11 +15,12 @@ async def relay_cdp(
     upstream: ProviderSession,
     provider: ProviderName,
     capabilities: CapabilityRegistry,
+    observer: CdpEventObserver | None = None,
 ) -> None:
     downstream_task = asyncio.create_task(
-        _downstream_to_upstream(downstream, upstream, provider, capabilities)
+        _downstream_to_upstream(downstream, upstream, provider, capabilities, observer)
     )
-    upstream_task = asyncio.create_task(_upstream_to_downstream(upstream, downstream))
+    upstream_task = asyncio.create_task(_upstream_to_downstream(upstream, downstream, observer))
     tasks = {downstream_task, upstream_task}
 
     done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -26,10 +28,14 @@ async def relay_cdp(
         task.cancel()
     await asyncio.gather(*pending, return_exceptions=True)
 
-    for task in done:
-        error = task.exception()
-        if error is not None and not isinstance(error, (ConnectionClosed, WebSocketDisconnect)):
-            raise error
+    try:
+        for task in done:
+            error = task.exception()
+            if error is not None and not isinstance(error, (ConnectionClosed, WebSocketDisconnect)):
+                raise error
+    finally:
+        if observer is not None:
+            await observer.interrupt_pending("session_ended")
 
 
 async def _downstream_to_upstream(
@@ -37,6 +43,7 @@ async def _downstream_to_upstream(
     upstream: ProviderSession,
     provider: ProviderName,
     capabilities: CapabilityRegistry,
+    observer: CdpEventObserver | None = None,
 ) -> None:
     while True:
         message = await downstream.receive()
@@ -55,6 +62,8 @@ async def _downstream_to_upstream(
         except (json.JSONDecodeError, KeyError, TypeError) as error:
             raise InvalidCdpMessage from error
 
+        if observer is not None:
+            await observer.command_received(command)
         if not capabilities.supports(provider, method):
             await downstream.send_json(
                 {
@@ -65,6 +74,8 @@ async def _downstream_to_upstream(
                     },
                 }
             )
+            if observer is not None:
+                await observer.command_unsupported(command_id)
             continue
         await upstream.send(text)
 
@@ -72,7 +83,12 @@ async def _downstream_to_upstream(
 async def _upstream_to_downstream(
     upstream: ProviderSession,
     downstream: WebSocket,
+    observer: CdpEventObserver | None = None,
 ) -> None:
     async for message in upstream.messages():
+        if observer is not None:
+            await observer.upstream_message(message)
         await downstream.send_text(message)
+    if observer is not None:
+        await observer.provider_disconnected()
     raise ProviderConnectionLost

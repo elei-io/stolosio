@@ -14,5 +14,5 @@ def provider_capacity(settings: Settings, provider: ProviderName) -> ProviderCap
     prefix = provider.value
     return ProviderCapacity(
         max_active=getattr(settings, f"{prefix}_max_active_sessions"),
-        max_queued=getattr(settings, f"{prefix}_max_queued_sessions"),
+        max_queued=getattr(settings, f"{prefix}_max_queued_attempts"),
     )

@@ -28,23 +28,36 @@ class PollingNotifier:
 
 
 class NatsCapacityNotifier:
-    def __init__(self, client: NatsClient) -> None:
+    def __init__(self, client: NatsClient, *, owns_client: bool) -> None:
         self._client = client
+        self._owns_client = owns_client
         self._condition = asyncio.Condition()
         self._generations: defaultdict[str, int] = defaultdict(int)
+        self._subscription = None
 
     @classmethod
-    async def connect(
-        cls, url: str, *, connect_timeout_seconds: float
+    async def start(
+        cls,
+        client: NatsClient,
+        *,
+        owns_client: bool = False,
     ) -> "NatsCapacityNotifier":
+        notifier = cls(client, owns_client=owns_client)
+        notifier._subscription = await client.subscribe(
+            f"{_CAPACITY_SUBJECT}.*", cb=notifier._receive
+        )
+        await client.flush()
+        return notifier
+
+    @classmethod
+    async def connect(cls, url: str, *, connect_timeout_seconds: float) -> "NatsCapacityNotifier":
         async with asyncio.timeout(connect_timeout_seconds):
             client = await nats.connect(
                 servers=[url],
                 connect_timeout=connect_timeout_seconds,
                 max_reconnect_attempts=-1,
             )
-        notifier = cls(client)
-        await client.subscribe(f"{_CAPACITY_SUBJECT}.*", cb=notifier._receive)
+        notifier = await cls.start(client, owns_client=True)
         await client.flush(timeout=connect_timeout_seconds)
         return notifier
 
@@ -63,6 +76,10 @@ class NatsCapacityNotifier:
         await self._client.publish(f"{_CAPACITY_SUBJECT}.{provider.value}")
 
     async def close(self) -> None:
+        if self._subscription is not None:
+            await self._subscription.unsubscribe()
+        if not self._owns_client:
+            return
         try:
             async with asyncio.timeout(2):
                 await self._client.drain()

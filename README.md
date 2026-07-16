@@ -1,61 +1,54 @@
 # Harbor
 
-Harbor is a browser acquisition fleet with a unified session contract, queue metrics,
-and browser-specific adapters. Its initial providers are Browserless Chromium, plain
-Chromium, Lightpanda, and Camoufox.
+Harbor is a browser and web-acquisition gateway. It gives CDP-compatible automation
+clients one endpoint for sessions across Chromium, Browserless Chromium, Lightpanda,
+and Camoufox.
 
-## Local development
+It is for teams building browser automation, scraping, testing, and web-data systems
+that want to change providers without rewriting downstream automation. Harbor owns
+session admission, provider queues, scaling signals, observations, and eventually
+cost-aware acquisition planning.
 
-Install the Python environment and run the API directly:
+## Developer setup
+
+Requirements: Docker, Docker Compose, and
+[`uv`](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
-uv run alembic upgrade head
-uv run uvicorn backend.api.main:app --reload
+docker compose up --build -d
 ```
 
-Or start the complete local stack:
+The API starts at <http://localhost:8411>. Connect Playwright through Harbor:
+
+```python
+browser = await playwright.chromium.connect_over_cdp(
+    "ws://localhost:8411/v1/connect"
+)
+```
+
+Run the examples and checks:
 
 ```bash
-docker compose up --build
+uv run python examples/01_goto_and_content.py
+uv run python examples/02_interaction.py
+uv run python examples/03_evaluate.py
+uv run pytest
+uv run ruff check .
 ```
 
-The local endpoints are:
+The Compose stack is required for examples and E2E tests:
 
-- API: <http://localhost:8000>
-- OpenAPI documentation: <http://localhost:8000/docs>
-- PostgreSQL: `postgresql://harbor:harbor@localhost:5432/harbor`
-- NATS client endpoint: `nats://localhost:4222`
-- NATS monitoring: <http://localhost:8222>
-- Browserless Chromium: `ws://localhost:3000`
-- Camoufox Playwright/Firefox: `ws://localhost:1234/harbor`
-- Plain Chromium CDP: `ws://localhost:9223`
-- Lightpanda CDP: `ws://localhost:9222`
-
-Copy `.env.example` to `.env` to override local settings. Compose supplies its own
-service-network defaults, while the application defaults target host-local services.
-
-Browser containers are development infrastructure only. Harbor addresses browsers via
-configured endpoints so production orchestration can be delegated to Kubernetes or
-another platform.
-
-PostgreSQL owns transactional session admission, FIFO queues, leases, capacity, and
-durable history. NATS provides live capacity notifications and, with JetStream enabled,
-the event backbone used by the observability roadmap. Harbor has no Redis dependency.
-
-Browserless Chromium, Chromium, and Lightpanda expose CDP-compatible endpoints.
-Camoufox is Firefox-based and exposes Playwright's Firefox/Juggler protocol instead;
-Harbor maps the explicitly tested CDP subset to it.
-
-Downstream clients use the provider-neutral Harbor endpoint:
-
-```text
-ws://localhost:8000/v1/connect
+```bash
+HARBOR_E2E=1 uv run pytest -m e2e
 ```
 
-Omitting `harbor.provider.slug` uses Harbor's automatic plan. Development and
-conformance tests can force a provider without changing the endpoint:
+## Documentation
 
-```text
-ws://localhost:8000/v1/connect?harbor.provider.slug=camoufox
-```
+- [Vision](docs/VISION.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Provider matrix](docs/PROVIDERS.md)
+- [DEBUG stream](docs/DEBUG.md)
+- [No-browser execution](docs/NO_BROWSER.md)
+- [Future analytics](docs/ANALYTICS.md)
+- [Contributor and agent guide](AGENTS.md)

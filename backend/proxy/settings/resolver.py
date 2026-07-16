@@ -47,6 +47,7 @@ class HarborSettingsResolver:
         models = self._registry.build_models(values)
         return requested, ResolvedSessionSettings(
             provider=models["provider"],
+            session=models["session"],
             sources=sources,
         )
 

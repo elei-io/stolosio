@@ -4,6 +4,7 @@ import pytest
 
 from backend.messaging import NatsCapacityNotifier, PollingNotifier
 from backend.proxy.contracts import ProviderName
+from backend.settings import Settings
 
 
 @pytest.mark.asyncio
@@ -20,7 +21,7 @@ async def test_polling_notifier_waits_without_external_state() -> None:
 async def test_nats_capacity_notification_wakes_waiter() -> None:
     try:
         notifier = await NatsCapacityNotifier.connect(
-            "nats://localhost:4222",
+            str(Settings().nats_url),
             connect_timeout_seconds=0.5,
         )
     except Exception:

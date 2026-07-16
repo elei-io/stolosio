@@ -8,7 +8,7 @@ Set `HARBOR_CDP_URL` to the Harbor WebSocket endpoint. It defaults to the planne
 Chromium route:
 
 ```bash
-export HARBOR_CDP_URL='ws://localhost:8000/v1/connect?harbor.provider.slug=chromium'
+export HARBOR_CDP_URL='ws://localhost:8411/v1/connect?harbor.provider.slug=chromium'
 ```
 
 Run each example from the repository root:
@@ -17,6 +17,7 @@ Run each example from the repository root:
 uv run python examples/01_goto_and_content.py
 uv run python examples/02_interaction.py
 uv run python examples/03_evaluate.py
+uv run python examples/04_debug_stream.py
 ```
 
 The examples intentionally use only the standard Playwright client. They contain no
@@ -28,3 +29,5 @@ Harbor-specific SDK code; switching between Harbor routes requires changing only
 - `01_goto_and_content.py` covers the initial no-browser-eligible command sequence.
 - `02_interaction.py` covers a command sequence that must use or promote to a browser.
 - `03_evaluate.py` covers JavaScript evaluation through the CDP connection.
+- `04_debug_stream.py` shows an opt-in client reference and the separate, read-only
+  DEBUG WebSocket alongside an ordinary Playwright CDP connection.
