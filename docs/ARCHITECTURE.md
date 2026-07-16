@@ -33,6 +33,7 @@ Harbor's implemented connection contract is a direct provider-neutral WebSocket:
 ```text
 WS /v1/connect
 WS /v1/connect?harbor.provider.slug=camoufox
+WS /v1/connect?harbor.session.reference=<client-generated-uuid>
 ```
 
 Omitting `harbor.provider.slug` is equivalent to
@@ -49,34 +50,72 @@ Authentication may also carry tenant policy and provider constraints, but browse
 selection remains an explicit query override when a caller requests a particular
 provider.
 
+`harbor.session.reference` is optional correlation metadata for clients using the
+separate DEBUG WebSocket. Harbor stores it but retains authority over its internal
+session identity.
+
 ## Session lifecycle
 
-A connection progresses through these states:
+Harbor has two independent lifecycles. A logical session represents the downstream CDP
+connection and consumes global Harbor capacity:
 
 ```text
-requested -> queued -> acquiring -> connected -> closing -> closed
-     |          |           |           |            |
-     +----------+-----------+-----------+------------+-> failed
+requested -> admitted -> open -> closing -> closed
+     |          |         |
+     +----------+---------+-> failed
 ```
 
-The gateway creates a Harbor session before acquiring provider capacity. The session
-owns:
+An acquisition attempt represents one concrete execution choice:
+
+```text
+requested -> queued -> acquiring -> active -> completed
+     |          |          |          |
+     +----------+----------+----------+-> failed
+```
+
+The session owns:
 
 - Authentication and tenant identity.
-- Requested and resolved provider.
-- Queue and acquisition timestamps.
-- Provider connection details.
-- Protocol and capability information.
-- Browser contexts and targets created through the connection.
-- Activity and expiry timestamps.
+- Requested connection settings.
+- The downstream WebSocket, lease, and global admission slot.
 - Cleanup state and termination reason.
 
-Redis is intended for ephemeral session coordination, leases, and queue state.
-PostgreSQL stores durable session history, provider observations, and later the data
-used for placement optimization.
+Attempts own resolved provider settings, provider queue position, acquisition state,
+provider resources, and outcome. Future HTTP-to-browser promotion creates another
+attempt under the same logical session.
 
-The proxy must close provider resources when a client disconnects, a lease expires, or
-an acquisition fails. Cleanup must be idempotent.
+PostgreSQL transactions own global session admission and separate per-provider FIFO
+admission. NATS capacity notifications wake queued attempt handlers; PostgreSQL polling
+is the correctness fallback. The API replica retains its downstream socket throughout.
+
+NATS Core provides live fan-out. JetStream stores normalized observations for durable
+consumers and replay. A maintenance process records those observations idempotently in
+PostgreSQL, updates factual domain and command-use projections, forwards lifecycle
+outbox rows, and removes expired detail in bounded batches.
+
+The gateway watches downstream disconnect while provider admission is pending. One
+component owns WebSocket acceptance, denial, and closure. Provider and session cleanup
+are bounded and idempotent.
+
+## Fleet control plane
+
+Harbor manages browser workers as provider fleets. A fleet contains compatible browser
+instances, and each instance exposes one or more session slots. Provider attempts queue
+at fleet level and atomically reserve a slot on a ready, non-draining instance before
+the adapter connects directly to that instance.
+
+Desired fleet configuration and observed instance state are durable in PostgreSQL.
+Fleet controllers run separately from FastAPI and reconcile that state through Docker,
+Kubernetes, or another infrastructure platform. Desired replicas never count as usable
+capacity until their instances have been observed healthy and ready.
+
+Administrators control minimum and maximum instances, per-instance session capacity,
+and scaling safety limits. These settings are control-plane policy and cannot be
+overridden by downstream `harbor.*` connection parameters. Lower limits drain capacity
+without silently terminating successful sessions.
+
+See [Fleet Management](FLEET_MANAGEMENT.md) for the design contract and
+[Managed Fleets](roadmap/managed-fleets.md) for the first implementation milestone.
 
 ## Provider adapters
 
@@ -208,9 +247,10 @@ the gateway must return clear errors for unsupported operations.
 
 ## Metrics and scaling signals
 
-Metrics are emitted per provider and, where useful, per tenant or capability class:
+Metrics use bounded provider, outcome, method-registry, and stable-reason labels:
 
-- Sessions requested, queued, acquiring, active, failed, and closed.
+- Globally admitted Harbor sessions and configured intake capacity.
+- Provider attempts queued, acquiring, active, failed, and completed.
 - Queue depth and oldest queued request age.
 - Acquisition and queue latency.
 - Session duration and idle time.
@@ -218,19 +258,33 @@ Metrics are emitted per provider and, where useful, per tenant or capability cla
 - Commands, events, bytes, errors, and unsupported commands.
 - Provider crashes and abnormal disconnects.
 
-The primary horizontal scaling signals are queue depth, oldest request age, active
-sessions relative to capacity, and acquisition latency. Harbor exposes these signals;
-Kubernetes or another external platform decides how browser workloads scale.
+The primary scaling signals are queue depth, oldest request age, occupied slots relative
+to healthy capacity, and acquisition latency. Harbor's fleet policy converts those
+signals into desired browser capacity. A separate platform controller reconciles that
+desired state through Docker, Kubernetes, or another runtime.
+
+`GET /v1/fleet/gateway`, `GET /v1/fleet/providers`, and `/metrics` use PostgreSQL fleet
+snapshot queries.
+The JSON view reports current counts; Prometheus remains responsible for historical
+rates and quantiles. Across multiple API replicas, shared PostgreSQL-backed gauges are
+aggregated with `max`, while process-local counters and histograms are summed.
 
 ## Debugging
 
-The proxy observes the downstream and upstream protocol streams. It can therefore emit
-a normalized debug stream containing session lifecycle, commands, responses, browser
-events, network activity, console output, and provider failures.
+The proxy observes the downstream and upstream protocol streams. It publishes a
+versioned normalized event contract to session-addressable NATS subjects captured by
+JetStream. Live DEBUG consumers subscribe through Core NATS while the maintenance
+recorder and later analytical consumers use independent durable JetStream consumers.
 
-Sensitive content must be redacted according to policy before storage or fan-out. The
-debug abstraction must not delay the primary protocol path; slow debug consumers require
-bounded buffers and explicit event-dropping behavior.
+Filtering happens before publication: bodies, HTML, cookies, credentials, query values,
+raw protocol messages, and provider error text do not enter the event system. Historical
+DEBUG reads the same normalized rows stored by the recorder and adds no conclusions.
+
+The initial downstream delivery path is
+`WS /v1/debug?harbor.session.reference=<uuid>`. It uses an ephemeral ordered JetStream
+consumer to replay retained events and follow the live tail for one session. It is
+read-only, bounded, and kept separate from CDP so existing CDP clients never receive
+Harbor-specific protocol events.
 
 ## Compatibility strategy
 

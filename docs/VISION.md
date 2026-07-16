@@ -56,16 +56,17 @@ Harbor will:
 
 - Provide clients with isolated browser sessions.
 - Route sessions to explicitly selected providers or an automatic selection policy.
-- Expose per-provider queue and session metrics suitable as horizontal scaling targets.
+- Pack isolated sessions into compatible browser instances and scale managed provider
+  fleets from measured demand.
+- Expose per-provider demand, capacity, health, and scaling metrics.
 - Normalize browser and provider quirks behind a CDP-compatible gateway.
 - Track provider capabilities and report unsupported operations clearly.
 - Preserve native CDP passthrough where possible.
 - Own session authentication, authorization, lifecycle, and cleanup.
 
-Browser processes are local Docker Compose dependencies during development. In
-production, browsers may be managed by Kubernetes or another external platform. Harbor
-provides the demand and scaling signals rather than requiring ownership of the runtime
-orchestrator.
+Browser processes are local Docker Compose dependencies during development. Harbor
+owns their desired capacity, placement, health, and draining through a separate fleet
+controller. Docker, Kubernetes, or another runtime supplies the compute primitives.
 
 ## Longer-term direction
 
@@ -96,7 +97,9 @@ Compatibility expands domain by domain and command by command. Native CDP provid
 use passthrough only for explicitly verified methods; translated providers begin with
 high-value operations and grow from observed usage.
 
-### External orchestration
+### Managed fleets
 
-Harbor separates browser acquisition and protocol routing from infrastructure scaling.
-It emits the signals an external platform needs to scale browser capacity.
+Harbor owns browser fleet policy without embedding infrastructure credentials in the
+gateway. Separate controllers reconcile Harbor's desired state through Docker,
+Kubernetes, or another platform. Administrators control fleet limits; downstream
+clients remain unaware of browser instances and capacity.

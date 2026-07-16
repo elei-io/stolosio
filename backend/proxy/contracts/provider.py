@@ -21,6 +21,7 @@ class ProviderSession(Protocol):
     def messages(self) -> AsyncIterator[str]: ...
     async def close(self) -> None: ...
 
+
 class ProviderAdapter(Protocol):
     provider: ProviderName
 

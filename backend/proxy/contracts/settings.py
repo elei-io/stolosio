@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -25,6 +26,10 @@ class ProviderSettingSchema(BaseModel):
     slug: ProviderName = ProviderName.CHROMIUM
 
 
+class SessionSettingSchema(BaseModel):
+    reference: UUID | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class RequestedSessionSettings:
     overrides: dict[str, Any] = field(default_factory=dict)
@@ -37,10 +42,16 @@ class RequestedSessionSettings:
             return ProviderSelection.AUTO
         return ProviderSelection(value)
 
+    @property
+    def session_reference(self) -> UUID | None:
+        value = self.overrides.get("harbor.session.reference")
+        return value if isinstance(value, UUID) else None
+
 
 @dataclass(frozen=True, slots=True)
 class ResolvedSessionSettings:
     provider: ProviderSettingSchema
+    session: SessionSettingSchema
     sources: dict[str, SettingSource]
 
 

@@ -1,53 +1,64 @@
 # Harbor
 
-Harbor is a browser acquisition fleet with a unified session contract, queue metrics,
-and browser-specific adapters. Its initial providers are Browserless Chromium, plain
-Chromium, Lightpanda, and Camoufox.
+Harbor is a browser and web-acquisition gateway. It gives CDP-compatible automation
+clients one endpoint for sessions across Chromium, Browserless Chromium, Lightpanda,
+and Camoufox.
 
-## Local development
+It is for teams building browser automation, scraping, testing, and web-data systems
+that want to change providers without rewriting downstream automation. Harbor owns
+session admission, provider queues, managed browser fleets, observations, and
+eventually cost-aware acquisition planning.
 
-Install the Python environment and run the API directly:
+## Developer setup
+
+Requirements: Docker, Docker Compose, and
+[`uv`](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
-uv run uvicorn backend.api.main:app --reload
+docker compose up --build -d
 ```
 
-Or start the complete local stack:
+Run the development fleet controller in another terminal:
 
 ```bash
-docker compose up --build
+uv run python -m backend.fleet.controllers.docker
 ```
 
-The local endpoints are:
+The controller exposes its scaling and reconciliation metrics on
+<http://localhost:9001/metrics> by default.
 
-- API: <http://localhost:8000>
-- OpenAPI documentation: <http://localhost:8000/docs>
-- Browserless Chromium: `ws://localhost:3000`
-- Camoufox Playwright/Firefox: `ws://localhost:1234/harbor`
-- Plain Chromium CDP: `ws://localhost:9223`
-- Lightpanda CDP: `ws://localhost:9222`
+The API starts at <http://localhost:8411>. Connect Playwright through Harbor:
 
-Copy `.env.example` to `.env` to override local settings. Compose supplies its own
-service-network defaults, while the application defaults target host-local services.
-
-Browser containers are development infrastructure only. Harbor addresses browsers via
-configured endpoints so production orchestration can be delegated to Kubernetes or
-another platform.
-
-Browserless Chromium, Chromium, and Lightpanda expose CDP-compatible endpoints.
-Camoufox is Firefox-based and exposes Playwright's Firefox/Juggler protocol instead;
-Harbor maps the explicitly tested CDP subset to it.
-
-Downstream clients use the provider-neutral Harbor endpoint:
-
-```text
-ws://localhost:8000/v1/connect
+```python
+browser = await playwright.chromium.connect_over_cdp(
+    "ws://localhost:8411/v1/connect"
+)
 ```
 
-Omitting `harbor.provider.slug` uses Harbor's automatic plan. Development and
-conformance tests can force a provider without changing the endpoint:
+Run the examples and checks:
 
-```text
-ws://localhost:8000/v1/connect?harbor.provider.slug=camoufox
+```bash
+uv run python examples/01_goto_and_content.py
+uv run python examples/02_interaction.py
+uv run python examples/03_evaluate.py
+uv run pytest
+uv run ruff check .
 ```
+
+The Compose stack is required for examples and E2E tests:
+
+```bash
+HARBOR_E2E=1 uv run pytest -m e2e
+```
+
+## Documentation
+
+- [Vision](docs/VISION.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Fleet management](docs/FLEET_MANAGEMENT.md)
+- [Provider matrix](docs/PROVIDERS.md)
+- [DEBUG stream](docs/DEBUG.md)
+- [No-browser execution](docs/NO_BROWSER.md)
+- [Future analytics](docs/ANALYTICS.md)
+- [Contributor and agent guide](AGENTS.md)

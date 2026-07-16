@@ -53,9 +53,7 @@ async def test_forwards_supported_downstream_messages_to_provider() -> None:
         ]
     )
     upstream = FakeUpstream()
-    registry = CapabilityRegistry(
-        {ProviderName.CHROMIUM: frozenset({"Page.navigate"})}
-    )
+    registry = CapabilityRegistry({ProviderName.CHROMIUM: frozenset({"Page.navigate"})})
 
     with pytest.raises(WebSocketDisconnect):
         await _downstream_to_upstream(  # type: ignore[arg-type]

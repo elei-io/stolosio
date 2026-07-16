@@ -3,27 +3,62 @@ name: harbor
 services:
   api:
     build: .
-    command: uv run uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload
+    command: >-
+      sh -c "uv run alembic upgrade head &&
+      uv run uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload"
     env_file:
       - path: .env
         required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://harbor:harbor@postgres:5432/harbor
-      REDIS_URL: redis://redis:6379/0
+      NATS_URL: nats://nats:4222
       BROWSERLESS_URL: ws://browserless:3000
       CAMOUFOX_URL: ws://camoufox:1234/harbor
       CHROMIUM_URL: ws://chromium:9222
       LIGHTPANDA_URL: ws://lightpanda:9222
     ports:
-      - "8000:8000"
+      - "${HARBOR_API_PORT:-8411}:8000"
     volumes:
       - .:/app
       - /app/.venv
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      nats:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - uv
+        - run
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  maintenance:
+    build: .
+    command: uv run python -m backend.workers.maintenance
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://harbor:harbor@postgres:5432/harbor
+      NATS_URL: nats://nats:4222
+    expose:
+      - "9000"
+    volumes:
+      - .:/app
+      - /app/.venv
+    depends_on:
+      api:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
 
   postgres:
     image: postgres:latest
@@ -32,7 +67,7 @@ services:
       POSTGRES_USER: harbor
       POSTGRES_PASSWORD: harbor
     ports:
-      - "5432:5432"
+      - "${HARBOR_POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
@@ -41,18 +76,14 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:latest
-    command: redis-server --appendonly yes
+  nats:
+    image: nats:latest
+    command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "6379:6379"
+      - "4223:4222"
+      - "8222:8222"
     volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      - nats_data:/data
 
   browserless:
     image: ghcr.io/browserless/chromium:latest
@@ -66,8 +97,8 @@ services:
   chromium:
     image: chromedp/headless-shell:latest
     shm_size: 2gb
-    ports:
-      - "9223:9222"
+    expose:
+      - "9222"
 
   camoufox:
     build:
@@ -85,4 +116,4 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
+  nats_data:

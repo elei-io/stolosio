@@ -4,10 +4,10 @@ from backend.proxy.contracts import ProviderAdapter, ProviderName
 from backend.settings import settings
 
 
-def get_provider_adapter(provider: ProviderName) -> ProviderAdapter:
+def get_provider_adapter(provider: ProviderName, *, endpoint: str | None = None) -> ProviderAdapter:
     match provider:
         case ProviderName.CHROMIUM:
-            return DiscoveredCdpAdapter(provider, str(settings.chromium_url))
+            return DiscoveredCdpAdapter(provider, endpoint or str(settings.chromium_url))
         case ProviderName.BROWSERLESS:
             return DirectCdpAdapter(provider, str(settings.browserless_url))
         case ProviderName.LIGHTPANDA:

@@ -1,0 +1,42 @@
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from math import ceil
+
+from backend.fleet.contracts import FleetConfiguration
+
+
+@dataclass(frozen=True, slots=True)
+class ScalingDecision:
+    desired_instances: int
+    direction: str | None
+    idle_since: datetime | None
+
+
+def scaling_decision(
+    configuration: FleetConfiguration,
+    *,
+    demand: int,
+    now: datetime,
+) -> ScalingDecision:
+    if not configuration.enabled:
+        target = 0
+    else:
+        required = ceil(demand / configuration.session_capacity_per_instance)
+        target = min(
+            configuration.maximum_instances,
+            max(configuration.minimum_instances, required),
+        )
+
+    current = configuration.desired_instances
+    if target > current:
+        return ScalingDecision(current + 1, "up", None)
+
+    idle_since = configuration.idle_since
+    if demand > 0:
+        return ScalingDecision(current, None, None)
+    if idle_since is None:
+        return ScalingDecision(current, None, now)
+    cooldown = timedelta(seconds=configuration.scale_down_cooldown_seconds)
+    if target < current and now - idle_since >= cooldown:
+        return ScalingDecision(current - 1, "down", idle_since)
+    return ScalingDecision(current, None, idle_since)

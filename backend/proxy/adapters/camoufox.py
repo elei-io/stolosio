@@ -518,9 +518,7 @@ class CamoufoxProviderSession:
         params: dict[str, Any],
         session_id: str | None,
     ) -> None:
-        await self._put(
-            {"method": method, "params": params, **self._session_field(session_id)}
-        )
+        await self._put({"method": method, "params": params, **self._session_field(session_id)})
 
     async def _put(self, message: dict[str, Any]) -> None:
         await self._messages.put(json.dumps(message, separators=(",", ":")))

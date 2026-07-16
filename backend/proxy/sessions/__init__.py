@@ -1,3 +1,3 @@
-from backend.proxy.sessions.manager import SessionLease, SessionManager
+from backend.proxy.sessions.manager import SessionAdmission, SessionLease
 
-__all__ = ["SessionLease", "SessionManager"]
+__all__ = ["SessionAdmission", "SessionLease"]

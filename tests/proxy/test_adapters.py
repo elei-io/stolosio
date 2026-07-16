@@ -1,8 +1,11 @@
+import json
+
 import pytest
 
 from backend.proxy.adapters.cdp import (
     DirectCdpAdapter,
     DiscoveredCdpAdapter,
+    WebSocketProviderSession,
     _discovery_url,
 )
 from backend.proxy.adapters.registry import get_provider_adapter
@@ -10,14 +13,24 @@ from backend.proxy.contracts import ProviderName
 
 
 class FakeWebSocket:
+    def __init__(self, messages: list[str] | None = None) -> None:
+        self.sent: list[str] = []
+        self.messages = messages or []
+
     async def send(self, message: str) -> None:
-        pass
+        self.sent.append(message)
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
-        raise StopAsyncIteration
+        if not self.messages:
+            raise StopAsyncIteration
+        return self.messages.pop(0)
+
+    async def recv(self) -> str:
+        command = json.loads(self.sent[-1])
+        return json.dumps({"id": command["id"], "result": {}})
 
     async def close(self) -> None:
         pass
@@ -72,6 +85,7 @@ async def test_discovered_adapter_separates_websocket_and_transport_hosts(monkey
         "backend.proxy.adapters.cdp.httpx.AsyncClient",
         lambda **kwargs: FakeClient(),
     )
+
     async def fake_connect(url: str, **kwargs):
         request["websocket_url"] = url
         request["websocket_kwargs"] = kwargs
@@ -100,3 +114,19 @@ def test_camoufox_uses_mapping_adapter() -> None:
     adapter = get_provider_adapter(ProviderName.CAMOUFOX)
 
     assert adapter.provider is ProviderName.CAMOUFOX
+
+
+@pytest.mark.asyncio
+async def test_cdp_session_disposes_only_contexts_created_through_that_connection() -> None:
+    websocket = FakeWebSocket(
+        [json.dumps({"id": 7, "result": {"browserContextId": "owned-context"}})]
+    )
+    session = WebSocketProviderSession(ProviderName.CHROMIUM, websocket)  # type: ignore[arg-type]
+    await session.send(json.dumps({"id": 7, "method": "Target.createBrowserContext"}))
+    assert [message async for message in session.messages()]
+
+    await session.close()
+
+    cleanup = json.loads(websocket.sent[-1])
+    assert cleanup["method"] == "Target.disposeBrowserContext"
+    assert cleanup["params"] == {"browserContextId": "owned-context"}

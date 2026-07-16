@@ -2,16 +2,23 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from backend.proxy.contracts.provider import ProviderName
-from backend.proxy.contracts.settings import ProviderSelection
 
 
 class SessionState(StrEnum):
     REQUESTED = "requested"
-    QUEUED = "queued"
-    ACQUIRING = "acquiring"
-    CONNECTED = "connected"
+    ADMITTED = "admitted"
+    OPEN = "open"
     CLOSING = "closing"
     CLOSED = "closed"
+    FAILED = "failed"
+
+
+class AttemptState(StrEnum):
+    REQUESTED = "requested"
+    QUEUED = "queued"
+    ACQUIRING = "acquiring"
+    ACTIVE = "active"
+    COMPLETED = "completed"
     FAILED = "failed"
 
 
@@ -20,6 +27,15 @@ class HarborSession:
     session_id: str
     owner_id: str
     lease_token: str
-    requested_provider: ProviderSelection
-    resolved_provider: ProviderName
     state: SessionState
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderAttempt:
+    attempt_id: str
+    session_id: str
+    ordinal: int
+    provider: ProviderName
+    state: AttemptState
+    provider_instance_id: str | None = None
+    endpoint: str | None = None

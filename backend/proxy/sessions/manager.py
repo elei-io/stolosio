@@ -1,18 +1,17 @@
 import asyncio
-import random
-from contextlib import suppress
 from dataclasses import replace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from backend.proxy.contracts import (
     HarborSession,
     RequestedSessionSettings,
-    ResolvedSessionSettings,
     SessionState,
 )
-from backend.proxy.errors import ProviderQueueFull, SessionLeaseLost, SessionQueueTimeout
-from backend.proxy.redis import AdmissionStatus, RedisSessionRepository
-from backend.proxy.sessions.capacity import provider_capacity
+from backend.proxy.errors import GatewayCapacityFull, SessionLeaseLost
+from backend.proxy.postgres import (
+    PostgresSessionRepository,
+    SessionAdmissionStatus,
+)
 from backend.settings import Settings
 
 
@@ -20,7 +19,7 @@ class SessionLease:
     def __init__(
         self,
         session: HarborSession,
-        repository: RedisSessionRepository,
+        repository: PostgresSessionRepository,
         heartbeat_seconds: float,
     ) -> None:
         self.session = session
@@ -30,24 +29,25 @@ class SessionLease:
         self._heartbeat_task = asyncio.create_task(self._heartbeat())
         self._released = False
 
-    async def connected(self) -> None:
-        if not await self._repository.transition(self.session, SessionState.CONNECTED):
+    async def open(self) -> None:
+        if not await self._repository.open(self.session):
             raise SessionLeaseLost
-        self.session = replace(self.session, state=SessionState.CONNECTED)
+        self.session = replace(self.session, state=SessionState.OPEN)
 
     async def wait_lost(self) -> None:
         await self._lost.wait()
 
-    async def release(self, *, failed: bool = False, reason: str = "client_disconnected") -> None:
+    async def release(
+        self,
+        *,
+        failed: bool = False,
+        reason: str = "client_disconnected",
+    ) -> None:
         if self._released:
             return
         self._released = True
         self._heartbeat_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await self._heartbeat_task
-
-        if self.session.state is SessionState.CONNECTED:
-            await self._repository.transition(self.session, SessionState.CLOSING)
+        await asyncio.gather(self._heartbeat_task, return_exceptions=True)
         await self._repository.release(self.session, failed=failed, reason=reason)
 
     async def _heartbeat(self) -> None:
@@ -63,10 +63,10 @@ class SessionLease:
             self._lost.set()
 
 
-class SessionManager:
+class SessionAdmission:
     def __init__(
         self,
-        repository: RedisSessionRepository,
+        repository: PostgresSessionRepository,
         settings: Settings,
         *,
         owner_id: str | None = None,
@@ -75,55 +75,34 @@ class SessionManager:
         self._settings = settings
         self._owner_id = owner_id or str(uuid4())
 
-    async def admit(
-        self,
-        requested: RequestedSessionSettings,
-        resolved: ResolvedSessionSettings,
-    ) -> SessionLease:
+    async def admit(self, requested: RequestedSessionSettings) -> SessionLease:
         session = HarborSession(
             session_id=str(uuid4()),
             owner_id=self._owner_id,
             lease_token=str(uuid4()),
-            requested_provider=requested.provider,
-            resolved_provider=resolved.provider.slug,
             state=SessionState.REQUESTED,
         )
-        capacity = provider_capacity(self._settings, resolved.provider.slug)
+        requested_settings = {
+            **{field: "auto" for field in requested.auto_fields},
+            **{
+                field: str(value) if isinstance(value, UUID) else value
+                for field, value in requested.overrides.items()
+            },
+        }
         status = await self._repository.admit(
             session,
-            max_active=capacity.max_active,
-            max_queued=capacity.max_queued,
+            max_active=self._settings.harbor_max_active_sessions,
+            requested_settings=requested_settings,
+            client_reference=(
+                str(requested.session_reference)
+                if requested.session_reference is not None
+                else None
+            ),
         )
-        if status is AdmissionStatus.FULL:
-            raise ProviderQueueFull
-        if status is AdmissionStatus.QUEUED:
-            session = replace(session, state=SessionState.QUEUED)
-            try:
-                async with asyncio.timeout(self._settings.session_queue_timeout_seconds):
-                    while not await self._repository.claim(
-                        session,
-                        max_active=capacity.max_active,
-                    ):
-                        jitter = random.uniform(0, 0.02)  # noqa: S311
-                        await asyncio.sleep(self._settings.session_queue_poll_ms / 1000 + jitter)
-            except TimeoutError as error:
-                await self._repository.release(
-                    session,
-                    failed=True,
-                    reason="session_queue_timeout",
-                )
-                raise SessionQueueTimeout from error
-            except asyncio.CancelledError:
-                await self._repository.release(
-                    session,
-                    failed=True,
-                    reason="client_disconnected",
-                )
-                raise
-
-        session = replace(session, state=SessionState.ACQUIRING)
+        if status is SessionAdmissionStatus.FULL:
+            raise GatewayCapacityFull
         return SessionLease(
-            session,
+            replace(session, state=SessionState.ADMITTED),
             self._repository,
             self._settings.session_heartbeat_seconds,
         )

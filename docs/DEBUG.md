@@ -2,8 +2,9 @@
 
 Harbor provides an opinionated, standardized stream of session observations.
 
-The stream is initially an internal tool for understanding sessions and comparing
-provider behavior. It may later be exposed to downstream clients as a Harbor feature.
+The stream is used internally for understanding sessions and comparing provider
+behavior. Harbor also exposes the same filtered event contract to its initial
+downstream integration partner through a small, read-only WebSocket.
 
 ## Purpose
 
@@ -87,8 +88,54 @@ The useful common subset must be discovered from the evidence each provider actu
 supplies. Provider-specific evidence may be retained when it is useful, but it must be
 clearly distinguishable from observations available across providers.
 
-No event schema is defined yet. The schema should emerge from examining real provider
-events and choosing the smallest useful subset rather than designing a speculative
-format in advance.
+Phase 2 now defines the first deliberately small, versioned event envelope and filters
+main-document navigation, command outcomes, page lifecycle, provider disconnection,
+provider attempts, and Harbor session lifecycle into it. The checked-in registry is
+the contract; unknown event types and payload fields are rejected. URLs lose user
+information, query strings, and fragments, and response headers use a strict
+allowlist before an event reaches NATS.
+
+Live internal consumers subscribe to
+`harbor.v1.events.session.<session_id>`. JetStream retains the same publication for
+durable consumers, and PostgreSQL supplies factual historical timelines. There is no
+separate, richer raw stream behind this view.
+
+## Downstream WebSocket
+
+A downstream client generates a UUID and supplies it while connecting to CDP:
+
+```text
+WS /v1/connect?harbor.session.reference=<uuid>
+```
+
+It observes that session through:
+
+```text
+WS /v1/debug?harbor.session.reference=<same-uuid>
+```
+
+The client reference correlates two connections; it is not Harbor's authoritative
+session ID and is not an authentication token. Harbor stores a globally unique
+reference on the session and continues to generate its own session UUID.
+
+The DEBUG WebSocket can connect before the CDP connection. It waits up to 30 seconds
+for the reference to appear. Once resolved, an ephemeral ordered JetStream consumer
+replays retained events for that exact session and continues with the live tail. Each
+WebSocket text frame is the canonical `SessionEvent` JSON object. The connection closes
+normally after `session.closed` or `session.failed`.
+
+Delivery is bounded to 1,000 pending events and 4 MiB per connection by default. A
+consumer that falls behind is disconnected with `debug_consumer_too_slow`; it never
+applies backpressure to browser execution.
+
+This first public slice is deliberately single-session and read-only. Multi-session UI
+subscriptions, authentication, authorization scopes, cursors beyond JetStream's
+retention window, and public delivery guarantees remain future work. Until
+authentication exists, the endpoint must be kept on a trusted network. Client
+references must not be treated as secrets or access controls.
+
+This initial schema is not a promise to add every item in the potential-evidence list.
+The useful subset continues to grow one observed, normalized, privacy-tested provider
+fact at a time.
 
 Future interpretation of these observations is described in [Analytics](ANALYTICS.md).
