@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.db.models import (
     AcquisitionAttempt,
     GatewaySession,
+    ProviderFleet,
+    ProviderInstance,
     ProviderState,
     SessionEventRecord,
 )
@@ -93,16 +95,26 @@ class PostgresAttemptRepository:
             await database.flush()
             self._event(database, row, "attempt.started", now)
 
-            active = await self._count(database, provider.value, _ACTIVE_ATTEMPT_STATES, now)
             queued = await self._count(
                 database,
                 provider.value,
                 (AttemptState.QUEUED.value,),
                 now,
             )
-            if queued == 0 and active < max_active:
+            managed = await database.get(ProviderFleet, provider.value)
+            instance = (
+                await self._select_instance(database, provider.value, now)
+                if managed is not None and queued == 0
+                else None
+            )
+            active = await self._count(database, provider.value, _ACTIVE_ATTEMPT_STATES, now)
+            can_acquire = queued == 0 and (
+                instance is not None if managed is not None else active < max_active
+            )
+            if can_acquire:
                 row.state = AttemptState.ACQUIRING.value
                 row.acquiring_at = now
+                row.provider_instance_id = instance.id if instance is not None else None
                 self._event(database, row, "attempt.acquiring", now)
                 status = AttemptAdmissionStatus.ACQUIRING
             elif queued < max_queued:
@@ -122,7 +134,7 @@ class PostgresAttemptRepository:
                     reason="provider_queue_full",
                 )
                 status = AttemptAdmissionStatus.FULL
-            return status, self._contract(row)
+            return status, self._contract(row, instance.endpoint if instance is not None else None)
 
     async def claim(
         self,
@@ -130,11 +142,11 @@ class PostgresAttemptRepository:
         attempt: ProviderAttempt,
         *,
         max_active: int,
-    ) -> bool:
+    ) -> ProviderAttempt | None:
         async with self._sessions.begin() as database:
             now = await self._now(database)
             if await self._owned_session(database, session, now) is None:
-                return False
+                return None
             await self._lock_provider(database, attempt.provider.value)
             await self._expire_stale(database, attempt.provider.value, now)
             row = await database.scalar(
@@ -146,7 +158,7 @@ class PostgresAttemptRepository:
                 .with_for_update()
             )
             if row is None or row.state != AttemptState.QUEUED.value:
-                return False
+                return None
             head = await database.scalar(
                 select(AcquisitionAttempt.id)
                 .join(GatewaySession, GatewaySession.id == AcquisitionAttempt.session_id)
@@ -160,8 +172,17 @@ class PostgresAttemptRepository:
                 .limit(1)
             )
             if head != attempt.attempt_id:
-                return False
-            if (
+                return None
+            managed = await database.get(ProviderFleet, attempt.provider.value)
+            instance = (
+                await self._select_instance(database, attempt.provider.value, now)
+                if managed is not None
+                else None
+            )
+            if managed is not None:
+                if instance is None:
+                    return None
+            elif (
                 await self._count(
                     database,
                     attempt.provider.value,
@@ -170,11 +191,12 @@ class PostgresAttemptRepository:
                 )
                 >= max_active
             ):
-                return False
+                return None
             row.state = AttemptState.ACQUIRING.value
             row.acquiring_at = now
+            row.provider_instance_id = instance.id if instance is not None else None
             self._event(database, row, "attempt.acquiring", now)
-            return True
+            return self._contract(row, instance.endpoint if instance is not None else None)
 
     async def activate(self, attempt: ProviderAttempt) -> bool:
         async with self._sessions.begin() as database:
@@ -317,6 +339,46 @@ class PostgresAttemptRepository:
         )
         return int(value or 0)
 
+    async def _select_instance(
+        self,
+        database: AsyncSession,
+        provider: str,
+        now: datetime,
+    ) -> ProviderInstance | None:
+        instances = list(
+            await database.scalars(
+                select(ProviderInstance)
+                .where(
+                    ProviderInstance.provider == provider,
+                    ProviderInstance.state == "ready",
+                    ProviderInstance.observation_expires_at > now,
+                )
+                .order_by(ProviderInstance.id)
+                .with_for_update()
+            )
+        )
+        candidates: list[tuple[int, ProviderInstance]] = []
+        for instance in instances:
+            occupied = int(
+                await database.scalar(
+                    select(func.count())
+                    .select_from(AcquisitionAttempt)
+                    .join(GatewaySession, GatewaySession.id == AcquisitionAttempt.session_id)
+                    .where(
+                        AcquisitionAttempt.provider_instance_id == instance.id,
+                        AcquisitionAttempt.state.in_(_ACTIVE_ATTEMPT_STATES),
+                        GatewaySession.state.in_(_LIVE_SESSION_STATES),
+                        GatewaySession.lease_expires_at > now,
+                    )
+                )
+                or 0
+            )
+            if occupied < instance.capacity:
+                candidates.append((occupied, instance))
+        if not candidates:
+            return None
+        return max(candidates, key=lambda candidate: (candidate[0], candidate[1].id))[1]
+
     @staticmethod
     async def _now(database: AsyncSession) -> datetime:
         value = await database.scalar(select(func.clock_timestamp()))
@@ -324,13 +386,15 @@ class PostgresAttemptRepository:
         return value
 
     @staticmethod
-    def _contract(row: AcquisitionAttempt) -> ProviderAttempt:
+    def _contract(row: AcquisitionAttempt, endpoint: str | None = None) -> ProviderAttempt:
         return ProviderAttempt(
             attempt_id=row.id,
             session_id=row.session_id,
             ordinal=row.ordinal,
             provider=ProviderName(row.provider),
             state=AttemptState(row.state),
+            provider_instance_id=row.provider_instance_id,
+            endpoint=endpoint,
         )
 
     @staticmethod

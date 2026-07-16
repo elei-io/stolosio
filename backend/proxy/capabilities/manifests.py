@@ -26,6 +26,7 @@ EXAMPLE_BASELINE = frozenset(
         "Runtime.releaseObject",
         "Runtime.runIfWaitingForDebugger",
         "Target.createBrowserContext",
+        "Target.disposeBrowserContext",
         "Target.createTarget",
         "Target.getTargetInfo",
         "Target.setAutoAttach",

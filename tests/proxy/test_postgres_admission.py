@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import AcquisitionAttempt, GatewaySession, SessionEventRecord
+from backend.fleet import FleetInstanceState, FleetRepository, ObservedInstance
 from backend.messaging import PollingNotifier
 from backend.proxy.attempts import AttemptAdmission
 from backend.proxy.contracts import HarborSession, ProviderName, SessionState
@@ -33,7 +34,9 @@ def admission_settings() -> Settings:
         session_heartbeat_seconds=0.1,
         provider_queue_poll_ms=10,
         provider_queue_timeout_seconds=1,
-        chromium_max_active_sessions=1,
+        chromium_minimum_instances=1,
+        chromium_maximum_instances=1,
+        chromium_session_capacity_per_instance=1,
         chromium_max_queued_attempts=2,
     )
 
@@ -227,7 +230,9 @@ async def test_stale_session_lease_frees_global_and_provider_capacity(
         harbor_max_active_sessions=1,
         session_lease_seconds=2,
         session_heartbeat_seconds=10,
-        chromium_max_active_sessions=1,
+        chromium_minimum_instances=1,
+        chromium_maximum_instances=1,
+        chromium_session_capacity_per_instance=1,
         chromium_max_queued_attempts=1,
     )
     sessions = PostgresSessionRepository(
@@ -349,3 +354,67 @@ async def test_attempt_rows_hold_provider_state_not_gateway_sessions(
     assert attempt_row is not None and attempt_row.provider == "chromium"
     await attempt.release()
     await session.release()
+
+
+@pytest.mark.asyncio
+async def test_managed_fleet_packs_slots_then_claims_queue_on_a_new_instance(
+    database_sessions: async_sessionmaker[AsyncSession],
+    session_repository: PostgresSessionRepository,
+    attempt_repository: PostgresAttemptRepository,
+    admission_settings: Settings,
+) -> None:
+    fleets = FleetRepository(database_sessions)
+    await fleets.ensure_fleet(
+        ProviderName.CHROMIUM,
+        minimum_instances=1,
+        maximum_instances=2,
+        session_capacity_per_instance=2,
+        scale_down_cooldown_seconds=1,
+    )
+    first_observation = ObservedInstance(
+        instance_id="chromium-one",
+        endpoint="ws://chromium-one:9222",
+        state=FleetInstanceState.READY,
+    )
+    await fleets.observe_instances(
+        ProviderName.CHROMIUM,
+        [first_observation],
+        platform="test",
+        observation_ttl_seconds=10,
+    )
+    sessions = [
+        await admit(session_repository, admission_settings, owner)
+        for owner in ("one", "two", "three")
+    ]
+    _, resolved = await requested_and_resolved()
+    admissions = attempt_admission(attempt_repository, admission_settings)
+
+    first = await admissions.acquire(sessions[0].session, resolved)
+    second = await admissions.acquire(sessions[1].session, resolved)
+    assert first.attempt.provider_instance_id == "chromium-one"
+    assert second.attempt.provider_instance_id == "chromium-one"
+
+    third_task = asyncio.create_task(admissions.acquire(sessions[2].session, resolved))
+    await asyncio.sleep(0.03)
+    assert not third_task.done()
+    await fleets.observe_instances(
+        ProviderName.CHROMIUM,
+        [
+            first_observation,
+            ObservedInstance(
+                instance_id="chromium-two",
+                endpoint="ws://chromium-two:9222",
+                state=FleetInstanceState.READY,
+            ),
+        ],
+        platform="test",
+        observation_ttl_seconds=10,
+    )
+    third = await asyncio.wait_for(third_task, timeout=1)
+    assert third.attempt.provider_instance_id == "chromium-two"
+    assert third.attempt.endpoint == "ws://chromium-two:9222"
+
+    for attempt in (first, second, third):
+        await attempt.release()
+    for session in sessions:
+        await session.release()

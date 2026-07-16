@@ -12,7 +12,13 @@ class ProviderCapacity:
 
 def provider_capacity(settings: Settings, provider: ProviderName) -> ProviderCapacity:
     prefix = provider.value
+    if provider is ProviderName.CHROMIUM:
+        max_active = (
+            settings.chromium_maximum_instances * settings.chromium_session_capacity_per_instance
+        )
+    else:
+        max_active = getattr(settings, f"{prefix}_max_active_sessions")
     return ProviderCapacity(
-        max_active=getattr(settings, f"{prefix}_max_active_sessions"),
+        max_active=max_active,
         max_queued=getattr(settings, f"{prefix}_max_queued_attempts"),
     )

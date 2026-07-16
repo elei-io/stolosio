@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import AcquisitionAttempt, GatewaySession
+from backend.fleet import FleetRepository
 from backend.proxy.attempts import provider_capacity
 from backend.proxy.contracts import AttemptState, ProviderName, SessionState
 from backend.settings import Settings
@@ -23,6 +24,13 @@ class ProviderFleetSnapshot:
     queued_attempts: int
     capacity: int
     oldest_queued_attempt_seconds: float
+    desired_instances: int = 0
+    observed_instances: int = 0
+    ready_instances: int = 0
+    draining_instances: int = 0
+    unhealthy_instances: int = 0
+    total_slots: int = 0
+    available_slots: int = 0
 
 
 class FleetSnapshotService:
@@ -33,6 +41,7 @@ class FleetSnapshotService:
     ) -> None:
         self._sessions = sessions
         self._settings = settings
+        self._fleets = FleetRepository(sessions)
 
     async def gateway_snapshot(self) -> GatewayFleetSnapshot:
         now = datetime.now(UTC)
@@ -110,13 +119,32 @@ class FleetSnapshotService:
         for provider in ProviderName:
             queued, oldest = queued_rows.get(provider.value, (0, None))
             age = max(0.0, (now - oldest).total_seconds()) if oldest else 0.0
+            managed = await self._fleets.snapshot(provider)
+            capacity = (
+                managed.total_slots
+                if managed is not None
+                else provider_capacity(self._settings, provider).max_active
+            )
             snapshots.append(
                 ProviderFleetSnapshot(
                     provider=provider,
                     active_attempts=int(active_rows.get(provider.value, 0)),
                     queued_attempts=int(queued),
-                    capacity=provider_capacity(self._settings, provider).max_active,
+                    capacity=capacity,
                     oldest_queued_attempt_seconds=age,
+                    desired_instances=(
+                        managed.configuration.desired_instances if managed is not None else 0
+                    ),
+                    observed_instances=(managed.observed_instances if managed is not None else 0),
+                    ready_instances=managed.ready_instances if managed is not None else 0,
+                    draining_instances=(managed.draining_instances if managed is not None else 0),
+                    unhealthy_instances=(managed.unhealthy_instances if managed is not None else 0),
+                    total_slots=managed.total_slots if managed is not None else capacity,
+                    available_slots=(
+                        managed.available_slots
+                        if managed is not None
+                        else max(0, capacity - int(active_rows.get(provider.value, 0)))
+                    ),
                 )
             )
         return snapshots

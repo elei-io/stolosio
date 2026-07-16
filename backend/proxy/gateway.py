@@ -188,7 +188,10 @@ class Gateway:
             )
             async with asyncio.timeout(total_timeout):
                 attempt = await self._attempts.acquire(session.session, resolved)
-                adapter = get_provider_adapter(resolved.provider.slug)
+                adapter = get_provider_adapter(
+                    resolved.provider.slug,
+                    endpoint=attempt.attempt.endpoint,
+                )
                 try:
                     async with asyncio.timeout(self._settings.provider_acquisition_timeout_seconds):
                         provider_session = await adapter.acquire(session.session, resolved)

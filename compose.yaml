@@ -97,8 +97,8 @@ services:
   chromium:
     image: chromedp/headless-shell:latest
     shm_size: 2gb
-    ports:
-      - "9223:9222"
+    expose:
+      - "9222"
 
   camoufox:
     build:

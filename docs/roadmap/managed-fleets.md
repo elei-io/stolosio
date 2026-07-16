@@ -1,6 +1,6 @@
 # Managed Fleets
 
-Status: planned
+Status: implemented
 
 This milestone proves that Harbor can pack multiple sessions onto browser instances,
 measure unmet demand, scale a Chromium fleet through Docker Compose, discover the new
@@ -66,6 +66,7 @@ desired_instances
 configuration_version
 last_scale_up_at
 last_scale_down_at
+idle_since
 last_reconciled_at
 controller_status
 ```
@@ -229,6 +230,7 @@ harbor_provider_desired_instances{provider}
 harbor_provider_observed_instances{provider}
 harbor_provider_ready_instances{provider}
 harbor_provider_draining_instances{provider}
+harbor_provider_unhealthy_instances{provider}
 harbor_provider_total_slots{provider}
 harbor_provider_available_slots{provider}
 harbor_provider_scaling_actions_total{provider,direction,outcome}
@@ -242,11 +244,12 @@ not the per-session DEBUG stream.
 
 ## Failure behavior
 
-- Controller unavailable: existing ready capacity remains usable; scaling pauses.
+- Controller unavailable: existing assigned sessions continue; scaling pauses and stale
+  observations eventually stop admitting new attempts.
 - PostgreSQL unavailable: admission and reconciliation fail closed.
 - Scale command failure: record the stable failure and retry with bounded backoff.
-- Instance startup timeout: mark the observation unhealthy and replace it only through
-  normal reconciliation.
+- Instance startup timeout: replace an instance only after it has remained unhealthy
+  for the configured timeout, through normal reconciliation.
 - Instance disappearance: remove its capacity and fail assigned attempts truthfully.
 - Configuration lowered below current use: existing sessions finish; new placement
   respects the new limit.

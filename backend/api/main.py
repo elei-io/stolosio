@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import nats
 from fastapi import FastAPI
 
+from backend.api.routes.admin_fleets import router as admin_fleets_router
 from backend.api.routes.debug import router as debug_router
 from backend.api.routes.fleet import router as fleet_router
 from backend.api.routes.health import router as health_router
@@ -13,6 +14,7 @@ from backend.api.routes.metrics import router as metrics_router
 from backend.api.routes.proxy import router as proxy_router
 from backend.db.session import engine, session_factory
 from backend.debug import DebugStreamService
+from backend.fleet import FleetRepository, FleetService
 from backend.messaging import NatsCapacityNotifier, PollingNotifier
 from backend.messaging.jetstream import (
     EventStreamSettings,
@@ -21,6 +23,7 @@ from backend.messaging.jetstream import (
 from backend.metrics import FleetSnapshotService, InstrumentedEventPublisher
 from backend.proxy.attempts import AttemptAdmission
 from backend.proxy.capabilities import capability_registry
+from backend.proxy.contracts import ProviderName
 from backend.proxy.gateway import Gateway
 from backend.proxy.postgres import (
     PostgresAttemptRepository,
@@ -35,6 +38,14 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    fleet_repository = FleetRepository(session_factory)
+    await fleet_repository.ensure_fleet(
+        ProviderName.CHROMIUM,
+        minimum_instances=settings.chromium_minimum_instances,
+        maximum_instances=settings.chromium_maximum_instances,
+        session_capacity_per_instance=settings.chromium_session_capacity_per_instance,
+        scale_down_cooldown_seconds=settings.chromium_scale_down_cooldown_seconds,
+    )
     repository = PostgresSessionRepository(
         session_factory,
         SessionRepositorySettings(
@@ -76,6 +87,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         notifier=notifier,
     )
     app.state.fleet = FleetSnapshotService(session_factory, settings)
+    app.state.fleet_admin = FleetService(fleet_repository)
+    app.state.environment = settings.environment
     app.state.debug_stream = (
         DebugStreamService(
             session_factory,
@@ -104,6 +117,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app.include_router(admin_fleets_router)
 app.include_router(health_router)
 app.include_router(debug_router)
 app.include_router(fleet_router)

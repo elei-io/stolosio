@@ -178,9 +178,10 @@ Reconciliation is idempotent. A controller observes desired state, observes the
 platform, applies the smallest required change, updates instance state, and repeats.
 Only one active controller may mutate a particular fleet.
 
-Controller failure stops scaling but does not invalidate healthy existing instances.
-PostgreSQL failure stops reconciliation and admission. Instance loss immediately
-removes its capacity and causes its assigned attempts to fail or disconnect normally.
+Controller failure stops scaling. Existing assigned sessions continue, while stale
+observations eventually stop contributing capacity for new attempts. PostgreSQL failure
+stops reconciliation and admission. Instance loss immediately removes its capacity and
+causes its assigned attempts to fail or disconnect normally.
 
 ## Observability
 

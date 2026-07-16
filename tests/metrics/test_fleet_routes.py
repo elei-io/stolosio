@@ -20,6 +20,12 @@ class FakeFleet:
                 queued_attempts=2 if provider is ProviderName.CHROMIUM else 0,
                 capacity=3,
                 oldest_queued_attempt_seconds=(4.5 if provider is ProviderName.CHROMIUM else 0),
+                desired_instances=2,
+                observed_instances=2,
+                ready_instances=1,
+                unhealthy_instances=1,
+                total_slots=3,
+                available_slots=2,
             )
             for provider in ProviderName
         ]
@@ -43,12 +49,23 @@ def test_json_and_prometheus_views_share_the_fleet_snapshot() -> None:
         "queued_attempts": 2,
         "capacity": 3,
         "oldest_queued_attempt_seconds": 4.5,
+        "desired_instances": 2,
+        "observed_instances": 2,
+        "ready_instances": 1,
+        "draining_instances": 0,
+        "unhealthy_instances": 1,
+        "total_slots": 3,
+        "available_slots": 2,
     }
     assert metrics.status_code == 200
     assert "harbor_gateway_active_sessions 2.0" in metrics.text
     assert "harbor_gateway_capacity 100.0" in metrics.text
     assert 'harbor_provider_active_attempts{provider="chromium"} 1.0' in metrics.text
     assert 'harbor_provider_queued_attempts{provider="chromium"} 2.0' in metrics.text
+    assert 'harbor_provider_desired_instances{provider="chromium"} 2.0' in metrics.text
+    assert 'harbor_provider_ready_instances{provider="chromium"} 1.0' in metrics.text
+    assert 'harbor_provider_unhealthy_instances{provider="chromium"} 1.0' in metrics.text
+    assert 'harbor_provider_available_slots{provider="chromium"} 2.0' in metrics.text
     assert "session_id" not in metrics.text
 
 

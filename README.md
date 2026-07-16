@@ -19,6 +19,15 @@ uv sync
 docker compose up --build -d
 ```
 
+Run the development fleet controller in another terminal:
+
+```bash
+uv run python -m backend.fleet.controllers.docker
+```
+
+The controller exposes its scaling and reconciliation metrics on
+<http://localhost:9001/metrics> by default.
+
 The API starts at <http://localhost:8411>. Connect Playwright through Harbor:
 
 ```python

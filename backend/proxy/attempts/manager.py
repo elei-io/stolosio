@@ -103,16 +103,19 @@ class AttemptAdmission:
                 raise ProviderQueueFull
             if status is AttemptAdmissionStatus.QUEUED:
                 async with asyncio.timeout(self._settings.provider_queue_timeout_seconds):
-                    while not await self._repository.claim(
-                        session,
-                        attempt,
-                        max_active=capacity.max_active,
-                    ):
+                    while True:
+                        claimed = await self._repository.claim(
+                            session,
+                            attempt,
+                            max_active=capacity.max_active,
+                        )
+                        if claimed is not None:
+                            attempt = claimed
+                            break
                         await self._notifier.wait(
                             provider,
                             self._settings.provider_queue_poll_ms / 1000,
                         )
-                attempt = replace(attempt, state=AttemptState.ACQUIRING)
         except TimeoutError as error:
             await self._fail(attempt, "provider_queue_timeout")
             raise ProviderQueueTimeout from error

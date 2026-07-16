@@ -5,9 +5,16 @@ from backend.metrics.definitions import (
     GATEWAY_ACTIVE,
     GATEWAY_CAPACITY,
     PROVIDER_ACTIVE,
+    PROVIDER_AVAILABLE_SLOTS,
     PROVIDER_CAPACITY,
+    PROVIDER_DESIRED_INSTANCES,
+    PROVIDER_DRAINING_INSTANCES,
+    PROVIDER_OBSERVED_INSTANCES,
     PROVIDER_OLDEST_QUEUED,
     PROVIDER_QUEUED,
+    PROVIDER_READY_INSTANCES,
+    PROVIDER_TOTAL_SLOTS,
+    PROVIDER_UNHEALTHY_INSTANCES,
     REGISTRY,
 )
 
@@ -29,4 +36,11 @@ async def metrics(request: Request) -> Response:
         PROVIDER_QUEUED.labels(provider).set(snapshot.queued_attempts)
         PROVIDER_CAPACITY.labels(provider).set(snapshot.capacity)
         PROVIDER_OLDEST_QUEUED.labels(provider).set(snapshot.oldest_queued_attempt_seconds)
+        PROVIDER_DESIRED_INSTANCES.labels(provider).set(snapshot.desired_instances)
+        PROVIDER_OBSERVED_INSTANCES.labels(provider).set(snapshot.observed_instances)
+        PROVIDER_READY_INSTANCES.labels(provider).set(snapshot.ready_instances)
+        PROVIDER_DRAINING_INSTANCES.labels(provider).set(snapshot.draining_instances)
+        PROVIDER_UNHEALTHY_INSTANCES.labels(provider).set(snapshot.unhealthy_instances)
+        PROVIDER_TOTAL_SLOTS.labels(provider).set(snapshot.total_slots)
+        PROVIDER_AVAILABLE_SLOTS.labels(provider).set(snapshot.available_slots)
     return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)

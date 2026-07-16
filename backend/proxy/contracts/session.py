@@ -37,3 +37,5 @@ class ProviderAttempt:
     ordinal: int
     provider: ProviderName
     state: AttemptState
+    provider_instance_id: str | None = None
+    endpoint: str | None = None

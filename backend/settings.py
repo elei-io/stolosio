@@ -45,7 +45,10 @@ class Settings(BaseSettings):
     provider_queue_timeout_seconds: float = 30
     provider_acquisition_timeout_seconds: int = 10
     session_cleanup_timeout_seconds: float = 2
-    chromium_max_active_sessions: int = 1
+    chromium_minimum_instances: int = 1
+    chromium_maximum_instances: int = 4
+    chromium_session_capacity_per_instance: int = 2
+    chromium_scale_down_cooldown_seconds: int = 30
     chromium_max_queued_attempts: int = 100
     browserless_max_active_sessions: int = 5
     browserless_max_queued_attempts: int = 100
@@ -53,6 +56,14 @@ class Settings(BaseSettings):
     lightpanda_max_queued_attempts: int = 100
     camoufox_max_active_sessions: int = 1
     camoufox_max_queued_attempts: int = 100
+    fleet_reconcile_interval_seconds: float = 1
+    fleet_observation_ttl_seconds: float = 5
+    fleet_instance_startup_timeout_seconds: float = 30
+    fleet_controller_backoff_seconds: float = 2
+    fleet_controller_metrics_port: int = 9001
+    fleet_compose_project_name: str = "harbor"
+    fleet_compose_service: str = "chromium"
+    fleet_compose_workdir: str = "."
 
 
 @lru_cache

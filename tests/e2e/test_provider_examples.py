@@ -3,6 +3,7 @@ import json
 import os
 from uuid import uuid4
 
+import httpx
 import pytest
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
@@ -78,7 +79,10 @@ async def test_omitted_provider_uses_automatic_plan() -> None:
 @pytest.mark.asyncio
 async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
     async with async_playwright() as playwright:
-        blocker = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.CHROMIUM))
+        blockers = [
+            await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.CHROMIUM))
+            for _ in range(2)
+        ]
 
         async def abandon_waiter() -> None:
             with pytest.raises(PlaywrightTimeoutError):
@@ -88,7 +92,7 @@ async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
                 )
 
         await asyncio.gather(*(abandon_waiter() for _ in range(6)))
-        await blocker.close()
+        await asyncio.gather(*(blocker.close() for blocker in blockers))
 
         browser = await playwright.chromium.connect_over_cdp(
             harbor_url(ProviderName.CHROMIUM),
@@ -98,6 +102,75 @@ async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
         await page.goto("https://example.com")
         assert "Example Domain" in await page.content()
         await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_managed_chromium_fleet_packs_sessions_scales_and_returns_to_minimum() -> None:
+    api = os.getenv("HARBOR_E2E_HTTP_URL", "http://localhost:8411")
+
+    async def chromium_fleet() -> dict:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{api}/v1/fleet/providers")
+            response.raise_for_status()
+            return response.json()[0]
+
+    async def wait_for(predicate, timeout_seconds: float = 20) -> dict:
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        while asyncio.get_running_loop().time() < deadline:
+            fleet = await chromium_fleet()
+            if predicate(fleet):
+                return fleet
+            await asyncio.sleep(0.1)
+        raise TimeoutError("Managed Chromium fleet did not reach expected state")
+
+    async with async_playwright() as playwright:
+        first = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.CHROMIUM))
+        second = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.CHROMIUM))
+        first_page = await first.new_page()
+        second_page = await second.new_page()
+        await asyncio.gather(
+            first_page.goto("https://example.com"),
+            second_page.goto("https://example.org"),
+        )
+        assert await first_page.title() == "Example Domain"
+        assert await second_page.title() == "Example Domain"
+
+        packed = await wait_for(
+            lambda fleet: (
+                fleet["observed_instances"] == 1
+                and fleet["active_attempts"] == 2
+                and fleet["available_slots"] == 0
+            )
+        )
+        assert packed["total_slots"] == 2
+
+        third_task = asyncio.create_task(
+            playwright.chromium.connect_over_cdp(
+                harbor_url(ProviderName.CHROMIUM),
+                timeout=20_000,
+            )
+        )
+        scaled = await wait_for(
+            lambda fleet: fleet["desired_instances"] == 2 and fleet["ready_instances"] == 2
+        )
+        assert scaled["total_slots"] == 4
+        third = await third_task
+
+        await first.close()
+        assert await second_page.title() == "Example Domain"
+        await asyncio.gather(second.close(), third.close())
+
+    reduced = await wait_for(
+        lambda fleet: (
+            fleet["desired_instances"] == 1
+            and fleet["observed_instances"] == 1
+            and fleet["ready_instances"] == 1
+        ),
+        timeout_seconds=30,
+    )
+    assert reduced["active_attempts"] == 0
+    assert reduced["queued_attempts"] == 0
+    assert reduced["available_slots"] == 2
 
 
 @pytest.mark.asyncio
