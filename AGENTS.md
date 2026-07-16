@@ -93,6 +93,23 @@ Before handing off a change:
 The programs in `examples/` are mock downstream clients and acceptance targets. Keep
 them free of Harbor-specific SDK code.
 
+## Frontend
+
+- Build the frontend with React, TypeScript, Vite, and shadcn/ui components.
+- Use React Query for server state. Keep shared API types under `web/src/types/`.
+- Prefer named exports throughout `web/src/`; `App.tsx` is the sole default-export
+  exception.
+- Every mutation error must be passed through `extractApiError` and surfaced with
+  `toast.error()`.
+
+Run frontend checks from `web/`:
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+```
+
 ## Implementation style
 
 - Keep route handlers thin and domain logic independently testable.
