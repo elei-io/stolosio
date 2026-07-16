@@ -35,6 +35,10 @@ WS /v1/connect
   leases, capacity, and analytical projections.
 - Logical sessions consume global Harbor capacity and never own a permanent provider.
   Provider queues contain acquisition attempts, not sessions.
+- Managed provider fleets contain browser instances, and instances expose session
+  slots. Only healthy, ready, non-draining instances contribute provider capacity.
+- Fleet controllers own infrastructure reconciliation and run separately from FastAPI.
+  Provider adapters consume assigned instance endpoints; they do not scale fleets.
 - NATS Core is for live coordination and fan-out. JetStream is for durable observation
   delivery and replay. Harbor has no Redis dependency.
 - Prometheus metrics must use bounded labels. Domains, URLs, session IDs, and arbitrary
@@ -51,8 +55,11 @@ WS /v1/connect
   time with tests.
 - The optimizer minimizes browser, proxy, and helper-service spend subject to
   correctness. Cost reduction never outranks correct acquisition.
-- Browser infrastructure is local Compose machinery in development. Production scaling
-  is performed externally from the signals Harbor exposes.
+- Harbor owns browser fleet policy, desired capacity, placement, health, and draining.
+  Docker, Kubernetes, or another platform supplies compute through a separate Harbor
+  fleet controller.
+- Administrative fleet limits are not downstream session settings and cannot be
+  overridden through `harbor.*` query parameters.
 - Prefer the smallest implementation that satisfies the current milestone. Roadmap
   documents describe direction, not permission to build speculative abstractions.
 

@@ -6,8 +6,8 @@ and Camoufox.
 
 It is for teams building browser automation, scraping, testing, and web-data systems
 that want to change providers without rewriting downstream automation. Harbor owns
-session admission, provider queues, scaling signals, observations, and eventually
-cost-aware acquisition planning.
+session admission, provider queues, managed browser fleets, observations, and
+eventually cost-aware acquisition planning.
 
 ## Developer setup
 
@@ -47,6 +47,7 @@ HARBOR_E2E=1 uv run pytest -m e2e
 
 - [Vision](docs/VISION.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Fleet management](docs/FLEET_MANAGEMENT.md)
 - [Provider matrix](docs/PROVIDERS.md)
 - [DEBUG stream](docs/DEBUG.md)
 - [No-browser execution](docs/NO_BROWSER.md)

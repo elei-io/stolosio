@@ -97,6 +97,26 @@ The gateway watches downstream disconnect while provider admission is pending. O
 component owns WebSocket acceptance, denial, and closure. Provider and session cleanup
 are bounded and idempotent.
 
+## Fleet control plane
+
+Harbor manages browser workers as provider fleets. A fleet contains compatible browser
+instances, and each instance exposes one or more session slots. Provider attempts queue
+at fleet level and atomically reserve a slot on a ready, non-draining instance before
+the adapter connects directly to that instance.
+
+Desired fleet configuration and observed instance state are durable in PostgreSQL.
+Fleet controllers run separately from FastAPI and reconcile that state through Docker,
+Kubernetes, or another infrastructure platform. Desired replicas never count as usable
+capacity until their instances have been observed healthy and ready.
+
+Administrators control minimum and maximum instances, per-instance session capacity,
+and scaling safety limits. These settings are control-plane policy and cannot be
+overridden by downstream `harbor.*` connection parameters. Lower limits drain capacity
+without silently terminating successful sessions.
+
+See [Fleet Management](FLEET_MANAGEMENT.md) for the design contract and
+[Managed Fleets](roadmap/managed-fleets.md) for the first implementation milestone.
+
 ## Provider adapters
 
 Each provider adapter implements acquisition, connection, health, capability reporting,
@@ -238,9 +258,10 @@ Metrics use bounded provider, outcome, method-registry, and stable-reason labels
 - Commands, events, bytes, errors, and unsupported commands.
 - Provider crashes and abnormal disconnects.
 
-The primary horizontal scaling signals are queue depth, oldest request age, active
-sessions relative to capacity, and acquisition latency. Harbor exposes these signals;
-Kubernetes or another external platform decides how browser workloads scale.
+The primary scaling signals are queue depth, oldest request age, occupied slots relative
+to healthy capacity, and acquisition latency. Harbor's fleet policy converts those
+signals into desired browser capacity. A separate platform controller reconciles that
+desired state through Docker, Kubernetes, or another runtime.
 
 `GET /v1/fleet/gateway`, `GET /v1/fleet/providers`, and `/metrics` use PostgreSQL fleet
 snapshot queries.
