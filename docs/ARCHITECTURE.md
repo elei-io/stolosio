@@ -81,8 +81,8 @@ The session owns:
 - Cleanup state and termination reason.
 
 Attempts own resolved provider settings, provider queue position, acquisition state,
-provider resources, and outcome. Future HTTP-to-browser promotion creates another
-attempt under the same logical session.
+provider resources, and outcome. HTTP-to-browser promotion creates another attempt
+under the same logical session after closing the HTTP attempt as `promoted`.
 
 PostgreSQL transactions own global session admission and separate per-provider FIFO
 admission. NATS capacity notifications wake queued attempt handlers; PostgreSQL polling
@@ -116,6 +116,13 @@ without silently terminating successful sessions.
 
 See [Fleet Management](FLEET_MANAGEMENT.md) for the design contract and
 [Managed Fleets](roadmap/managed-fleets.md) for the first implementation milestone.
+
+Fleet reconciliation has three boundaries: a provider-neutral reconciler owns desired
+state convergence, provider definitions describe endpoint facts, and runtime drivers
+perform infrastructure operations. Chromium and Lightpanda use the same reconciler
+through the local Docker Compose driver. A Kubernetes or k3s driver replaces only the
+infrastructure operations, not scaling policy, PostgreSQL state, placement, or provider
+adapters.
 
 ## Provider adapters
 
@@ -161,6 +168,23 @@ Passthrough must preserve:
 - Event order within a connection.
 - Backpressure between client and provider sockets.
 - Close codes and meaningful protocol errors.
+
+### Adaptive no-browser execution
+
+An automatic session begins behind a bounded CDP facade without acquiring a provider.
+The facade supports the tested one-page Playwright bootstrap, performs `Page.navigate`
+through HTTP, and answers only the exact recognized `page.content()` protocol shape.
+Every other sequence acquires Chromium.
+
+Before the triggering command runs, Harbor replays every command already acknowledged
+by the facade in original order, maps facade-owned identifiers to real Chromium
+identifiers, waits for response and lifecycle catch-up, and suppresses duplicate replay
+output. The downstream WebSocket and logical session do not change. PostgreSQL records
+the HTTP and Chromium attempts plus factual per-domain promotion history; the replay
+log itself remains bounded and process-local.
+
+See [No-Browser Execution](NO_BROWSER.md) and the implemented
+[No-Browser Promotion](roadmap/no-browser-promotion.md) milestone.
 
 ### Translated execution
 

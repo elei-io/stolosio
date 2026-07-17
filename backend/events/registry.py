@@ -29,6 +29,7 @@ class EventType(StrEnum):
     PAGE_LOADED = "page.loaded"
     PAGE_CRASHED = "page.crashed"
     PROVIDER_DISCONNECTED = "provider.disconnected"
+    EXECUTION_PROMOTED = "execution.promoted"
 
 
 class _Payload(BaseModel):
@@ -69,6 +70,12 @@ class ObservationPayload(_Payload):
     duration_ms: int | None = None
 
 
+class PromotionPayload(_Payload):
+    from_provider: str = Field(max_length=32)
+    to_provider: str = Field(max_length=32)
+    trigger_method: str = Field(max_length=128)
+
+
 _LIFECYCLE = {
     EventType.SESSION_REQUESTED,
     EventType.SESSION_ADMITTED,
@@ -98,6 +105,7 @@ _MODELS: dict[EventType, type[_Payload]] = {
     **dict.fromkeys(_ATTEMPTS, AttemptPayload),
     **dict.fromkeys(_COMMANDS, CommandPayload),
     **dict.fromkeys(_OBSERVATIONS, ObservationPayload),
+    EventType.EXECUTION_PROMOTED: PromotionPayload,
 }
 
 

@@ -6,6 +6,7 @@ from backend.metrics.definitions import (
     COMMAND_DURATION,
     COMMANDS,
     EVENT_PUBLICATION_FAILURES,
+    NO_BROWSER_PROMOTIONS,
     PROVIDER_FAILURES,
     SESSION_ACQUISITION_DURATION,
     SESSION_ACQUISITIONS,
@@ -42,6 +43,18 @@ def metric_reason(reason: object) -> str:
     return reason if isinstance(reason, str) and reason in _KNOWN_REASONS else "other"
 
 
+def promotion_trigger(trigger: object) -> str:
+    if trigger == "domain_history":
+        return "domain_history"
+    if trigger == "replay_budget":
+        return "replay_budget"
+    if trigger in {"http_transport_failure", "http_response_too_large"}:
+        return "http_safety_fallback"
+    if isinstance(trigger, str) and trigger in _KNOWN_METHODS:
+        return "browser_command"
+    return "other"
+
+
 def observe_published_event(event: SessionEvent) -> None:
     event_type = EventType(event.event_type)
     duration = event.payload.get("duration_ms")
@@ -49,6 +62,13 @@ def observe_published_event(event: SessionEvent) -> None:
     if event_type in {EventType.SESSION_CLOSED, EventType.SESSION_FAILED}:
         outcome = "closed" if event_type is EventType.SESSION_CLOSED else "failed"
         SESSIONS_COMPLETED.labels(outcome).inc()
+        return
+    if event_type is EventType.EXECUTION_PROMOTED:
+        NO_BROWSER_PROMOTIONS.labels(
+            event.payload["from_provider"],
+            event.payload["to_provider"],
+            promotion_trigger(event.payload.get("trigger_method")),
+        ).inc()
         return
     if event.provider is None:
         return

@@ -42,6 +42,18 @@ class DomainCommandStat(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class DomainPromotionStat(Base):
+    __tablename__ = "domain_promotion_stats"
+
+    domain_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("domains.id", ondelete="CASCADE"), primary_key=True
+    )
+    promotion_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    last_trigger_method: Mapped[str] = mapped_column(String(128))
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class SessionDomainCommand(Base):
     __tablename__ = "session_domain_commands"
     __table_args__ = (Index("ix_session_domain_commands_domain", "domain_id"),)

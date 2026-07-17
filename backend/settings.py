@@ -45,25 +45,40 @@ class Settings(BaseSettings):
     provider_queue_timeout_seconds: float = 30
     provider_acquisition_timeout_seconds: int = 10
     session_cleanup_timeout_seconds: float = 2
+    http_max_active_sessions: int = 100
+    http_max_queued_attempts: int = 100
+    http_request_timeout_seconds: float = 20
+    http_max_response_bytes: int = 10 * 1024 * 1024
+    http_user_agent: str = "HarborBot/0.1 (https://github.com/ekkuleivonen/harbor)"
+    http_accept: str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    http_accept_language: str = "en-US,en;q=0.5"
+    no_browser_replay_max_commands: int = 100
+    no_browser_replay_max_bytes: int = 2 * 1024 * 1024
+    no_browser_replay_timeout_seconds: float = 30
     chromium_minimum_instances: int = 1
     chromium_maximum_instances: int = 4
-    chromium_session_capacity_per_instance: int = 2
+    chromium_session_capacity_per_instance: int = 4
     chromium_scale_down_cooldown_seconds: int = 30
     chromium_max_queued_attempts: int = 100
     browserless_max_active_sessions: int = 5
     browserless_max_queued_attempts: int = 100
     lightpanda_max_active_sessions: int = 1
     lightpanda_max_queued_attempts: int = 100
+    lightpanda_minimum_instances: int = 1
+    lightpanda_maximum_instances: int = 4
+    lightpanda_session_capacity_per_instance: int = 1
+    lightpanda_scale_down_cooldown_seconds: int = 30
     camoufox_max_active_sessions: int = 1
     camoufox_max_queued_attempts: int = 100
     fleet_reconcile_interval_seconds: float = 1
     fleet_observation_ttl_seconds: float = 5
     fleet_instance_startup_timeout_seconds: float = 30
     fleet_controller_backoff_seconds: float = 2
-    fleet_controller_metrics_port: int = 9001
+    fleet_controller_metrics_port: int = 9101
     fleet_compose_project_name: str = "harbor"
-    fleet_compose_service: str = "chromium"
     fleet_compose_workdir: str = "."
+    chromium_fleet_compose_service: str = "chromium"
+    lightpanda_fleet_compose_service: str = "lightpanda"
 
 
 @lru_cache

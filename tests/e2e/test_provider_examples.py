@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import sys
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -77,6 +79,56 @@ async def test_omitted_provider_uses_automatic_plan() -> None:
 
 
 @pytest.mark.asyncio
+async def test_no_browser_promotion_replays_all_prior_navigations() -> None:
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.HTTP))
+        page = await browser.new_page()
+        await page.goto("https://example.com/?harbor-replay=first")
+        assert "Example Domain" in await page.content()
+        await page.goto("https://example.com/?harbor-replay=second")
+        assert "Example Domain" in await page.content()
+
+        state = await page.evaluate(
+            "({search: location.search, historyLength: history.length, "
+            "heading: document.querySelector('h1').textContent})"
+        )
+
+        assert state == {
+            "search": "?harbor-replay=second",
+            "historyLength": state["historyLength"],
+            "heading": "Example Domain",
+        }
+        assert state["historyLength"] >= 3
+        await browser.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "example",
+    [
+        "05_no_browser_http_only.py",
+        "06_no_browser_promotion.py",
+        "07_no_browser_history.py",
+    ],
+)
+async def test_no_browser_example_programs(example: str) -> None:
+    root = Path(__file__).parents[2]
+    environment = os.environ.copy()
+    environment["HARBOR_CDP_URL"] = harbor_url(ProviderName.HTTP)
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        str(root / "examples" / example),
+        cwd=root,
+        env=environment,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+
+    assert process.returncode == 0, (stdout + stderr).decode()
+
+
+@pytest.mark.asyncio
 async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
     async with async_playwright() as playwright:
         blockers = [
@@ -112,7 +164,11 @@ async def test_managed_chromium_fleet_packs_sessions_scales_and_returns_to_minim
         async with httpx.AsyncClient() as client:
             response = await client.get(f"{api}/v1/fleet/providers")
             response.raise_for_status()
-            return response.json()[0]
+            return next(
+                snapshot
+                for snapshot in response.json()
+                if snapshot["provider"] == ProviderName.CHROMIUM.value
+            )
 
     async def wait_for(predicate, timeout_seconds: float = 20) -> dict:
         deadline = asyncio.get_running_loop().time() + timeout_seconds
@@ -171,6 +227,55 @@ async def test_managed_chromium_fleet_packs_sessions_scales_and_returns_to_minim
     assert reduced["active_attempts"] == 0
     assert reduced["queued_attempts"] == 0
     assert reduced["available_slots"] == 2
+
+
+@pytest.mark.asyncio
+async def test_managed_lightpanda_fleet_scales_one_slot_instances() -> None:
+    api = os.getenv("HARBOR_E2E_HTTP_URL", "http://localhost:8411")
+
+    async def lightpanda_fleet() -> dict:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{api}/v1/fleet/providers")
+            response.raise_for_status()
+            return next(
+                fleet for fleet in response.json() if fleet["provider"] == "lightpanda"
+            )
+
+    async def wait_for(predicate, timeout_seconds: float = 30) -> dict:
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        while asyncio.get_running_loop().time() < deadline:
+            fleet = await lightpanda_fleet()
+            if predicate(fleet):
+                return fleet
+            await asyncio.sleep(0.1)
+        raise TimeoutError("Managed Lightpanda fleet did not reach expected state")
+
+    async with async_playwright() as playwright:
+        first = await playwright.chromium.connect_over_cdp(
+            harbor_url(ProviderName.LIGHTPANDA)
+        )
+        second_task = asyncio.create_task(
+            playwright.chromium.connect_over_cdp(
+                harbor_url(ProviderName.LIGHTPANDA),
+                timeout=30_000,
+            )
+        )
+        scaled = await wait_for(
+            lambda fleet: fleet["desired_instances"] == 2 and fleet["ready_instances"] == 2
+        )
+        assert scaled["total_slots"] == 2
+        second = await second_task
+        await asyncio.gather(first.close(), second.close())
+
+    reduced = await wait_for(
+        lambda fleet: (
+            fleet["desired_instances"] == 1
+            and fleet["observed_instances"] == 1
+            and fleet["ready_instances"] == 1
+        )
+    )
+    assert reduced["total_slots"] == 1
+    assert reduced["active_attempts"] == 0
 
 
 @pytest.mark.asyncio

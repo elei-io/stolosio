@@ -11,7 +11,7 @@ own end-to-end examples. It should be updated as compatibility tests grow.
 
 | Provider | Engine | Native control | Rendering | Primary advantage | Primary limitation |
 | --- | --- | --- | --- | --- | --- |
-| HTTP | HTTP client and HTML parser | Harbor-emulated CDP subset | No | Lowest possible cost | Initially limited to navigation and content retrieval |
+| HTTP | Async HTTP client | Harbor-emulated CDP subset | No | Lowest possible cost | Initially limited to navigation and content retrieval |
 | Plain Chromium | Chrome Headless Shell | CDP | Yes | Reference CDP behavior without another service layer | Resource-heavy and no built-in queue or session manager |
 | Browserless Chromium | Chromium managed by Browserless | CDP plus Browserless lifecycle | Yes | Built-in concurrency, queueing, timeouts, and crash isolation | Adds provider behavior and has licensing implications |
 | Lightpanda | Custom Zig browser with V8 | CDP subset | No graphical renderer | Very low startup and resource cost | Incomplete Web Platform and CDP coverage |
@@ -25,9 +25,9 @@ blank cell has not yet been established by Harbor tests.
 
 | Capability | HTTP | Plain Chromium | Browserless | Lightpanda | Camoufox |
 | --- | --- | --- | --- | --- | --- |
-| Playwright `connect_over_cdp` | Emulated later | Yes | Yes | Yes, subset | No, requires Harbor mapping |
+| Playwright `connect_over_cdp` | Yes, bounded facade | Yes | Yes | Yes, subset | No, requires Harbor mapping |
 | JavaScript execution | No | Yes | Yes | Yes | Yes |
-| DOM access | Parsed HTML only | Yes | Yes | Yes, partial Web APIs | Yes |
+| DOM access | No; full HTML only | Yes | Yes | Yes, partial Web APIs | Yes |
 | Click and form interaction | No | Yes | Yes | Yes, supported subset | Yes |
 | Graphical layout | No | Yes | Yes | No | Yes |
 | Screenshots | No | Yes | Yes | No | Yes |
@@ -38,7 +38,7 @@ blank cell has not yet been established by Harbor tests.
 | Browser fingerprint rotation | No | Default browser identity | Default browser identity unless separately configured | Not its primary purpose | Yes, per browser instance |
 | Built-in queueing | No | No | Yes | No | No |
 | Built-in session lifecycle | No | No | Yes | No | Experimental remote server |
-| Native Harbor transport today | Not implemented | Yes | Yes | Yes | Mapped subset |
+| Native Harbor transport today | Yes, bounded facade | Yes | Yes | Yes | Mapped subset |
 
 ## Locally verified common behavior
 
@@ -65,9 +65,9 @@ it.
 ### HTTP
 
 HTTP is treated as a provider selection even though no browser is acquired. Initially,
-only `page.goto` and `page.get_content` remain on this path. Any other command triggers
-browser acquisition and a real navigation as described in [No-Browser
-Execution](NO_BROWSER.md).
+only `page.goto` and `page.content` remain on this path. Any other command triggers
+browser acquisition and ordered replay of every acknowledged command as described in
+[No-Browser Execution](NO_BROWSER.md).
 
 ### Plain Chromium
 
@@ -100,6 +100,12 @@ other rendering-dependent behavior cannot be assumed.
 Lightpanda describes itself as beta software with growing Web API coverage. Harbor must
 measure command compatibility rather than infer full support from the presence of a CDP
 endpoint.
+
+Lightpanda is a managed fleet provider with one slot per instance. Its assigned instance
+endpoint is passed to the direct-CDP adapter, and the provider-neutral reconciler scales
+instances from Lightpanda queue demand. Docker Compose is the first runtime driver;
+future Kubernetes or k3s support does not require different Lightpanda admission or
+scaling policy.
 
 ### Camoufox
 

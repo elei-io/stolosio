@@ -116,6 +116,16 @@ def test_camoufox_uses_mapping_adapter() -> None:
     assert adapter.provider is ProviderName.CAMOUFOX
 
 
+def test_lightpanda_uses_assigned_managed_instance_endpoint() -> None:
+    adapter = get_provider_adapter(
+        ProviderName.LIGHTPANDA,
+        endpoint="ws://harbor-lightpanda-2:9222",
+    )
+
+    assert isinstance(adapter, DirectCdpAdapter)
+    assert adapter.endpoint == "ws://harbor-lightpanda-2:9222"
+
+
 @pytest.mark.asyncio
 async def test_cdp_session_disposes_only_contexts_created_through_that_connection() -> None:
     websocket = FakeWebSocket(

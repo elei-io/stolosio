@@ -33,6 +33,10 @@ occupied capacity:  5
 available capacity: 3
 ```
 
+Slot capacity is provider-specific. The managed Chromium default is four sessions per
+instance. Lightpanda currently supports one browser context and one page target, so a
+managed Lightpanda instance contributes exactly one slot.
+
 ## Ownership boundary
 
 Harbor owns:
@@ -54,6 +58,18 @@ The infrastructure platform owns:
 Platform-specific controllers translate Harbor's desired state into Docker,
 Kubernetes, ECS, Nomad, or another runtime. The FastAPI process does not receive
 infrastructure credentials or execute platform commands.
+
+The controller is split across two independent dimensions:
+
+- A provider definition describes how a runtime instance becomes a usable provider
+  endpoint and records provider constraints such as its connection port.
+- A runtime driver lists, scales, probes, and removes infrastructure units for a named
+  deployment.
+
+The provider-neutral reconciler joins those definitions with PostgreSQL desired state.
+Docker Compose is the local runtime driver; Kubernetes and k3s can implement the same
+runtime contract without changing demand calculation, instance state, placement, or
+the public CDP endpoint.
 
 ## Fleet configuration
 
@@ -198,5 +214,5 @@ Fleet observability includes:
 - Scaling actions by provider, direction, and stable outcome.
 - Time of the last successful reconciliation.
 
-The first implementation milestone is specified in
+The first implementation and its runtime-neutral Lightpanda extension are specified in
 [Managed Fleets](roadmap/managed-fleets.md).

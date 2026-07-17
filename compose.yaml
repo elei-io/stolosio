@@ -111,8 +111,8 @@ services:
     image: lightpanda/browser:nightly
     environment:
       LIGHTPANDA_DISABLE_TELEMETRY: "true"
-    ports:
-      - "9222:9222"
+    expose:
+      - "9222"
 
 volumes:
   postgres_data:

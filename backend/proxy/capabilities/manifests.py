@@ -34,6 +34,7 @@ EXAMPLE_BASELINE = frozenset(
 )
 
 PROVIDER_METHODS: dict[ProviderName, frozenset[str]] = {
+    ProviderName.HTTP: EXAMPLE_BASELINE,
     ProviderName.CHROMIUM: EXAMPLE_BASELINE,
     ProviderName.BROWSERLESS: EXAMPLE_BASELINE | {"Page.setFontFamilies"},
     ProviderName.LIGHTPANDA: EXAMPLE_BASELINE,

@@ -15,6 +15,7 @@ from backend.api.routes.proxy import router as proxy_router
 from backend.db.session import engine, session_factory
 from backend.debug import DebugStreamService
 from backend.fleet import FleetRepository, FleetService
+from backend.fleet.bootstrap import ensure_managed_fleets
 from backend.messaging import NatsCapacityNotifier, PollingNotifier
 from backend.messaging.jetstream import (
     EventStreamSettings,
@@ -23,8 +24,8 @@ from backend.messaging.jetstream import (
 from backend.metrics import FleetSnapshotService, InstrumentedEventPublisher
 from backend.proxy.attempts import AttemptAdmission
 from backend.proxy.capabilities import capability_registry
-from backend.proxy.contracts import ProviderName
 from backend.proxy.gateway import Gateway
+from backend.proxy.no_browser import PromotionHistoryRepository
 from backend.proxy.postgres import (
     PostgresAttemptRepository,
     PostgresSessionRepository,
@@ -39,13 +40,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     fleet_repository = FleetRepository(session_factory)
-    await fleet_repository.ensure_fleet(
-        ProviderName.CHROMIUM,
-        minimum_instances=settings.chromium_minimum_instances,
-        maximum_instances=settings.chromium_maximum_instances,
-        session_capacity_per_instance=settings.chromium_session_capacity_per_instance,
-        scale_down_cooldown_seconds=settings.chromium_scale_down_cooldown_seconds,
-    )
+    await ensure_managed_fleets(fleet_repository, settings)
     repository = PostgresSessionRepository(
         session_factory,
         SessionRepositorySettings(
@@ -106,6 +101,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         capability_registry,
         settings,
         event_publisher if nats_client is not None else None,
+        promotion_history=PromotionHistoryRepository(session_factory),
     )
     try:
         yield

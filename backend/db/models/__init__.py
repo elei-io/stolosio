@@ -13,6 +13,7 @@ from backend.db.models.gateway import (
 from backend.db.models.observability import (
     Domain,
     DomainCommandStat,
+    DomainPromotionStat,
     SessionDomain,
     SessionDomainCommand,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "AcquisitionAttempt",
     "Domain",
     "DomainCommandStat",
+    "DomainPromotionStat",
     "FleetConfigurationEvent",
     "GatewaySession",
     "GatewayState",

@@ -21,7 +21,7 @@ class CdpEventObserver:
     def __init__(
         self,
         session_id: UUID,
-        attempt_id: UUID,
+        attempt_id: UUID | None,
         provider: ProviderName,
         publisher: EventPublisher,
     ) -> None:
@@ -31,6 +31,10 @@ class CdpEventObserver:
         self._publisher = publisher
         self._pending: dict[int, _PendingCommand] = {}
         self._domain: str | None = None
+
+    def bind_attempt(self, provider: ProviderName, attempt_id: UUID | None) -> None:
+        self._provider = provider
+        self._attempt_id = attempt_id
 
     async def command_received(self, command: dict) -> None:
         command_id = command["id"]

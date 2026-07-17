@@ -12,7 +12,7 @@ from backend.events.publisher import EventPublisher, NullEventPublisher
 from backend.proxy.adapters import get_provider_adapter
 from backend.proxy.attempts import AttemptAdmission, AttemptLease
 from backend.proxy.capabilities import CapabilityRegistry
-from backend.proxy.contracts import ResolvedSessionSettings
+from backend.proxy.contracts import ProviderName, ProviderSelection, ResolvedSessionSettings
 from backend.proxy.errors import (
     ConnectionRejected,
     ProviderAcquisitionTimeout,
@@ -20,6 +20,7 @@ from backend.proxy.errors import (
     ProviderUnavailable,
     SessionLeaseLost,
 )
+from backend.proxy.no_browser import AdaptiveCdpSession, PromotionHistoryRepository
 from backend.proxy.sessions import SessionAdmission, SessionLease
 from backend.proxy.settings import HarborSettingsResolver, harbor_settings_resolver
 from backend.proxy.transport import relay_cdp
@@ -37,6 +38,7 @@ class Gateway:
         settings: Settings,
         event_publisher: EventPublisher | None = None,
         resolver: HarborSettingsResolver = harbor_settings_resolver,
+        promotion_history: PromotionHistoryRepository | None = None,
     ) -> None:
         self._sessions = sessions
         self._attempts = attempts
@@ -44,11 +46,13 @@ class Gateway:
         self._settings = settings
         self._event_publisher = event_publisher or NullEventPublisher()
         self._resolver = resolver
+        self._promotion_history = promotion_history
 
     async def connect(self, websocket: WebSocket) -> None:
         session: SessionLease | None = None
         attempt: AttemptLease | None = None
         provider_session = None
+        observer = None
         accepted = False
         client_disconnected = False
         failed = False
@@ -80,55 +84,88 @@ class Gateway:
                     return
                 session = await admission
 
-                preparation = asyncio.create_task(self._prepare(session, resolved))
-                lease_lost = asyncio.create_task(session.wait_lost())
-                try:
-                    done, _ = await asyncio.wait(
-                        {preparation, disconnected, lease_lost},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if disconnected in done:
+                adaptive = requested.provider in {
+                    ProviderSelection.AUTO,
+                    ProviderSelection.HTTP,
+                }
+                if adaptive:
+                    if disconnected.done():
                         client_disconnected = True
                         reason = "client_disconnected"
-                        if preparation.done() and not preparation.cancelled():
-                            result = preparation.exception()
-                            if result is None:
-                                attempt, provider_session = preparation.result()
-                        else:
+                        return
+                    if self._promotion_history is None:
+                        raise RuntimeError("No-browser promotion history is unavailable")
+                    observer = CdpEventObserver(
+                        UUID(session.session.session_id),
+                        None,
+                        ProviderName.HTTP,
+                        self._event_publisher,
+                    )
+                    provider_session = AdaptiveCdpSession(
+                        session.session,
+                        resolved,
+                        self._attempts,
+                        self._capabilities,
+                        self._promotion_history,
+                        observer,
+                        self._settings,
+                        force_http=requested.provider is ProviderSelection.HTTP,
+                    )
+                else:
+                    preparation = asyncio.create_task(self._prepare(session, resolved))
+                    lease_lost = asyncio.create_task(session.wait_lost())
+                    try:
+                        done, _ = await asyncio.wait(
+                            {preparation, disconnected, lease_lost},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if disconnected in done:
+                            client_disconnected = True
+                            reason = "client_disconnected"
+                            if preparation.done() and not preparation.cancelled():
+                                result = preparation.exception()
+                                if result is None:
+                                    attempt, provider_session = preparation.result()
+                            else:
+                                preparation.cancel()
+                                await asyncio.gather(preparation, return_exceptions=True)
+                            return
+                        if lease_lost in done:
                             preparation.cancel()
                             await asyncio.gather(preparation, return_exceptions=True)
-                        return
-                    if lease_lost in done:
-                        preparation.cancel()
-                        await asyncio.gather(preparation, return_exceptions=True)
-                        raise SessionLeaseLost
-                    attempt, provider_session = await preparation
-                finally:
-                    if not lease_lost.done():
-                        lease_lost.cancel()
-                    await asyncio.gather(lease_lost, return_exceptions=True)
+                            raise SessionLeaseLost
+                        attempt, provider_session = await preparation
+                    finally:
+                        if not lease_lost.done():
+                            lease_lost.cancel()
+                        await asyncio.gather(lease_lost, return_exceptions=True)
             finally:
                 if not disconnected.done():
                     disconnected.cancel()
                 await asyncio.gather(disconnected, return_exceptions=True)
 
-            await attempt.activate()
+            if attempt is not None:
+                await attempt.activate()
             await session.open()
             await websocket.accept()
             accepted = True
+
+            if observer is None:
+                assert attempt is not None
+                observer = CdpEventObserver(
+                    UUID(session.session.session_id),
+                    UUID(attempt.attempt.attempt_id),
+                    attempt.attempt.provider,
+                    self._event_publisher,
+                )
 
             relay_task = asyncio.create_task(
                 relay_cdp(
                     websocket,
                     provider_session,
-                    attempt.attempt.provider,
+                    provider_session.provider,
                     self._capabilities,
-                    CdpEventObserver(
-                        UUID(session.session.session_id),
-                        UUID(attempt.attempt.attempt_id),
-                        attempt.attempt.provider,
-                        self._event_publisher,
-                    ),
+                    observer,
                 )
             )
             lease_lost = asyncio.create_task(session.wait_lost())
@@ -159,6 +196,9 @@ class Gateway:
             )
         finally:
             if provider_session is not None:
+                if failed and hasattr(provider_session, "fail"):
+                    with suppress(Exception):
+                        await provider_session.fail(reason)
                 with suppress(Exception):
                     await provider_session.close()
             if attempt is not None:

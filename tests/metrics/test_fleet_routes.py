@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from backend.api.routes.fleet import router as fleet_router
 from backend.api.routes.metrics import router as metrics_router
 from backend.metrics import GatewayFleetSnapshot, ProviderFleetSnapshot
-from backend.metrics.instrumentation import metric_method, metric_reason
+from backend.metrics.instrumentation import metric_method, metric_reason, promotion_trigger
 from backend.proxy.contracts import ProviderName
 
 
@@ -42,8 +42,11 @@ def test_json_and_prometheus_views_share_the_fleet_snapshot() -> None:
         metrics = client.get("/metrics")
 
     assert response.status_code == 200
-    assert len(response.json()) == 4
-    assert response.json()[0] == {
+    assert len(response.json()) == 5
+    chromium = next(
+        snapshot for snapshot in response.json() if snapshot["provider"] == "chromium"
+    )
+    assert chromium == {
         "provider": "chromium",
         "active_attempts": 1,
         "queued_attempts": 2,
@@ -74,6 +77,9 @@ def test_metric_labels_map_unregistered_values_to_other() -> None:
     assert metric_method("Secret.customCommand") == "other"
     assert metric_reason("provider_unavailable") == "provider_unavailable"
     assert metric_reason("private exception details") == "other"
+    assert promotion_trigger("Runtime.evaluate") == "browser_command"
+    assert promotion_trigger("domain_history") == "domain_history"
+    assert promotion_trigger("private trigger") == "other"
 
 
 def test_fleet_routes_fail_closed_when_postgres_is_unavailable() -> None:

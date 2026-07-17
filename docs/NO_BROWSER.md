@@ -16,20 +16,40 @@ When Harbor encounters an unseen domain, or a domain with no historical Playwrig
 command usage, it begins with a plain HTTP request instead of acquiring a browser and
 calling `page.goto`.
 
-For the initial implementation, only these commands can remain on the plain HTTP path:
+For the initial implementation, only these logical client operations can remain on the
+plain HTTP path:
 
 - `page.goto`
-- `page.get_content`
+- `page.content`
 
 Every other command triggers the browser journey. Harbor must:
 
 1. Acquire a real browser session.
-2. Perform a real `page.goto` for the URL previously fetched over HTTP.
-3. Execute the command that triggered browser acquisition.
-4. Use the real browser for subsequent commands on that page.
+2. Replay every command already acknowledged by the HTTP facade in its original order,
+   including every navigation and content read.
+3. Wait for the real browser to catch up through the required response and lifecycle
+   boundaries while suppressing duplicate replay output.
+4. Execute the command that triggered browser acquisition.
+5. Use the real browser for subsequent commands on that page.
 
-If a client only calls `page.goto` followed by `page.get_content`, Harbor may complete
+If a client only calls `page.goto` followed by `page.content`, Harbor may complete
 the work without involving a browser.
+
+HTTP requests identify themselves truthfully as Harbor automation. The default
+`User-Agent` includes the Harbor project URL rather than impersonating a browser, and
+operators can configure `HTTP_USER_AGENT`, `HTTP_ACCEPT`, and
+`HTTP_ACCEPT_LANGUAGE` for their deployment. Sensitive downstream session headers are
+not forwarded implicitly.
+
+Harbor receives CDP messages rather than Playwright API method names. Playwright also
+sends protocol bootstrap commands before navigation, and content retrieval shares CDP
+method names with title access and arbitrary evaluation. Harbor must therefore
+recognize complete, acceptance-tested protocol sequences rather than classify a
+session from method names alone. Unknown sequences take the safe path and acquire a
+real browser.
+
+The first implementation plan and the observed Playwright protocol evidence are in
+[No-Browser Promotion](roadmap/no-browser-promotion.md).
 
 ## Future development
 

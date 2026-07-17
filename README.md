@@ -19,14 +19,15 @@ uv sync
 docker compose up --build -d
 ```
 
-Run the development fleet controller in another terminal:
+Run the development fleet controller in another terminal. It reconciles the managed
+Chromium and Lightpanda fleets through Docker Compose:
 
 ```bash
 uv run python -m backend.fleet.controllers.docker
 ```
 
 The controller exposes its scaling and reconciliation metrics on
-<http://localhost:9001/metrics> by default.
+<http://localhost:9101/metrics> by default.
 
 The API starts at <http://localhost:8411>. Connect Playwright through Harbor:
 
@@ -61,4 +62,5 @@ HARBOR_E2E=1 uv run pytest -m e2e
 - [DEBUG stream](docs/DEBUG.md)
 - [No-browser execution](docs/NO_BROWSER.md)
 - [Future analytics](docs/ANALYTICS.md)
+- [Roadmap](docs/ROADMAP.md)
 - [Contributor and agent guide](AGENTS.md)

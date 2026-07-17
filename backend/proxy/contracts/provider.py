@@ -12,6 +12,7 @@ class ProviderName(StrEnum):
     BROWSERLESS = "browserless"
     LIGHTPANDA = "lightpanda"
     CAMOUFOX = "camoufox"
+    HTTP = "http"
 
 
 class ProviderSession(Protocol):

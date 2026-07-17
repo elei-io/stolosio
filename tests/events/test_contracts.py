@@ -48,6 +48,21 @@ def test_unknown_envelope_fields_and_versions_are_rejected() -> None:
         SessionEvent.from_json(json.dumps(raw))
 
 
+def test_promotion_event_records_the_factual_transition() -> None:
+    event = SessionEvent.create(
+        EventType.EXECUTION_PROMOTED,
+        uuid4(),
+        provider=ProviderName.CHROMIUM,
+        attempt_id=uuid4(),
+        payload={
+            "from_provider": "http",
+            "to_provider": "chromium",
+            "trigger_method": "Runtime.evaluate",
+        },
+    )
+
+    assert SessionEvent.from_json(event.to_json()) == event
+
 def test_event_contract_bounds_database_fields_and_requires_timezone() -> None:
     with pytest.raises(ValueError):
         SessionEvent.create(

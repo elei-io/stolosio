@@ -2,17 +2,19 @@
 
 Status: implemented
 
-This milestone proves that Harbor can pack multiple sessions onto browser instances,
-measure unmet demand, scale a Chromium fleet through Docker Compose, discover the new
-capacity, and scale it down safely after demand ends.
+This milestone proves that Harbor can pack sessions onto browser instances, measure
+unmet demand, and reconcile managed Chromium and Lightpanda fleets through Docker
+Compose. The reconciliation core is independent of Docker so another runtime can use
+the same desired state and scaling policy.
 
 The durable design is defined in [Fleet Management](../FLEET_MANAGEMENT.md).
 
 ## Scope
 
-The first vertical slice covers:
+The implemented vertical slice covers:
 
-- Plain Chromium only.
+- Plain Chromium with configurable multi-session slots.
+- Lightpanda with one session slot per instance.
 - Docker Compose as the infrastructure runtime.
 - A Harbor fleet controller running as a host process.
 - Configurable minimum and maximum instances.
@@ -22,9 +24,9 @@ The first vertical slice covers:
 - Administrative configuration stored in PostgreSQL.
 - Fleet state, controller metrics, and an end-to-end scaling test.
 
-The milestone does not implement Kubernetes, selective draining of a busy fleet,
-predictive scaling, cost optimization, multiple controller replicas, or fleet classes
-for different process-level browser settings.
+The milestone does not implement a Kubernetes runtime driver, selective draining of a
+busy fleet, predictive scaling, cost optimization, multiple controller replicas, or
+fleet classes for different process-level browser settings.
 
 ## Target flow
 
@@ -35,7 +37,7 @@ CDP connection
 global session admission
       |
       v
-Chromium provider queue --------> scaling policy
+provider queue -----------------> scaling policy
       |                                |
       |                                v
       |                         desired instances
@@ -44,7 +46,7 @@ Chromium provider queue --------> scaling policy
       |                     host Docker controller
       |                                |
       |                                v
-      |                     Compose Chromium workers
+      |                     Compose browser workers
       |                                |
       +<----- ready instance inventory-+
       |
@@ -103,20 +105,32 @@ Introduce a bounded fleet subsystem:
 
 ```text
 backend/fleet/
+├── bootstrap.py
 ├── contracts.py
 ├── policy.py
 ├── repository.py
+├── reconciler.py
 ├── service.py
+├── providers/
+│   ├── contracts.py
+│   ├── chromium.py
+│   └── lightpanda.py
+├── runtimes/
+│   └── docker_compose.py
 └── controllers/
     └── docker.py
 ```
 
-- `contracts.py` defines fleet configuration, observed instances, desired state, and
-  controller results.
+- `contracts.py` defines fleet configuration, observed instances, and the runtime
+  contract.
 - `policy.py` is a pure deterministic demand-to-instance calculation.
 - `repository.py` owns transactional fleet state and slot assignment.
+- `reconciler.py` applies desired state through any runtime implementation.
+- `providers/` contains provider endpoint facts without infrastructure operations.
+- `runtimes/` contains platform operations without provider admission policy.
 - `service.py` exposes administrative configuration and fleet snapshots.
-- `controllers/docker.py` reconciles Compose containers from a host process.
+- `controllers/docker.py` is the thin local process that wires both dimensions
+  together and exposes controller metrics.
 
 Provider adapters receive the assigned instance endpoint. They do not discover or
 scale infrastructure themselves.
@@ -156,12 +170,12 @@ uv run python -m backend.fleet.controllers.docker
 
 The controller:
 
-1. Reads current Chromium demand and fleet configuration.
+1. Reads current demand and fleet configuration for Chromium and Lightpanda.
 2. Evaluates the pure scaling policy and persists the desired instance count.
 3. Inspects containers using Compose project and service labels.
 4. Applies one scale change per reconciliation cycle.
 5. Resolves each container's internal network address.
-6. Probes its Chromium discovery endpoint.
+6. Probes each instance's provider port through the runtime driver.
 7. Upserts starting, ready, unhealthy, and stopped observations.
 8. Expires instances that disappear or stop reporting.
 9. Records a stable reconciliation outcome and repeats with backoff.
@@ -170,13 +184,13 @@ The controller executes Docker and Compose commands; the FastAPI process does no
 must be safe to restart and must converge from the currently running containers rather
 than assuming its previous command succeeded.
 
-The Chromium Compose service must not publish a fixed host port for every replica.
+Managed Compose services must not publish a fixed host port for every replica.
 Harbor reaches assigned instances through the Compose network. Development tooling may
 provide a separate single-instance direct-debug profile if needed.
 
 ## Placement and capacity
 
-Provider FIFO remains unchanged. A claim succeeds only when a ready Chromium instance
+Provider FIFO remains unchanged. A claim succeeds only when a ready provider instance
 has an unreserved slot. The repository locks the relevant fleet and instance rows,
 selects a usable instance, records the attempt assignment, and then returns the endpoint
 to the adapter.
@@ -257,7 +271,8 @@ not the per-session DEBUG stream.
 
 ## Acceptance test
 
-The Docker E2E test uses one Chromium instance with two slots:
+The Docker E2E tests use one Chromium instance with two slots and one Lightpanda slot
+per instance:
 
 1. Connect the first session and verify the fleet remains at one instance.
 2. Connect the second concurrent session and verify it shares that instance in an
@@ -270,10 +285,12 @@ The Docker E2E test uses one Chromium instance with two slots:
 8. Wait for the configured cooldown and verify the fleet returns to one instance.
 9. Verify no queue leaks, capacity leaks, failed acquisitions, or WebSocket lifecycle
    errors.
+10. Hold one Lightpanda session, queue a second, scale to two Lightpanda instances, and
+    verify both the acquired session and scale-down to one instance.
 
 ## Exit condition
 
 The milestone is complete when Harbor can pack concurrent isolated sessions into a
-Chromium instance, scale the Compose Chromium fleet up from measured demand, use newly
-observed capacity, and scale back to its configured minimum without disrupting a
-session or requiring downstream knowledge of the fleet.
+Chromium instance, scale both Compose fleets from measured demand, use newly observed
+capacity, and scale back to their configured minimums without disrupting a session or
+requiring downstream knowledge of either the provider or runtime.

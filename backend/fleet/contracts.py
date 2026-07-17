@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Protocol
 
 from backend.proxy.contracts import ProviderName
 
@@ -46,6 +47,30 @@ class ObservedInstance:
     endpoint: str
     state: FleetInstanceState
     started_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeInstance:
+    """A provider process as seen by an infrastructure runtime."""
+
+    instance_id: str
+    address: str
+    started_at: datetime | None = None
+
+
+class FleetRuntime(Protocol):
+    """Infrastructure operations required by the fleet reconciler."""
+
+    @property
+    def platform(self) -> str: ...
+
+    async def list_instances(self, deployment: str) -> list[RuntimeInstance]: ...
+
+    async def scale(self, deployment: str, replicas: int) -> None: ...
+
+    async def remove(self, deployment: str, instance_id: str) -> None: ...
+
+    async def port_open(self, instance: RuntimeInstance, port: int) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)

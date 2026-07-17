@@ -116,6 +116,12 @@ COMMAND_DURATION = Histogram(
     ("provider", "method", "outcome"),
     registry=REGISTRY,
 )
+NO_BROWSER_PROMOTIONS = Counter(
+    "harbor_no_browser_promotions",
+    "Live sessions promoted from the no-browser path by bounded trigger class.",
+    ("from_provider", "to_provider", "trigger"),
+    registry=REGISTRY,
+)
 EVENT_PUBLICATION_FAILURES = Counter(
     "harbor_event_publication_failures",
     "Normalized events that could not be acknowledged by JetStream.",

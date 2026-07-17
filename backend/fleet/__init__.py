@@ -4,6 +4,7 @@ from backend.fleet.contracts import (
     FleetInstanceState,
     FleetSnapshot,
     ObservedInstance,
+    RuntimeInstance,
 )
 from backend.fleet.policy import ScalingDecision, scaling_decision
 from backend.fleet.repository import FleetRepository
@@ -17,6 +18,7 @@ __all__ = [
     "FleetService",
     "FleetSnapshot",
     "ObservedInstance",
+    "RuntimeInstance",
     "ScalingDecision",
     "scaling_decision",
 ]

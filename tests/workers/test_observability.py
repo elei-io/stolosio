@@ -152,11 +152,17 @@ async def test_fleet_snapshot_includes_every_provider_and_only_live_leases(
     snapshots = await FleetSnapshotService(database_sessions, Settings()).snapshot()
 
     assert [snapshot.provider for snapshot in snapshots] == list(ProviderName)
-    chromium = snapshots[0]
+    chromium = next(
+        snapshot for snapshot in snapshots if snapshot.provider is ProviderName.CHROMIUM
+    )
     assert chromium.active_attempts == 1
     assert chromium.queued_attempts == 1
     assert chromium.oldest_queued_attempt_seconds >= 4
-    assert all(snapshot.active_attempts == 0 for snapshot in snapshots[1:])
+    assert all(
+        snapshot.active_attempts == 0
+        for snapshot in snapshots
+        if snapshot.provider is not ProviderName.CHROMIUM
+    )
 
 
 @pytest.mark.asyncio
