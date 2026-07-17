@@ -8,6 +8,10 @@ from backend.proxy.adapters.cdp import (
     WebSocketProviderSession,
     _discovery_url,
 )
+from backend.proxy.adapters.lightpanda import (
+    LightpandaAdapter,
+    LightpandaProviderSession,
+)
 from backend.proxy.adapters.registry import get_provider_adapter
 from backend.proxy.contracts import ProviderName
 
@@ -111,9 +115,13 @@ async def test_discovered_adapter_separates_websocket_and_transport_hosts(monkey
 
 
 def test_camoufox_uses_mapping_adapter() -> None:
-    adapter = get_provider_adapter(ProviderName.CAMOUFOX)
+    adapter = get_provider_adapter(
+        ProviderName.CAMOUFOX,
+        endpoint="ws://harbor-camoufox-2:1234/harbor",
+    )
 
     assert adapter.provider is ProviderName.CAMOUFOX
+    assert adapter.endpoint == "ws://harbor-camoufox-2:1234/harbor"
 
 
 def test_lightpanda_uses_assigned_managed_instance_endpoint() -> None:
@@ -122,8 +130,70 @@ def test_lightpanda_uses_assigned_managed_instance_endpoint() -> None:
         endpoint="ws://harbor-lightpanda-2:9222",
     )
 
-    assert isinstance(adapter, DirectCdpAdapter)
+    assert isinstance(adapter, LightpandaAdapter)
     assert adapter.endpoint == "ws://harbor-lightpanda-2:9222"
+
+
+@pytest.mark.asyncio
+async def test_lightpanda_maps_enabling_scripts_to_supported_no_op() -> None:
+    websocket = FakeWebSocket()
+    session = LightpandaProviderSession(  # type: ignore[arg-type]
+        ProviderName.LIGHTPANDA,
+        websocket,
+    )
+
+    await session.send(
+        json.dumps(
+            {
+                "id": 20,
+                "method": "Emulation.setScriptExecutionDisabled",
+                "params": {"value": False},
+                "sessionId": "page-session",
+            }
+        )
+    )
+
+    assert websocket.sent == []
+    assert json.loads(await anext(session.messages())) == {
+        "id": 20,
+        "result": {},
+        "sessionId": "page-session",
+    }
+
+
+@pytest.mark.asyncio
+async def test_lightpanda_returns_explicit_error_when_disabling_scripts() -> None:
+    websocket = FakeWebSocket()
+    session = LightpandaProviderSession(  # type: ignore[arg-type]
+        ProviderName.LIGHTPANDA,
+        websocket,
+    )
+    command = {
+        "id": 21,
+        "method": "Emulation.setScriptExecutionDisabled",
+        "params": {"value": True},
+    }
+
+    await session.send(json.dumps(command))
+
+    assert websocket.sent == []
+    assert json.loads(await anext(session.messages())) == {
+        "id": 21,
+        "error": {
+            "code": -32601,
+            "message": "Lightpanda cannot disable script execution",
+        },
+    }
+
+
+def test_browserless_uses_assigned_managed_instance_endpoint() -> None:
+    adapter = get_provider_adapter(
+        ProviderName.BROWSERLESS,
+        endpoint="ws://harbor-browserless-2:3000",
+    )
+
+    assert isinstance(adapter, DirectCdpAdapter)
+    assert adapter.endpoint == "ws://harbor-browserless-2:3000"
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,8 @@
+import hashlib
 import json
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from backend.events.contracts import SessionEvent
@@ -15,6 +17,29 @@ class _PendingCommand:
     method: str
     domain: str | None
     started_at: float
+    captures_content: bool
+
+
+_CONTENT_EXPRESSION = """() => {
+        let retVal = "";
+        if (document.doctype)
+          retVal = new XMLSerializer().serializeToString(document.doctype);
+        if (document.documentElement)
+          retVal += document.documentElement.outerHTML;
+        return retVal;
+      }"""
+
+
+def _captures_page_content(method: str, params: dict) -> bool:
+    if method != "Runtime.callFunctionOn":
+        return False
+    arguments = params.get("arguments")
+    return (
+        isinstance(arguments, list)
+        and len(arguments) > 3
+        and arguments[3] == {"value": _CONTENT_EXPRESSION}
+        and params.get("returnByValue") is True
+    )
 
 
 class CdpEventObserver:
@@ -44,11 +69,30 @@ class CdpEventObserver:
             params = {}
         domain = self._domain
         if method == "Page.navigate" and isinstance(params.get("url"), str):
-            url = sanitize_url(params["url"])
-            domain = normalize_domain(params["url"])
+            raw_url = params["url"]
+            url = sanitize_url(raw_url)
+            domain = normalize_domain(raw_url)
             if url is not None:
-                await self._emit(EventType.NAVIGATION_REQUESTED, {"url": url})
-        self._pending[command_id] = _PendingCommand(method, domain, time.monotonic())
+                parsed = urlsplit(raw_url)
+                await self._emit(
+                    EventType.NAVIGATION_REQUESTED,
+                    {
+                        "url": url,
+                        "probe_safe": (
+                            parsed.scheme in {"http", "https"}
+                            and parsed.hostname is not None
+                            and parsed.username is None
+                            and parsed.password is None
+                            and not parsed.query
+                        ),
+                    },
+                )
+        self._pending[command_id] = _PendingCommand(
+            method,
+            domain,
+            time.monotonic(),
+            _captures_page_content(method, params),
+        )
         await self._emit(
             EventType.COMMAND_RECEIVED,
             {"command_id": command_id, "method": method, "domain": domain},
@@ -87,6 +131,7 @@ class CdpEventObserver:
                     cdp_error_code=code if isinstance(code, int) else None,
                 )
             else:
+                await self._observe_content(value["id"], value)
                 await self._finish_command(value["id"], EventType.COMMAND_SUCCEEDED)
             return
 
@@ -144,6 +189,80 @@ class CdpEventObserver:
             await self._emit(EventType.PAGE_LOADED, {})
         elif method in {"Inspector.targetCrashed", "Page.crashed"}:
             await self._emit(EventType.PAGE_CRASHED, {})
+        elif method == "Runtime.consoleAPICalled":
+            values = params.get("args")
+            text = (
+                " ".join(
+                    str(item.get("value", item.get("description", "")))
+                    for item in values
+                    if isinstance(item, dict)
+                )
+                if isinstance(values, list)
+                else ""
+            )
+            await self._console(
+                EventType.CONSOLE_MESSAGE,
+                str(params.get("type", "log")),
+                "runtime",
+                text,
+            )
+        elif method == "Log.entryAdded":
+            entry = params.get("entry")
+            if isinstance(entry, dict):
+                await self._console(
+                    EventType.CONSOLE_MESSAGE,
+                    str(entry.get("level", "info")),
+                    str(entry.get("source", "log")),
+                    str(entry.get("text", "")),
+                )
+        elif method == "Runtime.exceptionThrown":
+            details = params.get("exceptionDetails")
+            if isinstance(details, dict):
+                exception = details.get("exception")
+                description = (
+                    exception.get("description", "")
+                    if isinstance(exception, dict)
+                    else details.get("text", "")
+                )
+                await self._console(
+                    EventType.JAVASCRIPT_EXCEPTION,
+                    "error",
+                    "runtime",
+                    str(description),
+                )
+
+    async def _observe_content(self, command_id: int, value: dict) -> None:
+        pending = self._pending.get(command_id)
+        if pending is None or not pending.captures_content:
+            return
+        outer = value.get("result")
+        result = outer.get("result") if isinstance(outer, dict) else None
+        content = result.get("value") if isinstance(result, dict) else None
+        if not isinstance(content, str):
+            return
+        await self._emit(
+            EventType.PAGE_CONTENT_OBSERVED,
+            {
+                "content_fingerprint": hashlib.sha256(content.encode()).hexdigest(),
+                "content_length": len(content.encode()),
+            },
+        )
+
+    async def _console(
+        self,
+        event_type: EventType,
+        level: str,
+        source: str,
+        text: str,
+    ) -> None:
+        await self._emit(
+            event_type,
+            {
+                "level": level[:16],
+                "source": source[:32],
+                "message_fingerprint": hashlib.sha256(text.encode()).hexdigest(),
+            },
+        )
 
     async def provider_disconnected(self) -> None:
         await self._emit(EventType.PROVIDER_DISCONNECTED, {})

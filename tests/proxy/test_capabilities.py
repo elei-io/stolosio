@@ -11,6 +11,7 @@ from backend.proxy.contracts import ProviderName
         (ProviderName.BROWSERLESS, "Page.navigate"),
         (ProviderName.BROWSERLESS, "Page.setFontFamilies"),
         (ProviderName.LIGHTPANDA, "Page.navigate"),
+        (ProviderName.LIGHTPANDA, "Target.closeTarget"),
     ],
 )
 def test_explicitly_verified_provider_method_is_supported(
@@ -28,3 +29,29 @@ def test_unverified_method_is_not_supported(provider: ProviderName) -> None:
 def test_camoufox_enables_only_implemented_mapping_baseline() -> None:
     assert capability_registry.supports(ProviderName.CAMOUFOX, "Page.navigate")
     assert not capability_registry.supports(ProviderName.CAMOUFOX, "Page.printToPDF")
+
+
+def test_script_execution_capability_depends_on_requested_value() -> None:
+    disabled = {"value": True}
+    enabled = {"value": False}
+
+    assert capability_registry.supports(
+        ProviderName.HTTP,
+        "Emulation.setScriptExecutionDisabled",
+        disabled,
+    )
+    assert capability_registry.supports(
+        ProviderName.CHROMIUM,
+        "Emulation.setScriptExecutionDisabled",
+        disabled,
+    )
+    assert not capability_registry.supports(
+        ProviderName.LIGHTPANDA,
+        "Emulation.setScriptExecutionDisabled",
+        disabled,
+    )
+    assert capability_registry.supports(
+        ProviderName.LIGHTPANDA,
+        "Emulation.setScriptExecutionDisabled",
+        enabled,
+    )

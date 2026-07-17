@@ -418,3 +418,51 @@ async def test_managed_fleet_packs_slots_then_claims_queue_on_a_new_instance(
         await attempt.release()
     for session in sessions:
         await session.release()
+
+
+@pytest.mark.asyncio
+async def test_disabled_managed_fleet_does_not_assign_observed_instance(
+    database_sessions: async_sessionmaker[AsyncSession],
+    session_repository: PostgresSessionRepository,
+    attempt_repository: PostgresAttemptRepository,
+    admission_settings: Settings,
+) -> None:
+    fleets = FleetRepository(database_sessions)
+    await fleets.ensure_fleet(
+        ProviderName.CHROMIUM,
+        minimum_instances=1,
+        maximum_instances=1,
+        session_capacity_per_instance=1,
+        scale_down_cooldown_seconds=1,
+    )
+    await fleets.observe_instances(
+        ProviderName.CHROMIUM,
+        [
+            ObservedInstance(
+                instance_id="disabled-chromium",
+                endpoint="ws://disabled-chromium:9222",
+                state=FleetInstanceState.READY,
+            )
+        ],
+        platform="test",
+        observation_ttl_seconds=10,
+    )
+    await fleets.update_configuration(
+        ProviderName.CHROMIUM,
+        {"enabled": False},
+        actor="test",
+    )
+    session = await admit(session_repository, admission_settings, "disabled")
+    _, resolved = await requested_and_resolved()
+    settings = admission_settings.model_copy(
+        update={"provider_queue_timeout_seconds": 0.05}
+    )
+
+    with pytest.raises(ProviderQueueTimeout):
+        await attempt_admission(attempt_repository, settings).acquire(
+            session.session,
+            resolved,
+        )
+
+    assert await attempt_repository.active_count(ProviderName.CHROMIUM) == 0
+    await session.release(failed=True, reason="provider_queue_timeout")

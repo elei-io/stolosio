@@ -33,9 +33,9 @@ occupied capacity:  5
 available capacity: 3
 ```
 
-Slot capacity is provider-specific. The managed Chromium default is four sessions per
-instance. Lightpanda currently supports one browser context and one page target, so a
-managed Lightpanda instance contributes exactly one slot.
+Slot capacity is provider-specific. Managed Chromium defaults to four sessions per
+instance and Browserless defaults to five, matching its Compose `CONCURRENT` limit.
+Lightpanda and Camoufox each contribute exactly one slot per managed instance.
 
 ## Ownership boundary
 
@@ -214,5 +214,5 @@ Fleet observability includes:
 - Scaling actions by provider, direction, and stable outcome.
 - Time of the last successful reconciliation.
 
-The first implementation and its runtime-neutral Lightpanda extension are specified in
+The Docker implementation for all four managed browser providers is specified in
 [Managed Fleets](roadmap/managed-fleets.md).

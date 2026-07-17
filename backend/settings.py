@@ -55,12 +55,19 @@ class Settings(BaseSettings):
     no_browser_replay_max_commands: int = 100
     no_browser_replay_max_bytes: int = 2 * 1024 * 1024
     no_browser_replay_timeout_seconds: float = 30
+    qualification_harbor_cdp_url: str = "ws://localhost:8411/v1/connect"
+    qualification_schedule_delay_seconds: float = 2
+    qualification_poll_seconds: float = 1
+    qualification_lease_seconds: float = 60
     chromium_minimum_instances: int = 1
     chromium_maximum_instances: int = 4
     chromium_session_capacity_per_instance: int = 4
     chromium_scale_down_cooldown_seconds: int = 30
     chromium_max_queued_attempts: int = 100
-    browserless_max_active_sessions: int = 5
+    browserless_minimum_instances: int = 1
+    browserless_maximum_instances: int = 4
+    browserless_session_capacity_per_instance: int = 5
+    browserless_scale_down_cooldown_seconds: int = 30
     browserless_max_queued_attempts: int = 100
     lightpanda_max_active_sessions: int = 1
     lightpanda_max_queued_attempts: int = 100
@@ -68,7 +75,10 @@ class Settings(BaseSettings):
     lightpanda_maximum_instances: int = 4
     lightpanda_session_capacity_per_instance: int = 1
     lightpanda_scale_down_cooldown_seconds: int = 30
-    camoufox_max_active_sessions: int = 1
+    camoufox_minimum_instances: int = 1
+    camoufox_maximum_instances: int = 4
+    camoufox_session_capacity_per_instance: int = 1
+    camoufox_scale_down_cooldown_seconds: int = 30
     camoufox_max_queued_attempts: int = 100
     fleet_reconcile_interval_seconds: float = 1
     fleet_observation_ttl_seconds: float = 5
@@ -78,7 +88,9 @@ class Settings(BaseSettings):
     fleet_compose_project_name: str = "harbor"
     fleet_compose_workdir: str = "."
     chromium_fleet_compose_service: str = "chromium"
+    browserless_fleet_compose_service: str = "browserless"
     lightpanda_fleet_compose_service: str = "lightpanda"
+    camoufox_fleet_compose_service: str = "camoufox"
 
 
 @lru_cache

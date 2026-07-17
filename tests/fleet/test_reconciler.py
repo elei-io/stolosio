@@ -4,7 +4,7 @@ import pytest
 
 from backend.fleet import FleetConfiguration, RuntimeInstance
 from backend.fleet.policy import ScalingDecision
-from backend.fleet.providers import CHROMIUM_FLEET, LIGHTPANDA_FLEET
+from backend.fleet.providers import CAMOUFOX_FLEET, CHROMIUM_FLEET, LIGHTPANDA_FLEET
 from backend.fleet.reconciler import FleetReconciler, ManagedFleet
 from backend.proxy.contracts import ProviderName
 
@@ -91,6 +91,26 @@ async def test_reconciler_routes_lightpanda_through_runtime_neutral_contract() -
     assert repository.platform == "fake-runtime"
     assert repository.observations[0].endpoint == "ws://harbor-lightpanda-1:9222"
     assert repository.observations[0].state.value == "ready"
+
+
+@pytest.mark.asyncio
+async def test_reconciler_preserves_managed_provider_connection_path() -> None:
+    repository = FakeRepository(ProviderName.CAMOUFOX)
+    runtime = FakeRuntime(
+        [RuntimeInstance("camoufox-1", "harbor-camoufox-1", datetime.now(UTC))]
+    )
+    reconciler = FleetReconciler(
+        repository,  # type: ignore[arg-type]
+        runtime,
+        ManagedFleet(CAMOUFOX_FLEET, "camoufox-deployment"),
+        observation_ttl_seconds=5,
+        startup_timeout_seconds=30,
+    )
+
+    await reconciler.reconcile()
+
+    assert runtime.probed_ports == [1234]
+    assert repository.observations[0].endpoint == "ws://harbor-camoufox-1:1234/harbor"
 
 
 @pytest.mark.asyncio

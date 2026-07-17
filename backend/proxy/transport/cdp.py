@@ -64,7 +64,11 @@ async def _downstream_to_upstream(
 
         if observer is not None:
             await observer.command_received(command)
-        if provider is not ProviderName.HTTP and not capabilities.supports(provider, method):
+        if provider is not ProviderName.HTTP and not capabilities.supports(
+            provider,
+            method,
+            command.get("params"),
+        ):
             await downstream.send_json(
                 {
                     "id": command_id,

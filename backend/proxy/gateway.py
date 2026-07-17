@@ -21,6 +21,8 @@ from backend.proxy.errors import (
     SessionLeaseLost,
 )
 from backend.proxy.no_browser import AdaptiveCdpSession, PromotionHistoryRepository
+from backend.proxy.qualification import QualificationRepository
+from backend.proxy.routing import RoutingRepository
 from backend.proxy.sessions import SessionAdmission, SessionLease
 from backend.proxy.settings import HarborSettingsResolver, harbor_settings_resolver
 from backend.proxy.transport import relay_cdp
@@ -39,6 +41,8 @@ class Gateway:
         event_publisher: EventPublisher | None = None,
         resolver: HarborSettingsResolver = harbor_settings_resolver,
         promotion_history: PromotionHistoryRepository | None = None,
+        routing: RoutingRepository | None = None,
+        qualification: QualificationRepository | None = None,
     ) -> None:
         self._sessions = sessions
         self._attempts = attempts
@@ -47,6 +51,8 @@ class Gateway:
         self._event_publisher = event_publisher or NullEventPublisher()
         self._resolver = resolver
         self._promotion_history = promotion_history
+        self._routing = routing
+        self._qualification = qualification
 
     async def connect(self, websocket: WebSocket) -> None:
         session: SessionLease | None = None
@@ -84,7 +90,16 @@ class Gateway:
                     return
                 session = await admission
 
-                adaptive = requested.provider in {
+                probe_provider = (
+                    await self._qualification.provider_for_reference(
+                        str(requested.session_reference)
+                        if requested.session_reference is not None
+                        else None
+                    )
+                    if self._qualification is not None
+                    else None
+                )
+                adaptive = probe_provider is not None or requested.provider in {
                     ProviderSelection.AUTO,
                     ProviderSelection.HTTP,
                 }
@@ -109,6 +124,8 @@ class Gateway:
                         self._promotion_history,
                         observer,
                         self._settings,
+                        self._routing,
+                        probe_provider,
                         force_http=requested.provider is ProviderSelection.HTTP,
                     )
                 else:

@@ -6,14 +6,17 @@ from contextlib import asynccontextmanager
 import nats
 from fastapi import FastAPI
 
+from backend.api.routes.admin_domains import router as admin_domains_router
+from backend.api.routes.admin_events import router as admin_events_router
 from backend.api.routes.admin_fleets import router as admin_fleets_router
+from backend.api.routes.admin_routing import router as admin_routing_router
 from backend.api.routes.debug import router as debug_router
 from backend.api.routes.fleet import router as fleet_router
 from backend.api.routes.health import router as health_router
 from backend.api.routes.metrics import router as metrics_router
 from backend.api.routes.proxy import router as proxy_router
 from backend.db.session import engine, session_factory
-from backend.debug import DebugStreamService
+from backend.debug import ActivityHistoryService, ActivityStreamService, DebugStreamService
 from backend.fleet import FleetRepository, FleetService
 from backend.fleet.bootstrap import ensure_managed_fleets
 from backend.messaging import NatsCapacityNotifier, PollingNotifier
@@ -24,6 +27,7 @@ from backend.messaging.jetstream import (
 from backend.metrics import FleetSnapshotService, InstrumentedEventPublisher
 from backend.proxy.attempts import AttemptAdmission
 from backend.proxy.capabilities import capability_registry
+from backend.proxy.domains import DomainQueryService
 from backend.proxy.gateway import Gateway
 from backend.proxy.no_browser import PromotionHistoryRepository
 from backend.proxy.postgres import (
@@ -31,6 +35,8 @@ from backend.proxy.postgres import (
     PostgresSessionRepository,
     SessionRepositorySettings,
 )
+from backend.proxy.qualification import QualificationRepository
+from backend.proxy.routing import RoutingRepository
 from backend.proxy.sessions import SessionAdmission
 from backend.settings import settings
 
@@ -48,6 +54,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ),
     )
     attempt_repository = PostgresAttemptRepository(session_factory)
+    routing = RoutingRepository(session_factory)
+    qualification = QualificationRepository(session_factory)
+    await routing.ensure_defaults()
     nats_client = None
     try:
         async with asyncio.timeout(settings.nats_connect_timeout_seconds):
@@ -83,6 +92,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.fleet = FleetSnapshotService(session_factory, settings)
     app.state.fleet_admin = FleetService(fleet_repository)
+    app.state.routing = routing
+    app.state.domains = DomainQueryService(session_factory)
+    app.state.activity_history = ActivityHistoryService(session_factory)
+    app.state.activity_stream = (
+        ActivityStreamService(
+            nats_client,
+            max_pending_events=settings.debug_stream_max_pending_events,
+            max_pending_bytes=settings.debug_stream_max_pending_bytes,
+        )
+        if nats_client is not None
+        else None
+    )
     app.state.environment = settings.environment
     app.state.debug_stream = (
         DebugStreamService(
@@ -102,6 +123,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings,
         event_publisher if nats_client is not None else None,
         promotion_history=PromotionHistoryRepository(session_factory),
+        routing=routing,
+        qualification=qualification,
     )
     try:
         yield
@@ -113,7 +136,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app.include_router(admin_events_router)
 app.include_router(admin_fleets_router)
+app.include_router(admin_domains_router)
+app.include_router(admin_routing_router)
 app.include_router(health_router)
 app.include_router(debug_router)
 app.include_router(fleet_router)

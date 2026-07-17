@@ -100,6 +100,14 @@ Live internal consumers subscribe to
 durable consumers, and PostgreSQL supplies factual historical timelines. There is no
 separate, richer raw stream behind this view.
 
+Harbor also records `page.content_observed` with content length and a SHA-256
+fingerprint, plus `console.message` and `javascript.exception` with bounded source,
+level, and message fingerprint. HTML and unrestricted console text never enter the
+stream. Attempt closure includes normalized Harbor cost units.
+
+Whether two acquisitions match and whether a provider is qualified are policy
+conclusions stored outside DEBUG.
+
 ## Downstream WebSocket
 
 A downstream client generates a UUID and supplies it while connecting to CDP:
@@ -138,4 +146,35 @@ This initial schema is not a promise to add every item in the potential-evidence
 The useful subset continues to grow one observed, normalized, privacy-tested provider
 fact at a time.
 
-Future interpretation of these observations is described in [Analytics](ANALYTICS.md).
+## Operator activity feed
+
+The administrative UI reads retained cross-session history from PostgreSQL:
+
+```text
+GET /v1/admin/events
+```
+
+It follows new events through a server-sent event stream backed by the existing
+JetStream observation stream:
+
+```text
+GET /v1/admin/events/stream
+```
+
+Both endpoints accept repeated exact-match filters for provider, event family, event
+type, and outcome, plus exact session and attempt IDs. The history endpoint uses an
+opaque pagination cursor. SSE event IDs are JetStream stream sequences, so the browser
+can resume through `Last-Event-ID`; filtered connections receive bounded cursor
+heartbeats so their resume position continues to advance.
+
+The activity feed does not introduce a richer or less-redacted event source. It exposes
+the same validated `SessionEvent` facts with derived family and outcome fields for
+display. History and live delivery are bounded independently, slow consumers never
+backpressure browser execution, and the UI deduplicates events by `event_id`.
+
+These routes are an operator contract, not a replacement for the downstream
+single-session DEBUG WebSocket. Until administrative authentication exists, they must
+remain on a trusted network.
+
+Deterministic interpretation of these observations is described in
+[Domain Routing](ANALYTICS.md).

@@ -3,7 +3,7 @@
 Status: implemented
 
 This milestone proves that Harbor can pack sessions onto browser instances, measure
-unmet demand, and reconcile managed Chromium and Lightpanda fleets through Docker
+unmet demand, and reconcile all managed browser fleets through Docker
 Compose. The reconciliation core is independent of Docker so another runtime can use
 the same desired state and scaling policy.
 
@@ -13,8 +13,8 @@ The durable design is defined in [Fleet Management](../FLEET_MANAGEMENT.md).
 
 The implemented vertical slice covers:
 
-- Plain Chromium with configurable multi-session slots.
-- Lightpanda with one session slot per instance.
+- Plain Chromium and Browserless with configurable multi-session slots.
+- Lightpanda and Camoufox with one session slot per instance.
 - Docker Compose as the infrastructure runtime.
 - A Harbor fleet controller running as a host process.
 - Configurable minimum and maximum instances.
@@ -170,7 +170,8 @@ uv run python -m backend.fleet.controllers.docker
 
 The controller:
 
-1. Reads current demand and fleet configuration for Chromium and Lightpanda.
+1. Reads current demand and fleet configuration for Chromium, Browserless, Lightpanda,
+   and Camoufox.
 2. Evaluates the pure scaling policy and persists the desired instance count.
 3. Inspects containers using Compose project and service labels.
 4. Applies one scale change per reconciliation cycle.
@@ -271,8 +272,9 @@ not the per-session DEBUG stream.
 
 ## Acceptance test
 
-The Docker E2E tests use one Chromium instance with two slots and one Lightpanda slot
-per instance:
+The Docker E2E tests use one Chromium instance with two slots. Browserless,
+Lightpanda, and Camoufox are each constrained to one Harbor slot per instance during
+the scaling test; Browserless still retains its process-level concurrency ceiling:
 
 1. Connect the first session and verify the fleet remains at one instance.
 2. Connect the second concurrent session and verify it shares that instance in an
@@ -287,10 +289,12 @@ per instance:
    errors.
 10. Hold one Lightpanda session, queue a second, scale to two Lightpanda instances, and
     verify both the acquired session and scale-down to one instance.
+11. Repeat the single-slot scale-up and scale-down proof for Browserless and Camoufox.
 
 ## Exit condition
 
 The milestone is complete when Harbor can pack concurrent isolated sessions into a
-Chromium instance, scale both Compose fleets from measured demand, use newly observed
-capacity, and scale back to their configured minimums without disrupting a session or
-requiring downstream knowledge of either the provider or runtime.
+compatible multi-slot instance, scale every Compose browser fleet from measured
+demand, use newly observed capacity, and scale back to configured minimums without
+disrupting a session or requiring downstream knowledge of either the provider or
+runtime.

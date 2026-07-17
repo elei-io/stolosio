@@ -50,9 +50,10 @@ WS /v1/connect
   recommendations, or routing decisions.
 - Keep sensitive headers, credentials, cookies, query values, and page data out of
   events unless an explicit, tested redaction policy permits them.
-- No-browser execution initially covers only `page.goto` and `page.get_content`. Every
-  other command triggers a real browser journey; add static behavior one command at a
-  time with tests.
+- No-browser execution initially covers `page.goto`, `page.content`, and the
+  declarative `Emulation.setScriptExecutionDisabled` setting. Every other
+  non-bootstrap command triggers a real browser journey; add static behavior one
+  command at a time with tests.
 - The optimizer minimizes browser, proxy, and helper-service spend subject to
   correctness. Cost reduction never outranks correct acquisition.
 - Harbor owns browser fleet policy, desired capacity, placement, health, and draining.

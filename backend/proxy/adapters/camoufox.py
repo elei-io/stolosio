@@ -27,6 +27,10 @@ class CamoufoxAdapter:
     def __init__(self, endpoint: str) -> None:
         self._endpoint = endpoint
 
+    @property
+    def endpoint(self) -> str:
+        return self._endpoint
+
     async def acquire(
         self,
         session: HarborSession,

@@ -10,12 +10,24 @@ class FakeRepository:
 
 
 @pytest.mark.asyncio
-async def test_lightpanda_capacity_cannot_exceed_provider_limit() -> None:
+@pytest.mark.parametrize(
+    ("provider", "capacity", "maximum"),
+    [
+        (ProviderName.BROWSERLESS, 6, 5),
+        (ProviderName.LIGHTPANDA, 2, 1),
+        (ProviderName.CAMOUFOX, 2, 1),
+    ],
+)
+async def test_provider_capacity_cannot_exceed_process_limit(
+    provider: ProviderName,
+    capacity: int,
+    maximum: int,
+) -> None:
     service = FleetService(FakeRepository())  # type: ignore[arg-type]
 
-    with pytest.raises(ValueError, match="at most 1 session"):
+    with pytest.raises(ValueError, match=rf"at most {maximum} session"):
         await service.update(
-            ProviderName.LIGHTPANDA,
-            {"session_capacity_per_instance": 2},
+            provider,
+            {"session_capacity_per_instance": capacity},
             actor="test",
         )

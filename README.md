@@ -9,6 +9,9 @@ that want to change providers without rewriting downstream automation. Harbor ow
 session admission, provider queues, managed browser fleets, observations, and
 eventually cost-aware acquisition planning.
 
+Automatic sessions start conservatively on the operator-selected default and qualify
+cheaper providers in the background from factual session evidence.
+
 ## Developer setup
 
 Requirements: Docker, Docker Compose, and
@@ -19,8 +22,11 @@ uv sync
 docker compose up --build -d
 ```
 
+The Harbor UI is available at `http://localhost:5173` by default. Set
+`HARBOR_WEB_PORT` to publish it on a different host port.
+
 Run the development fleet controller in another terminal. It reconciles the managed
-Chromium and Lightpanda fleets through Docker Compose:
+Chromium, Browserless, Lightpanda, and Camoufox fleets through Docker Compose:
 
 ```bash
 uv run python -m backend.fleet.controllers.docker
@@ -61,6 +67,6 @@ HARBOR_E2E=1 uv run pytest -m e2e
 - [Provider matrix](docs/PROVIDERS.md)
 - [DEBUG stream](docs/DEBUG.md)
 - [No-browser execution](docs/NO_BROWSER.md)
-- [Future analytics](docs/ANALYTICS.md)
+- [Deterministic domain routing](docs/ANALYTICS.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Contributor and agent guide](AGENTS.md)

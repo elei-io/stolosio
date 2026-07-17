@@ -30,7 +30,13 @@ def managed_browser_controller() -> Iterator[None]:
         stderr=subprocess.DEVNULL,
     )
     originals = {}
-    for provider in ("chromium", "lightpanda"):
+    providers = {
+        "chromium": 2,
+        "browserless": 1,
+        "lightpanda": 1,
+        "camoufox": 1,
+    }
+    for provider in providers:
         original_response = httpx.get(f"{api}/v1/admin/fleets/{provider}", timeout=5)
         original_response.raise_for_status()
         originals[provider] = original_response.json()
@@ -41,14 +47,17 @@ def managed_browser_controller() -> Iterator[None]:
         *,
         capacity: int,
         cooldown_seconds: int = 1,
+        minimum_instances: int = 1,
+        enabled: bool = True,
     ) -> None:
         response = httpx.patch(
             f"{api}/v1/admin/fleets/{provider}",
             json={
-                "minimum_instances": 1,
+                "minimum_instances": minimum_instances,
                 "maximum_instances": maximum_instances,
                 "session_capacity_per_instance": capacity,
                 "scale_down_cooldown_seconds": cooldown_seconds,
+                "enabled": enabled,
             },
             headers={"X-Harbor-Actor": "e2e-controller-fixture"},
             timeout=5,
@@ -71,16 +80,15 @@ def managed_browser_controller() -> Iterator[None]:
         raise TimeoutError(f"{provider} fleet did not converge to one ready instance")
 
     try:
-        update("chromium", 1, capacity=2)
-        update("lightpanda", 1, capacity=1)
-        wait_for_one_instance("chromium")
-        wait_for_one_instance("lightpanda")
-        update("chromium", 4, capacity=2)
-        update("lightpanda", 4, capacity=1)
+        for provider, capacity in providers.items():
+            update(provider, 1, capacity=capacity)
+            wait_for_one_instance(provider)
+        for provider, capacity in providers.items():
+            update(provider, 4, capacity=capacity)
         yield
     finally:
         try:
-            for provider, capacity in (("chromium", 2), ("lightpanda", 1)):
+            for provider, capacity in providers.items():
                 update(provider, 1, capacity=capacity)
                 wait_for_one_instance(provider)
                 original = originals[provider]
@@ -89,6 +97,8 @@ def managed_browser_controller() -> Iterator[None]:
                     original["maximum_instances"],
                     capacity=original["session_capacity_per_instance"],
                     cooldown_seconds=original["scale_down_cooldown_seconds"],
+                    minimum_instances=original["minimum_instances"],
+                    enabled=original["enabled"],
                 )
         finally:
             process.terminate()
@@ -108,10 +118,16 @@ def managed_browser_controller() -> Iterator[None]:
                     "--scale",
                     "chromium=1",
                     "--scale",
+                    "browserless=1",
+                    "--scale",
                     "lightpanda=1",
+                    "--scale",
+                    "camoufox=1",
                     "--no-recreate",
                     "chromium",
+                    "browserless",
                     "lightpanda",
+                    "camoufox",
                 ],
                 cwd=root,
                 check=True,

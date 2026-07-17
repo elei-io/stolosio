@@ -9,7 +9,7 @@ from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, star
 from backend.db.session import engine, session_factory
 from backend.fleet import FleetRepository
 from backend.fleet.bootstrap import ensure_managed_fleets
-from backend.fleet.providers import CHROMIUM_FLEET, LIGHTPANDA_FLEET
+from backend.fleet.providers import MANAGED_FLEETS
 from backend.fleet.reconciler import (
     FleetReconciler,
     ManagedFleet,
@@ -52,9 +52,12 @@ def _reconcilers(repository: FleetRepository) -> list[FleetReconciler]:
         workdir=Path(settings.fleet_compose_workdir),
         project_name=settings.fleet_compose_project_name,
     )
-    fleets = (
-        ManagedFleet(CHROMIUM_FLEET, settings.chromium_fleet_compose_service),
-        ManagedFleet(LIGHTPANDA_FLEET, settings.lightpanda_fleet_compose_service),
+    fleets = tuple(
+        ManagedFleet(
+            definition,
+            getattr(settings, f"{definition.provider.value}_fleet_compose_service"),
+        )
+        for definition in MANAGED_FLEETS.values()
     )
     return [
         FleetReconciler(

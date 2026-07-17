@@ -11,20 +11,25 @@ Harbor maintains in PostgreSQL:
 - A log of seen domains.
 - A log of seen Playwright commands.
 - Per-domain counters for Playwright commands.
+- Provider qualification and cost projections.
 
-When Harbor encounters an unseen domain, or a domain with no historical Playwright
-command usage, it begins with a plain HTTP request instead of acquiring a browser and
-calling `page.goto`.
+Unknown and unqualified domains begin on the operator-selected conservative provider.
+HTTP becomes an automatic starting provider only after a strict background
+`page.goto()` plus `page.content()` comparison qualifies it for that domain. Explicit
+`harbor.provider.slug=http` continues to force the HTTP path.
 
 For the initial implementation, only these logical client operations can remain on the
 plain HTTP path:
 
 - `page.goto`
 - `page.content`
+- Configuring `java_script_enabled` through
+  `Emulation.setScriptExecutionDisabled`; Harbor records the setting for replay but
+  does not treat it as browser work.
 
-Every other command triggers the browser journey. Harbor must:
+Every other non-bootstrap command triggers the browser journey. Harbor must:
 
-1. Acquire a real browser session.
+1. Acquire the configured fallback browser session.
 2. Replay every command already acknowledged by the HTTP facade in its original order,
    including every navigation and content read.
 3. Wait for the real browser to catch up through the required response and lifecycle

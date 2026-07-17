@@ -134,6 +134,17 @@ harbor_provider_oldest_queued_attempt_seconds
 Process-local counters and histograms cover acquisitions, session outcomes, commands,
 provider failures, event delivery, recorder lag, dead letters, and retention work.
 
+The operator UI loads retained normalized events and follows the cross-session live
+tail through:
+
+```text
+GET /v1/admin/events
+GET /v1/admin/events/stream
+```
+
+The live endpoint uses SSE because activity delivery is one-way. JetStream stream
+sequences provide resumable cursors while PostgreSQL remains the historical source.
+
 ## DEBUG delivery
 
 The initial downstream DEBUG contract is:
@@ -152,7 +163,9 @@ See [DEBUG.md](../DEBUG.md) for the observation and redaction contract.
 ## Current limits
 
 - Observation coverage is intentionally narrow and focuses on the main document.
-- The DEBUG endpoint supports one session reference per connection.
+- The downstream DEBUG endpoint supports one session reference per connection; the
+  administrative activity feed separately supports a filtered cross-session tail.
 - Public authentication, authorization scopes, and resumable cursors are not implemented.
 - Metrics are scaling and operational signals, not domain analytics.
-- Evidence is not yet used by the planner.
+- The planner uses bounded factual projections; DEBUG events remain observations rather
+  than routing recommendations.

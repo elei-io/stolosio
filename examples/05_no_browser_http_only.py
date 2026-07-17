@@ -22,7 +22,8 @@ async def main() -> None:
         browser = await playwright.chromium.connect_over_cdp(
             with_reference(HARBOR_CDP_URL, reference)
         )
-        page = await browser.new_page()
+        context = await browser.new_context(java_script_enabled=False)
+        page = await context.new_page()
 
         response = await page.goto("https://example.com/?harbor-example=http-only")
         content = await page.content()

@@ -129,6 +129,22 @@ async def test_no_browser_example_programs(example: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_automatic_routing_example_program() -> None:
+    root = Path(__file__).parents[2]
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        str(root / "examples" / "08_automatic_routing.py"),
+        cwd=root,
+        env=os.environ.copy(),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+
+    assert process.returncode == 0, (stdout + stderr).decode()
+
+
+@pytest.mark.asyncio
 async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
     async with async_playwright() as playwright:
         blockers = [
@@ -230,33 +246,41 @@ async def test_managed_chromium_fleet_packs_sessions_scales_and_returns_to_minim
 
 
 @pytest.mark.asyncio
-async def test_managed_lightpanda_fleet_scales_one_slot_instances() -> None:
+@pytest.mark.parametrize(
+    "provider",
+    [
+        ProviderName.BROWSERLESS,
+        ProviderName.LIGHTPANDA,
+        ProviderName.CAMOUFOX,
+    ],
+)
+async def test_managed_single_slot_fleet_scales_instances(provider: ProviderName) -> None:
     api = os.getenv("HARBOR_E2E_HTTP_URL", "http://localhost:8411")
 
-    async def lightpanda_fleet() -> dict:
+    async def provider_fleet() -> dict:
         async with httpx.AsyncClient() as client:
             response = await client.get(f"{api}/v1/fleet/providers")
             response.raise_for_status()
             return next(
-                fleet for fleet in response.json() if fleet["provider"] == "lightpanda"
+                fleet for fleet in response.json() if fleet["provider"] == provider.value
             )
 
     async def wait_for(predicate, timeout_seconds: float = 30) -> dict:
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         while asyncio.get_running_loop().time() < deadline:
-            fleet = await lightpanda_fleet()
+            fleet = await provider_fleet()
             if predicate(fleet):
                 return fleet
             await asyncio.sleep(0.1)
-        raise TimeoutError("Managed Lightpanda fleet did not reach expected state")
+        raise TimeoutError(f"Managed {provider.value} fleet did not reach expected state")
 
     async with async_playwright() as playwright:
         first = await playwright.chromium.connect_over_cdp(
-            harbor_url(ProviderName.LIGHTPANDA)
+            harbor_url(provider)
         )
         second_task = asyncio.create_task(
             playwright.chromium.connect_over_cdp(
-                harbor_url(ProviderName.LIGHTPANDA),
+                harbor_url(provider),
                 timeout=30_000,
             )
         )

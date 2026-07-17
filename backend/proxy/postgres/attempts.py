@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 from enum import StrEnum
 
@@ -10,6 +11,7 @@ from backend.db.models import (
     GatewaySession,
     ProviderFleet,
     ProviderInstance,
+    ProviderRoutingProfile,
     ProviderState,
     SessionEventRecord,
 )
@@ -104,12 +106,14 @@ class PostgresAttemptRepository:
             managed = await database.get(ProviderFleet, provider.value)
             instance = (
                 await self._select_instance(database, provider.value, now)
-                if managed is not None and queued == 0
+                if managed is not None and managed.enabled and queued == 0
                 else None
             )
             active = await self._count(database, provider.value, _ACTIVE_ATTEMPT_STATES, now)
             can_acquire = queued == 0 and (
-                instance is not None if managed is not None else active < max_active
+                instance is not None
+                if managed is not None
+                else active < max_active
             )
             if can_acquire:
                 row.state = AttemptState.ACQUIRING.value
@@ -176,11 +180,11 @@ class PostgresAttemptRepository:
             managed = await database.get(ProviderFleet, attempt.provider.value)
             instance = (
                 await self._select_instance(database, attempt.provider.value, now)
-                if managed is not None
+                if managed is not None and managed.enabled
                 else None
             )
             if managed is not None:
-                if instance is None:
+                if not managed.enabled or instance is None:
                     return None
             elif (
                 await self._count(
@@ -227,6 +231,12 @@ class PostgresAttemptRepository:
             row.state = AttemptState.FAILED.value if failed else AttemptState.COMPLETED.value
             row.finished_at = now
             row.terminal_reason = reason
+            start = row.active_at or row.acquiring_at
+            if start is not None:
+                profile = await database.get(ProviderRoutingProfile, row.provider)
+                if profile is not None:
+                    seconds = max(0.0, (now - start).total_seconds())
+                    row.actual_cost_units = math.ceil(seconds * profile.cost_units_per_second)
             self._event(
                 database,
                 row,
@@ -414,6 +424,8 @@ class PostgresAttemptRepository:
             }
         if reason is not None:
             payload["reason"] = reason
+        if row.actual_cost_units is not None:
+            payload["cost_units"] = row.actual_cost_units
         database.add(
             SessionEventRecord(
                 session_id=row.session_id,

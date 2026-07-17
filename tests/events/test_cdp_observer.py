@@ -1,3 +1,4 @@
+import hashlib
 import json
 from uuid import uuid4
 
@@ -104,3 +105,57 @@ async def test_malformed_provider_evidence_does_not_escape_the_observer() -> Non
         "navigation.response",
     ]
     assert "status" not in publisher.events[-1].payload
+
+
+@pytest.mark.asyncio
+async def test_content_and_console_are_recorded_as_fingerprints_only() -> None:
+    publisher = CapturingPublisher()
+    observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.CHROMIUM, publisher)
+    expression = """() => {
+        let retVal = "";
+        if (document.doctype)
+          retVal = new XMLSerializer().serializeToString(document.doctype);
+        if (document.documentElement)
+          retVal += document.documentElement.outerHTML;
+        return retVal;
+      }"""
+    html = "<html><body>private content</body></html>"
+    await observer.command_received(
+        {
+            "id": 1,
+            "method": "Runtime.callFunctionOn",
+            "params": {
+                "arguments": [{}, {}, {}, {"value": expression}],
+                "returnByValue": True,
+            },
+        }
+    )
+    await observer.upstream_message(
+        json.dumps(
+            {
+                "id": 1,
+                "result": {"result": {"type": "string", "value": html}},
+            }
+        )
+    )
+    await observer.upstream_message(
+        json.dumps(
+            {
+                "method": "Runtime.consoleAPICalled",
+                "params": {"type": "error", "args": [{"value": "private console text"}]},
+            }
+        )
+    )
+
+    content = next(
+        event for event in publisher.events if event.event_type == "page.content_observed"
+    )
+    console = next(event for event in publisher.events if event.event_type == "console.message")
+    assert content.payload == {
+        "content_fingerprint": hashlib.sha256(html.encode()).hexdigest(),
+        "content_length": len(html),
+    }
+    serialized = b"".join(event.to_json() for event in publisher.events)
+    assert b"private content" not in serialized
+    assert b"private console text" not in serialized
+    assert len(console.payload["message_fingerprint"]) == 64

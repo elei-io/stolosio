@@ -21,6 +21,7 @@ uv run python examples/04_debug_stream.py
 uv run python examples/05_no_browser_http_only.py
 uv run python examples/06_no_browser_promotion.py
 uv run python examples/07_no_browser_history.py
+uv run python examples/08_automatic_routing.py
 ```
 
 The examples intentionally use only the standard Playwright client. They contain no
@@ -55,3 +56,6 @@ attempt sequence. Set `HARBOR_DEBUG_URL` when it isn't available at
 
 The Docker E2E suite will run those same example files, so a command that succeeds for
 a developer is the exact downstream workflow exercised by automated acceptance.
+
+`08_automatic_routing.py` omits the provider override and prints the factual attempt and
+promotion journey selected from Harbor's deterministic domain profile.

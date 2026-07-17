@@ -1,5 +1,6 @@
 import json
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.events.cdp import CdpEventObserver
 from backend.events.publisher import NullEventPublisher
-from backend.proxy.capabilities import CapabilityRegistry
+from backend.proxy.capabilities import CapabilityRegistry, capability_registry
 from backend.proxy.contracts import (
     HarborSession,
     ProviderName,
@@ -77,6 +78,56 @@ def adaptive_session(upstream: FakeProviderSession) -> AdaptiveCdpSession:
     facade._upstream = upstream
     facade._upstream_messages = upstream.messages().__aiter__()
     return facade
+
+
+@pytest.mark.asyncio
+async def test_disabling_javascript_remains_lazy_and_is_recorded_for_replay() -> None:
+    facade = adaptive_session(FakeProviderSession([]))
+    facade._upstream = None
+    facade._upstream_messages = None
+    command = {
+        "id": 20,
+        "method": "Emulation.setScriptExecutionDisabled",
+        "params": {"value": True},
+    }
+
+    await facade.send(json.dumps(command))
+    response = json.loads(await anext(facade.messages()))
+
+    assert response == {"id": 20, "result": {}}
+    assert facade._attempt is None
+    assert facade._upstream is None
+    assert [entry.command for entry in facade._replay] == [command]
+
+
+@pytest.mark.asyncio
+async def test_promotion_skips_provider_that_cannot_replay_disabled_javascript() -> None:
+    facade = adaptive_session(FakeProviderSession([]))
+    facade._capabilities = capability_registry
+    facade._routing = SimpleNamespace(
+        provider_profiles=lambda: _profiles(ProviderName.CHROMIUM)
+    )
+    facade._replay = [
+        ReplayEntry(
+            command={
+                "id": 20,
+                "method": "Emulation.setScriptExecutionDisabled",
+                "params": {"value": True},
+            },
+            response={"id": 20, "result": {}},
+        )
+    ]
+
+    target = await facade._compatible_promotion_target(
+        ProviderName.LIGHTPANDA,
+        {"id": 21, "method": "Runtime.evaluate", "params": {}},
+    )
+
+    assert target is ProviderName.CHROMIUM
+
+
+async def _profiles(provider: ProviderName) -> list[SimpleNamespace]:
+    return [SimpleNamespace(provider=provider.value, automatic_enabled=True)]
 
 
 @pytest.mark.asyncio

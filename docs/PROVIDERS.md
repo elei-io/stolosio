@@ -7,6 +7,12 @@ matter when implementing Harbor's common downstream contract.
 The matrix separates documented provider behavior from behavior verified by Harbor's
 own end-to-end examples. It should be updated as compatibility tests grow.
 
+Provider routing profiles assign operator-configurable cost units per session-second.
+These are relative policy values rather than universal pricing claims. Historical
+attempt cost supersedes that fallback after evidence exists. Qualification exercises
+the full adaptive Harbor path, so direct-provider success alone cannot make a provider
+eligible for automatic routing.
+
 ## Summary matrix
 
 | Provider | Engine | Native control | Rendering | Primary advantage | Primary limitation |
@@ -100,6 +106,12 @@ other rendering-dependent behavior cannot be assumed.
 Lightpanda describes itself as beta software with growing Web API coverage. Harbor must
 measure command compatibility rather than infer full support from the presence of a CDP
 endpoint.
+
+Harbor forwards `Target.closeTarget`, which Lightpanda supports for a valid target.
+Lightpanda does not implement `Emulation.setScriptExecutionDisabled`; Harbor maps the
+Playwright setup request with `value: false` to a no-op because Lightpanda always has
+script execution enabled. A request with `value: true` still returns an explicit
+provider error rather than pretending that scripts were disabled.
 
 Lightpanda is a managed fleet provider with one slot per instance. Its assigned instance
 endpoint is passed to the direct-CDP adapter, and the provider-neutral reconciler scales

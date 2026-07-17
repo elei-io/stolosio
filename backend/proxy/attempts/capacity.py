@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from backend.fleet.providers import managed_fleet_definition
 from backend.proxy.contracts import ProviderName
 from backend.settings import Settings
 
@@ -12,9 +13,10 @@ class ProviderCapacity:
 
 def provider_capacity(settings: Settings, provider: ProviderName) -> ProviderCapacity:
     prefix = provider.value
-    if provider is ProviderName.CHROMIUM:
+    if managed_fleet_definition(provider) is not None:
         max_active = (
-            settings.chromium_maximum_instances * settings.chromium_session_capacity_per_instance
+            getattr(settings, f"{prefix}_maximum_instances")
+            * getattr(settings, f"{prefix}_session_capacity_per_instance")
         )
     else:
         max_active = getattr(settings, f"{prefix}_max_active_sessions")

@@ -5,8 +5,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import (
+    AcquisitionAttempt,
     Domain,
     DomainCommandStat,
+    DomainProviderProfile,
     GatewaySession,
     SessionDomain,
     SessionDomainCommand,
@@ -62,12 +64,49 @@ class EventRecorder:
         if isinstance(url, str):
             domain = normalize_domain(url)
             if domain is not None:
-                await self._observe_domain(
+                domain_id = await self._observe_domain(
                     database,
                     str(event.session_id),
                     domain,
                     event.occurred_at,
                 )
+                if (
+                    event_type is EventType.NAVIGATION_RESPONSE
+                    and event.attempt_id is not None
+                    and event.provider is not None
+                ):
+                    attempt = await database.get(
+                        AcquisitionAttempt,
+                        str(event.attempt_id),
+                        with_for_update=True,
+                    )
+                    if attempt is not None:
+                        attempt.domain_id = domain_id
+                    status = event.payload.get("status")
+                    await database.execute(
+                        insert(DomainProviderProfile)
+                        .values(
+                            domain_id=domain_id,
+                            provider=event.provider.value,
+                            qualification_state="unqualified",
+                            successful_probe_count=0,
+                            failed_probe_count=0,
+                            observed_session_count=0,
+                            total_cost_units=0,
+                            last_status_code=status if isinstance(status, int) else None,
+                            comparison_policy_version=1,
+                        )
+                        .on_conflict_do_update(
+                            index_elements=[
+                                DomainProviderProfile.domain_id,
+                                DomainProviderProfile.provider,
+                            ],
+                            set_={
+                                "last_status_code": (status if isinstance(status, int) else None),
+                            },
+                        )
+                    )
+                    await self._project_cost(database, attempt)
 
         if event_type is EventType.COMMAND_RECEIVED:
             domain = event.payload.get("domain")
@@ -80,6 +119,56 @@ class EventRecorder:
                     method,
                     event.occurred_at,
                 )
+        if event_type in {EventType.ATTEMPT_CLOSED, EventType.ATTEMPT_FAILED}:
+            attempt = (
+                await database.get(
+                    AcquisitionAttempt,
+                    str(event.attempt_id),
+                    with_for_update=True,
+                )
+                if event.attempt_id is not None
+                else None
+            )
+            await self._project_cost(database, attempt)
+
+    @staticmethod
+    async def _project_cost(
+        database: AsyncSession,
+        attempt: AcquisitionAttempt | None,
+    ) -> None:
+        if (
+            attempt is None
+            or attempt.domain_id is None
+            or attempt.actual_cost_units is None
+            or attempt.cost_projected
+        ):
+            return
+        await database.execute(
+            insert(DomainProviderProfile)
+            .values(
+                domain_id=attempt.domain_id,
+                provider=attempt.provider,
+                qualification_state="unqualified",
+                successful_probe_count=0,
+                failed_probe_count=0,
+                observed_session_count=1,
+                total_cost_units=attempt.actual_cost_units,
+                comparison_policy_version=1,
+            )
+            .on_conflict_do_update(
+                index_elements=[
+                    DomainProviderProfile.domain_id,
+                    DomainProviderProfile.provider,
+                ],
+                set_={
+                    "observed_session_count": (DomainProviderProfile.observed_session_count + 1),
+                    "total_cost_units": (
+                        DomainProviderProfile.total_cost_units + attempt.actual_cost_units
+                    ),
+                },
+            )
+        )
+        attempt.cost_projected = True
 
     async def _observe_domain(
         self,

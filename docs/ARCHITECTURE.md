@@ -174,17 +174,31 @@ Passthrough must preserve:
 An automatic session begins behind a bounded CDP facade without acquiring a provider.
 The facade supports the tested one-page Playwright bootstrap, performs `Page.navigate`
 through HTTP, and answers only the exact recognized `page.content()` protocol shape.
-Every other sequence acquires Chromium.
+Every other sequence acquires the configured fallback provider.
 
 Before the triggering command runs, Harbor replays every command already acknowledged
-by the facade in original order, maps facade-owned identifiers to real Chromium
+by the facade in original order, maps facade-owned identifiers to acquired-provider
 identifiers, waits for response and lifecycle catch-up, and suppresses duplicate replay
 output. The downstream WebSocket and logical session do not change. PostgreSQL records
-the HTTP and Chromium attempts plus factual per-domain promotion history; the replay
-log itself remains bounded and process-local.
+the attempts plus factual per-domain promotion history; the replay log itself remains
+bounded and process-local.
 
 See [No-Browser Execution](NO_BROWSER.md) and the implemented
 [No-Browser Promotion](roadmap/no-browser-promotion.md) milestone.
+
+### Deterministic provider qualification
+
+Automatic sessions remain providerless until `Page.navigate` reveals a domain. Unknown
+and unqualified domains acquire the operator-selected default. Qualified domains use the
+provider with the lowest historical average attempt cost, falling back to its configured
+cost rate.
+
+After eligible completed sessions, a separate worker runs cheaper `goto` plus `content`
+probes through the same adaptive gateway path. PostgreSQL owns probe jobs, leases,
+configuration, and qualification state. The existing DEBUG/JetStream path owns detailed
+evidence; there is no second analytical event stream.
+
+See [Deterministic Domain Routing](ANALYTICS.md).
 
 ### Translated execution
 

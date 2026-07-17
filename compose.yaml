@@ -38,6 +38,31 @@ services:
       timeout: 3s
       retries: 20
 
+  web:
+    build:
+      context: web
+    environment:
+      HARBOR_API_PROXY_TARGET: http://api:8000
+    ports:
+      - "${HARBOR_WEB_PORT:-5173}:5173"
+    volumes:
+      - ./web:/app
+      - web_node_modules:/app/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --tries=1
+        - --spider
+        - http://localhost:5173
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   maintenance:
     build: .
     command: uv run python -m backend.workers.maintenance
@@ -59,6 +84,24 @@ services:
         condition: service_healthy
       nats:
         condition: service_started
+
+  qualification:
+    build: .
+    command: uv run python -m backend.workers.qualification
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://harbor:harbor@postgres:5432/harbor
+      QUALIFICATION_HARBOR_CDP_URL: ws://api:8000/v1/connect
+    volumes:
+      - .:/app
+      - /app/.venv
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   postgres:
     image: postgres:latest
@@ -91,8 +134,8 @@ services:
       CONCURRENT: "5"
       QUEUED: "10"
       TIMEOUT: "60000"
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
 
   chromium:
     image: chromedp/headless-shell:latest
@@ -104,8 +147,8 @@ services:
     build:
       context: docker/camoufox
     shm_size: 2gb
-    ports:
-      - "1234:1234"
+    expose:
+      - "1234"
 
   lightpanda:
     image: lightpanda/browser:nightly
@@ -117,3 +160,4 @@ services:
 volumes:
   postgres_data:
   nats_data:
+  web_node_modules:

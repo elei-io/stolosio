@@ -1,27 +1,36 @@
-# Analytics
+# Deterministic Domain Routing
 
-Analytics is a future Harbor capability. It will use historical session observations to
-build evidence-backed conclusions that improve future session routing.
+Harbor uses historical observations to choose the cheapest provider that has been
+qualified for a domain. This is deterministic policy, not machine learning.
 
-This capability is intentionally separate from the debug stream. The debug stream is a
-filtered but faithful record of what happened. Analytics interprets observations across
-many sessions and turns them into domain-level knowledge.
+Unknown and unqualified domains use the operator-selected default provider. After an
+eligible `page.goto()` plus `page.content()` session completes, Harbor probes cheaper
+providers through its normal adaptive CDP path. It compares status, selected headers,
+console-error count, and a SHA-256 content fingerprint without retaining HTML.
 
-Potential conclusions include:
+Every new domain schedules one probe per cheaper enabled provider. Existing domains
+sample completed eligible sessions at an operator-configured basis-point rate, initially
+`100` (1%). Sampling uses a stable session/domain hash and is reproducible.
 
-- A domain can normally run over plain HTTP unless future evidence contradicts that
-  conclusion.
-- A domain or route regularly requires a real browser.
-- A domain appears to have lost confidence in the current IP and should use a proxy.
-- A provider has historically performed better for a domain than another provider.
-- A previously reliable domain strategy is no longer working.
+A provider becomes qualified after the configured number of matching probes. A mismatch
+or execution failure rejects it. Future sessions choose the qualified provider with the
+lowest historical average cost, falling back to its configured cost rate when no actual
+cost exists.
 
-Harbor may use these conclusions when choosing between HTTP and browser providers,
-deciding whether to use a proxy, or selecting a browser with different stealth
-characteristics.
+Provider capabilities remain versioned adapter manifests. Costs, the conservative
+default, probe rate, and required matches live in PostgreSQL and are available through
+the development admin API:
 
-Conclusions must remain revisable as new evidence arrives. Historical success is a
-useful routing signal, not a permanent fact about a domain.
+```text
+GET/PATCH /v1/admin/routing
+GET       /v1/admin/routing/providers
+PATCH     /v1/admin/routing/providers/{provider}
+```
 
-No analytics schema, confidence model, thresholds, or decision algorithm is defined
-yet. Those details should be designed later from real observations collected by Harbor.
+The policy deliberately makes false negatives cheap and false positives difficult:
+strict comparison may retain an expensive provider, but a direct-provider success does
+not qualify a provider unless the same acquisition also works through Harbor's adaptive
+replay path.
+
+Detailed facts remain in the DEBUG evidence stream. Qualification is a policy conclusion
+stored separately and never presented as a DEBUG recommendation.

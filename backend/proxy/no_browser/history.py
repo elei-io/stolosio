@@ -68,16 +68,17 @@ class PromotionHistoryRepository:
         attempt_id: str,
         *,
         from_provider: str,
+        to_provider: ProviderName,
         trigger_method: str,
     ) -> None:
         event = SessionEvent.create(
             EventType.EXECUTION_PROMOTED,
             UUID(session_id),
-            provider=ProviderName.CHROMIUM,
+            provider=to_provider,
             attempt_id=UUID(attempt_id),
             payload={
                 "from_provider": from_provider,
-                "to_provider": ProviderName.CHROMIUM.value,
+                "to_provider": to_provider.value,
                 "trigger_method": trigger_method,
             },
         )

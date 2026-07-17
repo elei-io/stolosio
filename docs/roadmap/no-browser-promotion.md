@@ -255,7 +255,7 @@ command, continue from the latest URL, or expose a partially caught-up browser.
 
 ## Historical rule
 
-The first routing rule remains deliberately small:
+This milestone originally used the deliberately small rule below:
 
 - An unseen domain may begin through HTTP.
 - A domain with no historical promotion-triggering operation may begin through HTTP.
@@ -268,8 +268,9 @@ factual, durable per-domain promotion projection populated from successful proto
 classification. It records counts and the stable triggering method class, not a score,
 recommendation, or permanent conclusion.
 
-This projection is evidence, not analytics. A later policy may introduce expiry,
-confidence, route specificity, or contrary evidence; none belongs in this milestone.
+The implemented [deterministic routing milestone](deterministic-routing.md) supersedes
+that sticky rule. Unknown domains now use the operator default, while HTTP must qualify
+through strict background comparison. The promotion projection remains factual evidence.
 
 ## Attempts, observations, and metrics
 
@@ -321,8 +322,9 @@ The milestone adds three self-checking programs under `examples/`:
 07_no_browser_history.py
 ```
 
-- `05_no_browser_http_only.py` performs only `goto + content` through an explicitly
-  selected HTTP start and asserts DEBUG contains only the HTTP attempt.
+- `05_no_browser_http_only.py` disables JavaScript, then performs `goto + content`
+  through an explicitly selected HTTP start and asserts DEBUG contains only the HTTP
+  attempt.
 - `06_no_browser_promotion.py` starts through HTTP and verifies that a triggering
   evaluation observes the replayed Chromium document plus the factual HTTP-to-Chromium
   attempt sequence and promotion event.
@@ -343,7 +345,8 @@ both navigations and content calls before the triggering command.
 
 The examples and Docker E2E suite cover the implemented boundary:
 
-1. `goto + content` completes through an HTTP attempt without acquiring Chromium.
+1. Disabling JavaScript followed by `goto + content` completes through an HTTP attempt
+   without acquiring Chromium.
 2. Explicit Chromium selection continues to use Chromium immediately.
 3. Click and evaluation workflows starting through HTTP promote and complete against a
    real browser.

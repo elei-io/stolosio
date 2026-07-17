@@ -1,10 +1,6 @@
 from dataclasses import dataclass
 
-from backend.fleet.providers import (
-    CHROMIUM_FLEET,
-    LIGHTPANDA_FLEET,
-    managed_fleet_definition,
-)
+from backend.fleet.providers import MANAGED_FLEETS, managed_fleet_definition
 from backend.fleet.repository import FleetRepository
 from backend.proxy.contracts import ProviderName
 from backend.settings import Settings
@@ -20,21 +16,21 @@ class FleetBootstrapConfiguration:
 
 
 def managed_fleet_configurations(settings: Settings) -> tuple[FleetBootstrapConfiguration, ...]:
-    return (
+    return tuple(
         FleetBootstrapConfiguration(
-            provider=CHROMIUM_FLEET.provider,
-            minimum_instances=settings.chromium_minimum_instances,
-            maximum_instances=settings.chromium_maximum_instances,
-            session_capacity_per_instance=settings.chromium_session_capacity_per_instance,
-            scale_down_cooldown_seconds=settings.chromium_scale_down_cooldown_seconds,
-        ),
-        FleetBootstrapConfiguration(
-            provider=LIGHTPANDA_FLEET.provider,
-            minimum_instances=settings.lightpanda_minimum_instances,
-            maximum_instances=settings.lightpanda_maximum_instances,
-            session_capacity_per_instance=settings.lightpanda_session_capacity_per_instance,
-            scale_down_cooldown_seconds=settings.lightpanda_scale_down_cooldown_seconds,
-        ),
+            provider=provider,
+            minimum_instances=getattr(settings, f"{provider.value}_minimum_instances"),
+            maximum_instances=getattr(settings, f"{provider.value}_maximum_instances"),
+            session_capacity_per_instance=getattr(
+                settings,
+                f"{provider.value}_session_capacity_per_instance",
+            ),
+            scale_down_cooldown_seconds=getattr(
+                settings,
+                f"{provider.value}_scale_down_cooldown_seconds",
+            ),
+        )
+        for provider in MANAGED_FLEETS
     )
 
 
