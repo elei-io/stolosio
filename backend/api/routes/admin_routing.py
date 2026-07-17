@@ -10,8 +10,8 @@ router = APIRouter(prefix="/v1/admin/routing", tags=["admin"])
 class RoutingResponse(BaseModel):
     default_provider: ProviderName
     existing_domain_probe_rate_basis_points: int
-    required_successful_probes: int
-    comparison_policy_version: int
+    required_support_confirmations: int
+    support_policy_version: int
     configuration_version: int
 
     @classmethod
@@ -19,8 +19,8 @@ class RoutingResponse(BaseModel):
         return cls(
             default_provider=value.default_provider,
             existing_domain_probe_rate_basis_points=(value.existing_domain_probe_rate_basis_points),
-            required_successful_probes=value.required_successful_probes,
-            comparison_policy_version=value.comparison_policy_version,
+            required_support_confirmations=value.required_support_confirmations,
+            support_policy_version=value.support_policy_version,
             configuration_version=value.configuration_version,
         )
 
@@ -30,7 +30,7 @@ class RoutingUpdate(BaseModel):
 
     default_provider: ProviderName | None = None
     existing_domain_probe_rate_basis_points: int | None = Field(default=None, ge=0, le=10_000)
-    required_successful_probes: int | None = Field(default=None, ge=1, le=100)
+    required_support_confirmations: int | None = Field(default=None, ge=1, le=100)
 
     @model_validator(mode="after")
     def require_value(self) -> "RoutingUpdate":

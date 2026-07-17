@@ -57,13 +57,16 @@ class DomainCommandStat(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-class DomainPromotionStat(Base):
-    __tablename__ = "domain_promotion_stats"
+class DomainProviderTransitionStat(Base):
+    __tablename__ = "domain_provider_transition_stats"
 
     domain_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("domains.id", ondelete="CASCADE"), primary_key=True
     )
-    promotion_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    from_provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    to_provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    trigger: Mapped[str] = mapped_column(String(32), primary_key=True)
+    transition_count: Mapped[int] = mapped_column(BigInteger, default=0)
     last_trigger_method: Mapped[str] = mapped_column(String(128))
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -90,8 +93,8 @@ class RoutingConfiguration(Base):
             name="ck_routing_probe_rate",
         ),
         CheckConstraint(
-            "required_successful_probes >= 1",
-            name="ck_routing_required_probes",
+            "required_support_confirmations >= 1",
+            name="ck_routing_required_support_confirmations",
         ),
     )
 
@@ -100,10 +103,10 @@ class RoutingConfiguration(Base):
     existing_domain_probe_rate_basis_points: Mapped[int] = mapped_column(
         nullable=False, default=100, server_default="100"
     )
-    required_successful_probes: Mapped[int] = mapped_column(
+    required_support_confirmations: Mapped[int] = mapped_column(
         nullable=False, default=1, server_default="1"
     )
-    comparison_policy_version: Mapped[int] = mapped_column(
+    support_policy_version: Mapped[int] = mapped_column(
         nullable=False, default=1, server_default="1"
     )
     configuration_version: Mapped[int] = mapped_column(
@@ -129,12 +132,12 @@ class ProviderRoutingProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-class DomainProviderProfile(Base):
-    __tablename__ = "domain_provider_profiles"
+class DomainProviderSupport(Base):
+    __tablename__ = "domain_provider_support"
     __table_args__ = (
         CheckConstraint(
-            "qualification_state IN ('unqualified', 'probing', 'qualified', 'rejected')",
-            name="ck_domain_provider_qualification_state",
+            "support_state IN ('unknown', 'checking', 'supported', 'unsupported')",
+            name="ck_domain_provider_support_state",
         ),
     )
 
@@ -142,11 +145,14 @@ class DomainProviderProfile(Base):
         BigInteger, ForeignKey("domains.id", ondelete="CASCADE"), primary_key=True
     )
     provider: Mapped[str] = mapped_column(String(32), primary_key=True)
-    qualification_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    support_state: Mapped[str] = mapped_column(String(16), nullable=False)
     successful_probe_count: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default="0"
     )
     failed_probe_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    inconclusive_probe_count: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default="0"
     )
     observed_session_count: Mapped[int] = mapped_column(
@@ -155,18 +161,45 @@ class DomainProviderProfile(Base):
     total_cost_units: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default="0"
     )
+    navigation_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
+    status_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
+    headers_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
+    method_coverage_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
+    content_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
+    method_observed_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    method_declared_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    unsupported_methods: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    failure_reason_code: Mapped[str | None] = mapped_column(String(64))
     last_status_code: Mapped[int | None]
-    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    comparison_policy_version: Mapped[int] = mapped_column(nullable=False)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_supported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    support_policy_version: Mapped[int] = mapped_column(nullable=False)
+    capability_manifest_version: Mapped[int] = mapped_column(nullable=False)
 
 
-class QualificationProbe(Base):
-    __tablename__ = "qualification_probes"
+class SupportProbe(Base):
+    __tablename__ = "support_probes"
     __table_args__ = (
         UniqueConstraint("source_session_id", "candidate_provider"),
-        Index("ix_qualification_probes_queue", "state", "created_at"),
+        Index("ix_support_probes_queue", "state", "created_at"),
         Index(
-            "ux_qualification_probes_initial",
+            "ux_support_probes_initial",
             "domain_id",
             "candidate_provider",
             unique=True,
@@ -174,11 +207,11 @@ class QualificationProbe(Base):
         ),
         CheckConstraint(
             "trigger IN ('new_domain', 'existing_sample')",
-            name="ck_qualification_probe_trigger",
+            name="ck_support_probe_trigger",
         ),
         CheckConstraint(
             "state IN ('queued', 'running', 'completed', 'failed')",
-            name="ck_qualification_probe_state",
+            name="ck_support_probe_state",
         ),
     )
 
@@ -193,16 +226,32 @@ class QualificationProbe(Base):
     trigger: Mapped[str] = mapped_column(String(32), nullable=False)
     sampling_bucket: Mapped[int | None]
     target_url: Mapped[str] = mapped_column(String(2048), nullable=False)
-    baseline_status: Mapped[int] = mapped_column(nullable=False)
-    baseline_headers: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    baseline_console_errors: Mapped[int] = mapped_column(nullable=False, default=0)
-    baseline_content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    required_methods: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     state: Mapped[str] = mapped_column(String(16), nullable=False)
-    candidate_status: Mapped[int | None]
-    candidate_headers: Mapped[dict | None] = mapped_column(JSONB)
-    candidate_console_errors: Mapped[int | None]
-    candidate_content_fingerprint: Mapped[str | None] = mapped_column(String(64))
-    comparison_outcome: Mapped[str | None] = mapped_column(String(32))
+    outcome: Mapped[str | None] = mapped_column(String(16))
+    navigation_state: Mapped[str | None] = mapped_column(String(16))
+    status_state: Mapped[str | None] = mapped_column(String(16))
+    headers_state: Mapped[str | None] = mapped_column(String(16))
+    method_coverage_state: Mapped[str | None] = mapped_column(String(16))
+    content_state: Mapped[str | None] = mapped_column(String(16))
+    status_code: Mapped[int | None]
+    reason_codes: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    method_observed_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    method_declared_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    unsupported_methods: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    content_facts: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
     cost_units: Mapped[int | None] = mapped_column(BigInteger)
     lease_owner: Mapped[str | None] = mapped_column(String(36))
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -6,8 +6,8 @@ from backend.metrics.definitions import (
     COMMAND_DURATION,
     COMMANDS,
     EVENT_PUBLICATION_FAILURES,
-    NO_BROWSER_PROMOTIONS,
     PROVIDER_FAILURES,
+    PROVIDER_TRANSITIONS,
     SESSION_ACQUISITION_DURATION,
     SESSION_ACQUISITIONS,
     SESSIONS_COMPLETED,
@@ -43,15 +43,13 @@ def metric_reason(reason: object) -> str:
     return reason if isinstance(reason, str) and reason in _KNOWN_REASONS else "other"
 
 
-def promotion_trigger(trigger: object) -> str:
-    if trigger == "domain_history":
-        return "domain_history"
+def transition_trigger(trigger: object) -> str:
     if trigger == "replay_budget":
         return "replay_budget"
     if trigger in {"http_transport_failure", "http_response_too_large"}:
-        return "http_safety_fallback"
+        return "http_safety"
     if isinstance(trigger, str) and trigger in _KNOWN_METHODS:
-        return "browser_command"
+        return "new_requirement"
     return "other"
 
 
@@ -63,11 +61,11 @@ def observe_published_event(event: SessionEvent) -> None:
         outcome = "closed" if event_type is EventType.SESSION_CLOSED else "failed"
         SESSIONS_COMPLETED.labels(outcome).inc()
         return
-    if event_type is EventType.EXECUTION_PROMOTED:
-        NO_BROWSER_PROMOTIONS.labels(
+    if event_type is EventType.EXECUTION_TRANSITIONED:
+        PROVIDER_TRANSITIONS.labels(
             event.payload["from_provider"],
             event.payload["to_provider"],
-            promotion_trigger(event.payload.get("trigger_method")),
+            transition_trigger(event.payload.get("trigger_method")),
         ).inc()
         return
     if event.provider is None:

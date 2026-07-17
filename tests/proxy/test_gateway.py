@@ -98,6 +98,29 @@ async def test_returns_not_supported_without_forwarding_or_disconnecting() -> No
 
 
 @pytest.mark.asyncio
+async def test_explicit_http_uses_the_same_capability_boundary() -> None:
+    downstream = FakeDownstream(
+        [
+            {"type": "websocket.receive", "text": '{"id":8,"method":"Page.printToPDF"}'},
+            {"type": "websocket.disconnect", "code": 1000},
+        ]
+    )
+    upstream = FakeUpstream()
+    registry = CapabilityRegistry({ProviderName.HTTP: frozenset()})
+
+    with pytest.raises(WebSocketDisconnect):
+        await _downstream_to_upstream(  # type: ignore[arg-type]
+            downstream,
+            upstream,
+            ProviderName.HTTP,
+            registry,
+        )
+
+    assert upstream.sent == []
+    assert downstream.sent_json[0]["error"]["code"] == -32601
+
+
+@pytest.mark.asyncio
 async def test_rejects_malformed_and_binary_downstream_messages() -> None:
     registry = CapabilityRegistry({ProviderName.CHROMIUM: frozenset()})
     for message in (

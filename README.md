@@ -9,8 +9,9 @@ that want to change providers without rewriting downstream automation. Harbor ow
 session admission, provider queues, managed browser fleets, observations, and
 eventually cost-aware acquisition planning.
 
-Automatic sessions start conservatively on the operator-selected default and qualify
-cheaper providers in the background from factual session evidence.
+Harbor checks each provider independently per domain, orders supported providers by
+cost, and transitions through that plan when a journey reveals a new requirement. An
+operator-selected default remains the final automatic candidate.
 
 ## Developer setup
 

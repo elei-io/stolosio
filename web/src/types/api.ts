@@ -65,15 +65,15 @@ export type FleetConfigurationUpdate = {
 export type RoutingConfiguration = {
   default_provider: ActivityProvider
   existing_domain_probe_rate_basis_points: number
-  required_successful_probes: number
-  comparison_policy_version: number
+  required_support_confirmations: number
+  support_policy_version: number
   configuration_version: number
 }
 
 export type RoutingConfigurationUpdate = {
   default_provider?: ActivityProvider
   existing_domain_probe_rate_basis_points?: number
-  required_successful_probes?: number
+  required_support_confirmations?: number
 }
 
 export type ProviderRoutingProfile = {
@@ -88,24 +88,32 @@ export type ProviderRoutingUpdate = {
   cost_units_per_second?: number
 }
 
-export type DomainQualificationState =
-  | "unqualified"
-  | "probing"
-  | "qualified"
-  | "rejected"
+export type DomainSupportState =
+  | "unknown"
+  | "checking"
+  | "supported"
+  | "unsupported"
 
-export type DomainRoute = {
+export type DomainPlanCandidate = {
   provider: ActivityProvider
-  reason: "cheapest_qualified" | "unqualified_domain_default"
   estimated_cost_units: number
+}
+
+export type DomainPlan = {
+  reason:
+    | "cheapest_supported"
+    | "configured_default"
+    | "no_supported_provider"
+  candidates: DomainPlanCandidate[]
 }
 
 export type DomainSummary = {
   known_domains: number
-  qualified_domains: number
-  probing_domains: number
-  default_only_domains: number
-  promoted_domains: number
+  supported_domains: number
+  checking_domains: number
+  unsupported_domains: number
+  no_evidence_domains: number
+  transitioned_domains: number
 }
 
 export type DomainListItem = {
@@ -115,14 +123,15 @@ export type DomainListItem = {
   last_seen_at: string
   session_count: number
   eligible_acquisition_count: number
-  promotion_count: number
+  transition_count: number
   active_probe_count: number
-  qualification_counts: {
-    qualified: number
-    probing: number
-    rejected: number
+  support_counts: {
+    unknown: number
+    checking: number
+    supported: number
+    unsupported: number
   }
-  current_route: DomainRoute
+  expected_plan: DomainPlan
 }
 
 export type DomainPage = {
@@ -134,42 +143,46 @@ export type DomainPage = {
 export type DomainProviderEvidence = {
   provider: ActivityProvider
   automatic_enabled: boolean
-  is_default: boolean
-  qualification_state: DomainQualificationState
+  support_state: DomainSupportState
   successful_probe_count: number
   failed_probe_count: number
+  inconclusive_probe_count: number
   observed_session_count: number
   total_cost_units: number
   average_cost_units: number
   cost_is_estimate: boolean
   last_status_code: number | null
-  last_verified_at: string | null
-  comparison_policy_version: number | null
-  last_probe_at: string | null
-  probe_state: "checking" | "completed" | "failed" | "not_checked"
+  last_checked_at: string | null
+  last_supported_at: string | null
+  failure_reason_code: string | null
+  support_policy_version: number | null
+  capability_manifest_version: number
   checks: {
-    status: DomainComparisonCheck
-    headers: DomainComparisonCheck
-    console: DomainComparisonCheck
-    methods: DomainMethodCheck
-    content: DomainComparisonCheck
+    navigation: DomainHealthCheck
+    status: DomainHealthCheck
+    headers: DomainHealthCheck
+    method_coverage: DomainMethodCheck
+    content: DomainHealthCheck
   }
 }
 
 export type DomainCheckState =
-  | "matches"
-  | "differs"
+  | "healthy"
+  | "unhealthy"
+  | "inconclusive"
   | "checking"
   | "not_checked"
+  | "declared"
+  | "missing"
 
-export type DomainComparisonCheck = {
+export type DomainHealthCheck = {
   state: DomainCheckState
   checked_at: string | null
 }
 
-export type DomainMethodCheck = DomainComparisonCheck & {
+export type DomainMethodCheck = DomainHealthCheck & {
   observed_count: number
-  supported_count: number
+  declared_count: number
   unsupported_methods: string[]
   manifest_version: number
 }
@@ -190,14 +203,9 @@ export type DomainDetail = {
   session_count: number
   eligible_acquisition_count: number
   active_probe_count: number
-  current_route: DomainRoute
+  transition_count: number
+  expected_plan: DomainPlan
   providers: DomainProviderEvidence[]
-  promotion: {
-    promotion_count: number
-    last_trigger_method: string
-    first_seen_at: string
-    last_seen_at: string
-  } | null
   commands: DomainCommandStat[]
 }
 
@@ -207,15 +215,18 @@ export type DomainProbe = {
   candidate_provider: ActivityProvider
   trigger: "new_domain" | "existing_sample"
   state: "queued" | "running" | "completed" | "failed"
-  comparison_outcome: "matched" | "mismatched" | "execution_failed" | null
-  baseline_status: number
-  candidate_status: number | null
-  status_matches: boolean | null
-  headers_match: boolean | null
-  baseline_console_errors: number
-  candidate_console_errors: number | null
-  console_errors_acceptable: boolean | null
-  content_matches: boolean | null
+  outcome: "supported" | "unsupported" | "inconclusive" | null
+  navigation_state: string | null
+  status_state: string | null
+  headers_state: string | null
+  method_coverage_state: string | null
+  content_state: string | null
+  status_code: number | null
+  reason_codes: string[]
+  method_observed_count: number
+  method_declared_count: number
+  unsupported_methods: string[]
+  content_facts: Record<string, number | boolean>
   cost_units: number | null
   created_at: string
   finished_at: string | null
@@ -232,7 +243,8 @@ export type DomainSession = {
   state: string
   selection_mode: "automatic" | "explicit"
   providers: ActivityProvider[]
-  routing_reason: string | null
+  selection_reason: string | null
+  transition_triggers: string[]
   actual_cost_units: number
   created_at: string
   closed_at: string | null

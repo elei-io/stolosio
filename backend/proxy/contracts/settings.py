@@ -24,7 +24,7 @@ class SettingSource(StrEnum):
 
 
 class ProviderSettingSchema(BaseModel):
-    slug: ProviderName = ProviderName.CHROMIUM
+    slug: ProviderName | None = None
 
 
 class SessionSettingSchema(BaseModel):

@@ -1,4 +1,3 @@
-import hashlib
 import json
 from uuid import uuid4
 
@@ -108,7 +107,7 @@ async def test_malformed_provider_evidence_does_not_escape_the_observer() -> Non
 
 
 @pytest.mark.asyncio
-async def test_content_and_console_are_recorded_as_fingerprints_only() -> None:
+async def test_content_length_and_console_fingerprint_exclude_sensitive_text() -> None:
     publisher = CapturingPublisher()
     observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.CHROMIUM, publisher)
     expression = """() => {
@@ -151,10 +150,7 @@ async def test_content_and_console_are_recorded_as_fingerprints_only() -> None:
         event for event in publisher.events if event.event_type == "page.content_observed"
     )
     console = next(event for event in publisher.events if event.event_type == "console.message")
-    assert content.payload == {
-        "content_fingerprint": hashlib.sha256(html.encode()).hexdigest(),
-        "content_length": len(html),
-    }
+    assert content.payload == {"content_length": len(html)}
     serialized = b"".join(event.to_json() for event in publisher.events)
     assert b"private content" not in serialized
     assert b"private console text" not in serialized

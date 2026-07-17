@@ -48,9 +48,9 @@ def test_unknown_envelope_fields_and_versions_are_rejected() -> None:
         SessionEvent.from_json(json.dumps(raw))
 
 
-def test_promotion_event_records_the_factual_transition() -> None:
+def test_transition_event_records_the_factual_transition() -> None:
     event = SessionEvent.create(
-        EventType.EXECUTION_PROMOTED,
+        EventType.EXECUTION_TRANSITIONED,
         uuid4(),
         provider=ProviderName.CHROMIUM,
         attempt_id=uuid4(),

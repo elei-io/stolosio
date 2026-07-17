@@ -13,13 +13,13 @@ client.
 - [Managed fleets](roadmap/managed-fleets.md): runtime-neutral reconciliation,
   Chromium and Lightpanda instance slots, Docker Compose runtime support, scaling
   metrics, packing, scale-up, and idle scale-down.
-- [No-browser promotion](roadmap/no-browser-promotion.md): let an automatic session
+- [Provider transitions](roadmap/provider-transitions.md): let an automatic session
   serve navigation and content through plain HTTP, then acquire Chromium and continue
-  the same CDP session after replaying its acknowledged history when another operation
+  the same CDP session after replaying safe acknowledged history when another operation
   is observed.
-- [Deterministic domain routing](roadmap/deterministic-routing.md): use a conservative
-  operator default for unknown domains, qualify cheaper providers with bounded
-  background probes, and route from factual cost and compatibility history.
+- [Domain support routing](roadmap/deterministic-routing.md): check every provider
+  independently, order supported providers by cost, and retain a configured default
+  as the final automatic candidate.
 
 ## Next
 

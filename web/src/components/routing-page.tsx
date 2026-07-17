@@ -105,28 +105,20 @@ function policySummary(
   configuration: RoutingConfiguration,
   enabledProviders: ProviderRoutingProfile[]
 ) {
-  const fallback = providerLabels[configuration.default_provider]
-  const fallbackCost = enabledProviders.find(
+  const defaultLabel = providerLabels[configuration.default_provider]
+  const defaultCost = enabledProviders.find(
     (profile) => profile.provider === configuration.default_provider
   )?.cost_units_per_second
   const probeRate = formatPercentage(
     configuration.existing_domain_probe_rate_basis_points
   )
-  const matches = configuration.required_successful_probes
-  const cheaperProviders = enabledProviders.filter(
-    (profile) =>
-      profile.provider !== configuration.default_provider &&
-      fallbackCost !== undefined &&
-      profile.cost_units_per_second < fallbackCost
-  ).length
+  const confirmations = configuration.required_support_confirmations
 
-  return `Unknown and unqualified domains use ${fallback}. Harbor evaluates ${
-    cheaperProviders === 1
-      ? "one cheaper enabled alternative"
-      : `${cheaperProviders} cheaper enabled alternatives`
-  } and qualifies an acquisition path after ${matches} matching ${
-    matches === 1 ? "probe" : "probes"
-  }. ${probeRate}% of later eligible sessions are rechecked.`
+  return `When no provider is known to support a domain, Harbor uses ${defaultLabel}${
+    defaultCost === undefined ? "" : ` (${defaultCost} units/s)`
+  }. Harbor checks every enabled provider independently and marks support after ${confirmations} healthy ${
+    confirmations === 1 ? "probe" : "probes"
+  }. Runtime selects the cheapest supported provider and transitions through the full plan when requirements change. The configured default remains the final automatic candidate. ${probeRate}% of later eligible sessions are rechecked.`
 }
 
 function LoadingState() {
@@ -178,7 +170,7 @@ function PolicySettings({
     String(configuration.existing_domain_probe_rate_basis_points / 100)
   )
   const [requiredProbes, setRequiredProbes] = useState(
-    String(configuration.required_successful_probes)
+    String(configuration.required_support_confirmations)
   )
 
   const basisPoints = Math.round(Number(probeRate) * 100)
@@ -193,7 +185,7 @@ function PolicySettings({
   const dirty =
     defaultProvider !== configuration.default_provider ||
     basisPoints !== configuration.existing_domain_probe_rate_basis_points ||
-    requiredProbeCount !== configuration.required_successful_probes
+    requiredProbeCount !== configuration.required_support_confirmations
 
   const mutation = useMutation({
     mutationFn: updateRoutingConfiguration,
@@ -215,8 +207,8 @@ function PolicySettings({
     if (basisPoints !== configuration.existing_domain_probe_rate_basis_points) {
       update.existing_domain_probe_rate_basis_points = basisPoints
     }
-    if (requiredProbeCount !== configuration.required_successful_probes) {
-      update.required_successful_probes = requiredProbeCount
+    if (requiredProbeCount !== configuration.required_support_confirmations) {
+      update.required_support_confirmations = requiredProbeCount
     }
     mutation.mutate(update)
   }
@@ -232,7 +224,7 @@ function PolicySettings({
           <div>
             <h2 className="font-semibold">Automatic routing policy</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Configure fallback behavior and qualification evidence.
+              Configure the final automatic candidate and support evidence.
             </p>
           </div>
           <Badge
@@ -246,15 +238,15 @@ function PolicySettings({
 
         <div className="grid divide-y lg:grid-cols-3 lg:divide-x lg:divide-y-0">
           <div className="p-5">
-            <Label htmlFor="routing-fallback">
+            <Label htmlFor="routing-default">
               <ShieldCheck
                 className="size-4 text-muted-foreground"
                 aria-hidden
               />
-              Unknown-domain fallback
+              Configured default
             </Label>
             <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-              Used until a cheaper provider has been qualified.
+              Final candidate when evidence cannot select a supported provider.
             </span>
             <Select
               value={defaultProvider}
@@ -262,7 +254,7 @@ function PolicySettings({
                 setDefaultProvider(value as ActivityProvider)
               }
             >
-              <SelectTrigger id="routing-fallback" className="mt-4 h-10 w-full">
+              <SelectTrigger id="routing-default" className="mt-4 h-10 w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -307,10 +299,10 @@ function PolicySettings({
           <div className="p-5">
             <Label htmlFor="routing-required-probes">
               <Check className="size-4 text-muted-foreground" aria-hidden />
-              Required matching probes
+              Required healthy probes
             </Label>
             <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-              Evidence needed before a provider is qualified.
+              Independent confirmations needed before support is trusted.
             </span>
             <Input
               id="routing-required-probes"
@@ -324,14 +316,14 @@ function PolicySettings({
               className="mt-4 h-10"
             />
             <span className="mt-2 block text-xs text-muted-foreground">
-              A mismatch or execution failure rejects the candidate.
+              Hard health failures mark the provider unsupported; ambiguous results remain checking.
             </span>
           </div>
         </div>
 
         <div className="flex flex-col gap-3 border-t bg-muted/15 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-muted-foreground">
-            Comparison policy v{configuration.comparison_policy_version}
+            Support policy v{configuration.support_policy_version}
           </p>
           <Button
             type="submit"
@@ -428,7 +420,7 @@ function ProviderRow({
                 variant="outline"
                 className="h-5 bg-muted/50 text-[0.625rem] text-muted-foreground"
               >
-                Fallback
+                Default
               </Badge>
             )}
           </div>
@@ -454,7 +446,7 @@ function ProviderRow({
         </div>
         {isDefault && (
           <p className="mt-1 text-[0.6875rem] text-muted-foreground">
-            Change the fallback before disabling.
+            Change the configured default before disabling.
           </p>
         )}
       </div>
@@ -583,7 +575,7 @@ function ProviderPolicy({
       <div className="flex gap-3 border-t bg-muted/15 px-5 py-4 text-xs leading-5 text-muted-foreground">
         <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
         <p>
-          Routing eligibility controls automatic selection and qualification. It
+          Routing eligibility controls support checks and automatic selection. It
           does not disable a managed fleet or prevent explicit{" "}
           <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.6875rem] text-foreground">
             harbor.provider.slug
@@ -626,7 +618,7 @@ export function RoutingPage() {
             Routing
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Control automatic provider selection, qualification evidence, and
+            Control automatic provider selection, support evidence, and
             relative acquisition cost.
           </p>
         </div>
@@ -667,7 +659,7 @@ export function RoutingPage() {
             </Card>
 
             <PolicySettings
-              key={`${configuration.data.configuration_version}:${configuration.data.default_provider}:${configuration.data.existing_domain_probe_rate_basis_points}:${configuration.data.required_successful_probes}`}
+              key={`${configuration.data.configuration_version}:${configuration.data.default_provider}:${configuration.data.existing_domain_probe_rate_basis_points}:${configuration.data.required_support_confirmations}`}
               configuration={configuration.data}
               profiles={profiles.data}
             />

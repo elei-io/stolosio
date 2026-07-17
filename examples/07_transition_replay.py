@@ -1,4 +1,4 @@
-"""Prove that promotion catches Chromium up through prior navigations."""
+"""Prove that a provider transition reconstructs prior navigation state."""
 
 import asyncio
 import os
@@ -7,7 +7,7 @@ from playwright.async_api import async_playwright
 
 HARBOR_CDP_URL = os.getenv(
     "HARBOR_CDP_URL",
-    "ws://localhost:8411/v1/connect?harbor.provider.slug=http",
+    "ws://localhost:8411/v1/connect",
 )
 
 

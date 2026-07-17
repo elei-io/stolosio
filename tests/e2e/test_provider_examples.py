@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 from websockets.asyncio.client import connect
@@ -47,6 +48,11 @@ async def test_interaction(provider: ProviderName) -> None:
         browser = await playwright.chromium.connect_over_cdp(harbor_url(provider))
         page = await browser.new_page()
         await page.goto("https://example.com")
+        if provider is ProviderName.HTTP:
+            with pytest.raises(PlaywrightError):
+                await page.locator("a").click()
+            await browser.close()
+            return
         await page.locator("a").click()
         await page.wait_for_load_state()
 
@@ -62,6 +68,11 @@ async def test_evaluate(provider: ProviderName) -> None:
         page = await browser.new_page()
         await page.goto("https://example.com")
 
+        if provider is ProviderName.HTTP:
+            with pytest.raises(PlaywrightError):
+                await page.evaluate("document.querySelector('h1').textContent")
+            await browser.close()
+            return
         assert await page.evaluate("document.querySelector('h1').textContent") == "Example Domain"
         await browser.close()
 
@@ -79,9 +90,14 @@ async def test_omitted_provider_uses_automatic_plan() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_browser_promotion_replays_all_prior_navigations() -> None:
+@pytest.mark.skipif(
+    os.getenv("HARBOR_E2E_TRANSITIONS") != "1",
+    reason="prepare multi-provider support evidence and set HARBOR_E2E_TRANSITIONS=1",
+)
+async def test_runtime_transition_replays_all_prior_navigations() -> None:
+    base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.HTTP))
+        browser = await playwright.chromium.connect_over_cdp(base)
         page = await browser.new_page()
         await page.goto("https://example.com/?harbor-replay=first")
         assert "Example Domain" in await page.content()
@@ -105,16 +121,40 @@ async def test_no_browser_promotion_replays_all_prior_navigations() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "example",
-    [
-        "05_no_browser_http_only.py",
-        "06_no_browser_promotion.py",
-        "07_no_browser_history.py",
-    ],
+    ["05_no_browser_http_only.py"],
 )
 async def test_no_browser_example_programs(example: str) -> None:
     root = Path(__file__).parents[2]
     environment = os.environ.copy()
     environment["HARBOR_CDP_URL"] = harbor_url(ProviderName.HTTP)
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        str(root / "examples" / example),
+        cwd=root,
+        env=environment,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+
+    assert process.returncode == 0, (stdout + stderr).decode()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("HARBOR_E2E_TRANSITIONS") != "1",
+    reason="prepare multi-provider support evidence and set HARBOR_E2E_TRANSITIONS=1",
+)
+@pytest.mark.parametrize(
+    "example",
+    ["06_provider_transition.py", "07_transition_replay.py"],
+)
+async def test_provider_transition_examples(example: str) -> None:
+    root = Path(__file__).parents[2]
+    environment = os.environ.copy()
+    environment["HARBOR_CDP_URL"] = os.getenv(
+        "HARBOR_E2E_URL", "ws://localhost:8411/v1/connect"
+    )
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         str(root / "examples" / example),

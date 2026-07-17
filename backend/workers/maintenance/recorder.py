@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -8,7 +8,7 @@ from backend.db.models import (
     AcquisitionAttempt,
     Domain,
     DomainCommandStat,
-    DomainProviderProfile,
+    DomainProviderSupport,
     GatewaySession,
     SessionDomain,
     SessionDomainCommand,
@@ -82,30 +82,6 @@ class EventRecorder:
                     )
                     if attempt is not None:
                         attempt.domain_id = domain_id
-                    status = event.payload.get("status")
-                    await database.execute(
-                        insert(DomainProviderProfile)
-                        .values(
-                            domain_id=domain_id,
-                            provider=event.provider.value,
-                            qualification_state="unqualified",
-                            successful_probe_count=0,
-                            failed_probe_count=0,
-                            observed_session_count=0,
-                            total_cost_units=0,
-                            last_status_code=status if isinstance(status, int) else None,
-                            comparison_policy_version=1,
-                        )
-                        .on_conflict_do_update(
-                            index_elements=[
-                                DomainProviderProfile.domain_id,
-                                DomainProviderProfile.provider,
-                            ],
-                            set_={
-                                "last_status_code": (status if isinstance(status, int) else None),
-                            },
-                        )
-                    )
                     await self._project_cost(database, attempt)
 
         if event_type is EventType.COMMAND_RECEIVED:
@@ -144,28 +120,16 @@ class EventRecorder:
         ):
             return
         await database.execute(
-            insert(DomainProviderProfile)
-            .values(
-                domain_id=attempt.domain_id,
-                provider=attempt.provider,
-                qualification_state="unqualified",
-                successful_probe_count=0,
-                failed_probe_count=0,
-                observed_session_count=1,
-                total_cost_units=attempt.actual_cost_units,
-                comparison_policy_version=1,
+            update(DomainProviderSupport)
+            .where(
+                DomainProviderSupport.domain_id == attempt.domain_id,
+                DomainProviderSupport.provider == attempt.provider,
             )
-            .on_conflict_do_update(
-                index_elements=[
-                    DomainProviderProfile.domain_id,
-                    DomainProviderProfile.provider,
-                ],
-                set_={
-                    "observed_session_count": (DomainProviderProfile.observed_session_count + 1),
-                    "total_cost_units": (
-                        DomainProviderProfile.total_cost_units + attempt.actual_cost_units
-                    ),
-                },
+            .values(
+                observed_session_count=DomainProviderSupport.observed_session_count + 1,
+                total_cost_units=(
+                    DomainProviderSupport.total_cost_units + attempt.actual_cost_units
+                ),
             )
         )
         attempt.cost_projected = True

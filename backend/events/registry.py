@@ -32,7 +32,7 @@ class EventType(StrEnum):
     CONSOLE_MESSAGE = "console.message"
     JAVASCRIPT_EXCEPTION = "javascript.exception"
     PROVIDER_DISCONNECTED = "provider.disconnected"
-    EXECUTION_PROMOTED = "execution.promoted"
+    EXECUTION_TRANSITIONED = "execution.transitioned"
 
 
 class _Payload(BaseModel):
@@ -73,14 +73,13 @@ class ObservationPayload(_Payload):
     error_type: str | None = Field(default=None, max_length=64)
     duration_ms: int | None = None
     probe_safe: bool | None = None
-    content_fingerprint: str | None = Field(default=None, max_length=64)
     content_length: int | None = None
     level: str | None = Field(default=None, max_length=16)
     source: str | None = Field(default=None, max_length=32)
     message_fingerprint: str | None = Field(default=None, max_length=64)
 
 
-class PromotionPayload(_Payload):
+class ProviderTransitionPayload(_Payload):
     from_provider: str = Field(max_length=32)
     to_provider: str = Field(max_length=32)
     trigger_method: str = Field(max_length=128)
@@ -115,7 +114,7 @@ _MODELS: dict[EventType, type[_Payload]] = {
     **dict.fromkeys(_ATTEMPTS, AttemptPayload),
     **dict.fromkeys(_COMMANDS, CommandPayload),
     **dict.fromkeys(_OBSERVATIONS, ObservationPayload),
-    EventType.EXECUTION_PROMOTED: PromotionPayload,
+    EventType.EXECUTION_TRANSITIONED: ProviderTransitionPayload,
 }
 
 

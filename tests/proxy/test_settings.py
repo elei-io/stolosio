@@ -17,11 +17,11 @@ from backend.proxy.settings import (
 
 
 @pytest.mark.asyncio
-async def test_omitted_provider_is_automatically_resolved_from_schema_default() -> None:
+async def test_omitted_provider_stays_unresolved_until_automatic_selection() -> None:
     requested, resolved = await harbor_settings_resolver.resolve([])
 
     assert requested.provider is ProviderSelection.AUTO
-    assert resolved.provider.slug is ProviderName.CHROMIUM
+    assert resolved.provider.slug is None
     assert resolved.sources["harbor.provider.slug"] is SettingSource.AUTO
 
 
@@ -42,7 +42,7 @@ async def test_explicit_auto_uses_the_planner() -> None:
 
     assert requested.provider is ProviderSelection.AUTO
     assert requested.auto_fields == frozenset({"harbor.provider.slug"})
-    assert resolved.provider.slug is ProviderName.CHROMIUM
+    assert resolved.provider.slug is None
     assert resolved.sources["harbor.provider.slug"] is SettingSource.AUTO
 
 

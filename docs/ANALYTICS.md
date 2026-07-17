@@ -1,36 +1,51 @@
-# Deterministic Domain Routing
+# Domain Provider Support
 
-Harbor uses historical observations to choose the cheapest provider that has been
-qualified for a domain. This is deterministic policy, not machine learning.
+Harbor maintains an independent support matrix for every observed domain and enabled
+provider. The matrix answers one question: **does Harbor currently have enough evidence
+that this provider can execute this domain's observed journey?** It does not compare a
+provider with another provider, and cost never changes a support conclusion.
 
-Unknown and unqualified domains use the operator-selected default provider. After an
-eligible `page.goto()` plus `page.content()` session completes, Harbor probes cheaper
-providers through its normal adaptive CDP path. It compares status, selected headers,
-console-error count, and a SHA-256 content fingerprint without retaining HTML.
+## Support checks
 
-Every new domain schedules one probe per cheaper enabled provider. Existing domains
-sample completed eligible sessions at an operator-configured basis-point rate, initially
-`100` (1%). Sampling uses a stable session/domain hash and is reproducible.
+After an eligible successful navigation, a leased background worker checks every
+enabled provider, including providers more expensive than the source session. Each
+check records only absolute, bounded results:
 
-A provider becomes qualified after the configured number of matching probes. A mismatch
-or execution failure rejects it. Future sessions choose the qualified provider with the
-lowest historical average cost, falling back to its configured cost rate when no actual
-cost exists.
+- Navigation completed.
+- The main response had a healthy HTTP status.
+- Response headers describe usable HTML rather than a download or non-HTML payload.
+- The provider capability manifest covers CDP methods observed for the domain.
+- Content looks meaningful and does not resemble an empty JavaScript app shell,
+  explicit JavaScript-required page, or obvious error page.
 
-Provider capabilities remain versioned adapter manifests. Costs, the conservative
-default, probe rate, and required matches live in PostgreSQL and are available through
-the development admin API:
+Content is never required to match another acquisition. Dynamic text is expected.
+Harbor stores bounded counts and reason codes, not HTML or a content fingerprint.
+Ambiguous low-information pages remain `checking`; hard failures become `unsupported`.
+After the configured number of healthy confirmations, the provider becomes `supported`.
 
-```text
-GET/PATCH /v1/admin/routing
-GET       /v1/admin/routing/providers
-PATCH     /v1/admin/routing/providers/{provider}
-```
+Support evidence is valid only while its support-policy version and provider capability
+manifest version match the current configuration.
 
-The policy deliberately makes false negatives cheap and false positives difficult:
-strict comparison may retain an expensive provider, but a direct-provider success does
-not qualify a provider unless the same acquisition also works through Harbor's adaptive
-replay path.
+## Runtime plan
 
-Detailed facts remain in the DEBUG evidence stream. Qualification is a policy conclusion
-stored separately and never presented as a DEBUG recommendation.
+For a known domain, automatic routing takes current, enabled `supported` providers and
+orders them by observed average cost, then configured cost when no observation exists.
+If a new CDP requirement appears or acquisition fails before unsafe side effects,
+Harbor replans, excludes attempted providers, and transitions to the next supported
+compatible provider.
+
+The configured `default_provider` is the final automatic candidate. Harbor uses it
+when no provider is known to be supported and appends it after known-supported
+providers when it is compatible with the required commands. It is not a correctness
+baseline: its result remains ordinary runtime evidence, and failure still returns an
+explicit protocol error.
+
+Explicit `harbor.provider.slug` selection remains an override and does not rewrite
+support evidence.
+
+## Storage and administration
+
+PostgreSQL owns `domain_provider_support`, `support_probes`, routing configuration,
+cost projections, leases, and factual `domain_provider_transition_stats`. DEBUG continues to
+contain normalized session facts. Support and route plans are policy conclusions stored
+and presented separately.

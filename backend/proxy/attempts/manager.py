@@ -77,6 +77,10 @@ class AttemptAdmission:
         resolved: ResolvedSessionSettings,
     ) -> AttemptLease:
         provider = resolved.provider.slug
+        if provider is None:
+            raise RuntimeError(
+                "An acquisition attempt requires a concrete provider selection"
+            )
         capacity = provider_capacity(self._settings, provider)
         attempt = ProviderAttempt(
             attempt_id=str(uuid4()),

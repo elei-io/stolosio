@@ -8,12 +8,20 @@ from backend.proxy.adapters.cdp import (
     WebSocketProviderSession,
     _discovery_url,
 )
+from backend.proxy.adapters.http import HttpAdapter
 from backend.proxy.adapters.lightpanda import (
     LightpandaAdapter,
     LightpandaProviderSession,
 )
 from backend.proxy.adapters.registry import get_provider_adapter
-from backend.proxy.contracts import ProviderName
+from backend.proxy.contracts import (
+    HarborSession,
+    ProviderName,
+    ProviderSettingSchema,
+    ResolvedSessionSettings,
+    SessionSettingSchema,
+    SessionState,
+)
 
 
 class FakeWebSocket:
@@ -122,6 +130,31 @@ def test_camoufox_uses_mapping_adapter() -> None:
 
     assert adapter.provider is ProviderName.CAMOUFOX
     assert adapter.endpoint == "ws://harbor-camoufox-2:1234/harbor"
+
+
+@pytest.mark.asyncio
+async def test_explicit_http_is_a_normal_provider_and_never_transitions() -> None:
+    adapter = get_provider_adapter(ProviderName.HTTP)
+    assert isinstance(adapter, HttpAdapter)
+    session = await adapter.acquire(
+        HarborSession("session", "owner", "lease", SessionState.OPEN),
+        ResolvedSessionSettings(
+            provider=ProviderSettingSchema(slug=ProviderName.HTTP),
+            session=SessionSettingSchema(),
+            sources={},
+        ),
+    )
+
+    await session.send(json.dumps({"id": 1, "method": "Page.printToPDF"}))
+
+    assert session.provider is ProviderName.HTTP
+    assert json.loads(await anext(session.messages())) == {
+        "id": 1,
+        "error": {
+            "code": -32601,
+            "message": "Page.printToPDF is not supported by provider http",
+        },
+    }
 
 
 def test_lightpanda_uses_assigned_managed_instance_endpoint() -> None:

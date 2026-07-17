@@ -5,7 +5,6 @@ from starlette.testclient import WebSocketDenialResponse
 
 from backend.api.main import app
 from backend.api.routes.proxy import router
-from backend.proxy.contracts import ProviderName
 
 
 def test_proxy_http_routes_are_registered() -> None:
@@ -52,12 +51,12 @@ def test_direct_websocket_route_connects_through_resolved_adapter(monkeypatch) -
             assert websocket.receive_text() == '{"id":1}'
 
 
-def test_direct_websocket_route_defaults_to_auto_chromium(monkeypatch) -> None:
-    selected: list[ProviderName] = []
+def test_direct_websocket_route_leaves_automatic_provider_unbound(monkeypatch) -> None:
+    automatic: list[bool] = []
 
     class FakeGateway:
         async def connect(self, websocket) -> None:
-            selected.append(ProviderName.CHROMIUM)
+            automatic.append("harbor.provider.slug" not in websocket.query_params)
             await websocket.accept()
             await websocket.close()
 
@@ -66,7 +65,7 @@ def test_direct_websocket_route_defaults_to_auto_chromium(monkeypatch) -> None:
         with client.websocket_connect("/v1/connect"):
             pass
 
-    assert selected == [ProviderName.CHROMIUM]
+    assert automatic == [True]
 
 
 def test_invalid_harbor_setting_closes_with_stable_code() -> None:

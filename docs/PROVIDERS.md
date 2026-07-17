@@ -8,10 +8,10 @@ The matrix separates documented provider behavior from behavior verified by Harb
 own end-to-end examples. It should be updated as compatibility tests grow.
 
 Provider routing profiles assign operator-configurable cost units per session-second.
-These are relative policy values rather than universal pricing claims. Historical
-attempt cost supersedes that fallback after evidence exists. Qualification exercises
-the full adaptive Harbor path, so direct-provider success alone cannot make a provider
-eligible for automatic routing.
+These are relative policy values rather than universal pricing claims. Historical cost
+orders providers only after independent navigation, HTTP, header, method, and content
+checks mark them supported. The configured default is the final automatic candidate,
+not a behavioral baseline.
 
 ## Summary matrix
 
@@ -70,10 +70,11 @@ it.
 
 ### HTTP
 
-HTTP is treated as a provider selection even though no browser is acquired. Initially,
-only `page.goto` and `page.content` remain on this path. Any other command triggers
-browser acquisition and ordered replay of every acknowledged command as described in
-[No-Browser Execution](NO_BROWSER.md).
+HTTP is treated as a normal provider selection even though no browser is acquired.
+Initially, only `page.goto` and `page.content` remain on this path. Explicit
+`harbor.provider.slug=http` never changes provider and returns a protocol error for
+unsupported commands. Automatic sessions may use HTTP and later perform an ordered
+provider transition as described in [Adaptive HTTP Execution](NO_BROWSER.md).
 
 ### Plain Chromium
 

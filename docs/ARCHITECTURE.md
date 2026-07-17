@@ -81,8 +81,9 @@ The session owns:
 - Cleanup state and termination reason.
 
 Attempts own resolved provider settings, provider queue position, acquisition state,
-provider resources, and outcome. HTTP-to-browser promotion creates another attempt
-under the same logical session after closing the HTTP attempt as `promoted`.
+provider resources, and outcome. A runtime transition creates another attempt under the
+same logical session, verifies it, switches execution, and then closes the prior
+attempt as `provider_transitioned`.
 
 PostgreSQL transactions own global session admission and separate per-provider FIFO
 admission. NATS capacity notifications wake queued attempt handlers; PostgreSQL polling
@@ -174,31 +175,32 @@ Passthrough must preserve:
 An automatic session begins behind a bounded CDP facade without acquiring a provider.
 The facade supports the tested one-page Playwright bootstrap, performs `Page.navigate`
 through HTTP, and answers only the exact recognized `page.content()` protocol shape.
-Every other sequence acquires the configured fallback provider.
+Every other sequence is planned against the domain support matrix.
 
-Before the triggering command runs, Harbor replays every command already acknowledged
-by the facade in original order, maps facade-owned identifiers to acquired-provider
+Before the triggering command runs, Harbor replays acknowledged commands in original
+order when replay is safe, maps facade-owned identifiers to acquired-provider
 identifiers, waits for response and lifecycle catch-up, and suppresses duplicate replay
 output. The downstream WebSocket and logical session do not change. PostgreSQL records
-the attempts plus factual per-domain promotion history; the replay log itself remains
-bounded and process-local.
+attempts plus factual per-domain provider transitions; the replay log remains bounded and
+process-local.
 
-See [No-Browser Execution](NO_BROWSER.md) and the implemented
-[No-Browser Promotion](roadmap/no-browser-promotion.md) milestone.
+See [Adaptive HTTP Execution](NO_BROWSER.md) and the implemented
+[Provider Transitions](roadmap/provider-transitions.md) milestone.
 
-### Deterministic provider qualification
+### Domain provider support
 
-Automatic sessions remain providerless until `Page.navigate` reveals a domain. Unknown
-and unqualified domains acquire the operator-selected default. Qualified domains use the
-provider with the lowest historical average attempt cost, falling back to its configured
-cost rate.
+Automatic sessions remain providerless until `Page.navigate` reveals a domain. Harbor
+then orders current supported providers by cost and keeps the configured default as
+the final compatible candidate. With no known support, it uses the configured default.
 
-After eligible completed sessions, a separate worker runs cheaper `goto` plus `content`
-probes through the same adaptive gateway path. PostgreSQL owns probe jobs, leases,
-configuration, and qualification state. The existing DEBUG/JetStream path owns detailed
-evidence; there is no second analytical event stream.
+After eligible completed sessions, a separate worker checks every enabled provider
+against absolute navigation, HTTP, header, declared-method, and content-sanity rules.
+Method coverage comes from the versioned provider capability manifest; it is not
+presented as an exercised domain observation.
+PostgreSQL owns probe jobs, leases, versioned support evidence, plans, and cost
+projections. DEBUG/JetStream remains factual and contains no support decisions.
 
-See [Deterministic Domain Routing](ANALYTICS.md).
+See [Domain Provider Support](ANALYTICS.md).
 
 ### Translated execution
 

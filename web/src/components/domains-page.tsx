@@ -6,7 +6,6 @@ import {
   ChevronRight,
   CircleAlert,
   CircleDot,
-  Compass,
   FlaskConical,
   Globe2,
   LoaderCircle,
@@ -34,11 +33,12 @@ import { extractApiError } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type {
   ActivityProvider,
-  DomainComparisonCheck,
+  DomainHealthCheck,
   DomainDetail,
   DomainListItem,
   DomainMethodCheck,
   DomainPage,
+  DomainPlan,
   DomainProbe,
   DomainProbePage,
   DomainProviderEvidence,
@@ -51,6 +51,14 @@ const providerLabels: Record<ActivityProvider, string> = {
   browserless: "Browserless",
   lightpanda: "Lightpanda",
   camoufox: "Camoufox",
+}
+
+const supportFilterLabels: Record<string, string> = {
+  all: "All support states",
+  supported: "Supported",
+  checking: "Checking",
+  unsupported: "Unsupported",
+  unknown: "Unknown",
 }
 
 async function apiRequest<T>(url: string): Promise<T> {
@@ -84,10 +92,22 @@ function relativeTime(value: string) {
   return formatter.format(Math.round(hours / 24), "day")
 }
 
-function routeReason(reason: string) {
-  return reason === "cheapest_qualified"
-    ? "Cheapest qualified"
-    : "Default provider"
+function planLabel(plan: DomainPlan) {
+  if (plan.reason === "no_supported_provider") return "No supported provider"
+  if (!plan.candidates.length) return "No plan"
+  return plan.candidates
+    .map((candidate) => providerLabels[candidate.provider])
+    .join(" → ")
+}
+
+function PlanDescription({ plan }: { plan: DomainPlan }) {
+  if (plan.reason === "configured_default") {
+    return <span>Configured default</span>
+  }
+  if (plan.reason === "no_supported_provider") {
+    return <span className="text-destructive">No supported path</span>
+  }
+  return <span>Cheapest supported first</span>
 }
 
 function LoadingState({ label }: { label: string }) {
@@ -107,7 +127,7 @@ function LoadingState({ label }: { label: string }) {
 function ErrorState({
   error,
   retry,
-  label = "Domain evidence is unavailable",
+  label = "Domain support evidence is unavailable",
 }: {
   error: unknown
   retry: () => void
@@ -159,30 +179,25 @@ function SummaryCard({
   )
 }
 
-function EvidenceSummary({ domain }: { domain: DomainListItem }) {
+function SupportSummary({ domain }: { domain: DomainListItem }) {
   const parts = []
-  if (domain.qualification_counts.qualified) {
-    parts.push(`${domain.qualification_counts.qualified} qualified`)
+  if (domain.support_counts.supported) {
+    parts.push(`${domain.support_counts.supported} supported`)
   }
-  if (domain.qualification_counts.probing) {
-    parts.push(`${domain.qualification_counts.probing} probing`)
+  if (domain.support_counts.checking) {
+    parts.push(`${domain.support_counts.checking} checking`)
   }
-  if (domain.qualification_counts.rejected) {
-    parts.push(`${domain.qualification_counts.rejected} rejected`)
+  if (domain.support_counts.unsupported) {
+    parts.push(`${domain.support_counts.unsupported} unsupported`)
   }
-  if (!parts.length) return <span>No qualifications</span>
-  return <span>{parts.join(" · ")}</span>
+  return <span>{parts.length ? parts.join(" · ") : "No support evidence"}</span>
 }
 
-function DomainIndex({
-  navigate,
-}: {
-  navigate: (href: string) => void
-}) {
+function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
   const [search, setSearch] = useState("")
   const [debouncedSearch, setDebouncedSearch] = useState("")
-  const [qualification, setQualification] = useState("all")
-  const [promotionsOnly, setPromotionsOnly] = useState(false)
+  const [support, setSupport] = useState("all")
+  const [transitionsOnly, setTransitionsOnly] = useState(false)
   const [activeProbesOnly, setActiveProbesOnly] = useState(false)
   const [cursor, setCursor] = useState<string | null>(null)
   const [cursorHistory, setCursorHistory] = useState<(string | null)[]>([])
@@ -204,60 +219,27 @@ function DomainIndex({
   const query = useMemo(() => {
     const params = new URLSearchParams({ limit: "100" })
     if (debouncedSearch) params.set("search", debouncedSearch)
-    if (qualification !== "all") {
-      params.set("qualification_state", qualification)
-    }
-    if (promotionsOnly) params.set("has_promotions", "true")
+    if (support !== "all") params.set("support_state", support)
+    if (transitionsOnly) params.set("has_transitions", "true")
     if (activeProbesOnly) params.set("has_active_probes", "true")
-    return params.toString()
-  }, [
-    activeProbesOnly,
-    debouncedSearch,
-    promotionsOnly,
-    qualification,
-  ])
-  const pageQuery = useMemo(() => {
-    const params = new URLSearchParams(query)
     if (cursor) params.set("before", cursor)
     return params.toString()
-  }, [cursor, query])
-
+  }, [activeProbesOnly, cursor, debouncedSearch, transitionsOnly, support])
   const domains = useQuery({
-    queryKey: ["domains", pageQuery],
-    queryFn: () => apiRequest<DomainPage>(`/v1/admin/domains?${pageQuery}`),
+    queryKey: ["domains", query],
+    queryFn: () => apiRequest<DomainPage>(`/v1/admin/domains?${query}`),
   })
-
   const resetPagination = () => {
     setCursor(null)
     setCursorHistory([])
   }
 
-  const nextPage = () => {
-    const nextCursor = domains.data?.next_cursor
-    if (!nextCursor) return
-    setCursorHistory((current) => [...current, cursor])
-    setCursor(nextCursor)
-  }
-
-  const previousPage = () => {
-    if (!cursorHistory.length) return
-    const previous = cursorHistory.at(-1) ?? null
-    setCursorHistory((current) => current.slice(0, -1))
-    setCursor(previous)
-  }
-
-  if (domains.isLoading) return <LoadingState label="Loading domain evidence" />
+  if (domains.isLoading) return <LoadingState label="Loading domain support" />
   if (domains.isError) {
     return <ErrorState error={domains.error} retry={() => void domains.refetch()} />
   }
-
   const page = domains.data
   if (!page) return null
-  const filtersActive =
-    Boolean(search) ||
-    qualification !== "all" ||
-    promotionsOnly ||
-    activeProbesOnly
 
   return (
     <>
@@ -269,27 +251,27 @@ function DomainIndex({
           icon={Globe2}
         />
         <SummaryCard
-          label="Qualified"
-          value={page.summary.qualified_domains}
-          detail="With qualified provider evidence"
+          label="Supported"
+          value={page.summary.supported_domains}
+          detail="At least one supported provider"
           icon={ShieldCheck}
         />
         <SummaryCard
-          label="Probing"
-          value={page.summary.probing_domains}
-          detail="Qualification in progress"
+          label="Checking"
+          value={page.summary.checking_domains}
+          detail="Support checks in progress"
           icon={FlaskConical}
         />
         <SummaryCard
-          label="Default only"
-          value={page.summary.default_only_domains}
-          detail="No qualified alternative"
-          icon={Compass}
+          label="No evidence"
+          value={page.summary.no_evidence_domains}
+          detail="Will use the configured default"
+          icon={CircleDot}
         />
         <SummaryCard
-          label="Promoted"
-          value={page.summary.promoted_domains}
-          detail="Required a browser transition"
+          label="Transitioned"
+          value={page.summary.transitioned_domains}
+          detail="Runtime requirements changed"
           icon={Sparkles}
         />
       </section>
@@ -299,15 +281,12 @@ function DomainIndex({
           <div>
             <h2 className="font-semibold">Observed domains</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Factual routing, qualification, and browser-promotion evidence.
+              Expected provider plans derived from absolute support evidence.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <span className="relative min-w-64">
-              <Search
-                className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden
-              />
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -317,58 +296,56 @@ function DomainIndex({
               />
             </span>
             <Select
-              value={qualification}
+              value={support}
               onValueChange={(value) => {
-                setQualification(value ?? "all")
+                setSupport(value ?? "all")
                 resetPagination()
               }}
             >
               <SelectTrigger className="h-9 w-full sm:w-44">
-                <SelectValue />
+                <SelectValue>{supportFilterLabels[support]}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All evidence</SelectItem>
-                <SelectItem value="qualified">Qualified</SelectItem>
-                <SelectItem value="probing">Probing</SelectItem>
-                <SelectItem value="rejected">Rejected</SelectItem>
-                <SelectItem value="unqualified">Unqualified</SelectItem>
+                <SelectItem value="all">All support states</SelectItem>
+                <SelectItem value="supported">Supported</SelectItem>
+                <SelectItem value="checking">Checking</SelectItem>
+                <SelectItem value="unsupported">Unsupported</SelectItem>
+                <SelectItem value="unknown">Unknown</SelectItem>
               </SelectContent>
             </Select>
             <Button
               variant={activeProbesOnly ? "secondary" : "outline"}
               size="sm"
               className="h-9"
-              aria-pressed={activeProbesOnly}
               onClick={() => {
                 setActiveProbesOnly((value) => !value)
                 resetPagination()
               }}
             >
-              Active probes
+              Active checks
             </Button>
             <Button
-              variant={promotionsOnly ? "secondary" : "outline"}
+              variant={transitionsOnly ? "secondary" : "outline"}
               size="sm"
               className="h-9"
-              aria-pressed={promotionsOnly}
               onClick={() => {
-                setPromotionsOnly((value) => !value)
+                setTransitionsOnly((value) => !value)
                 resetPagination()
               }}
             >
-              Promotions
+              Provider transitions
             </Button>
           </div>
         </div>
 
         {page.domains.length ? (
           <>
-            <div className="hidden min-w-[62rem] grid-cols-[1.5fr_1.2fr_1.25fr_.7fr_.7fr_2.5rem] border-b bg-muted/35 px-5 py-2.5 font-mono text-[0.6875rem] font-medium tracking-wider text-muted-foreground uppercase md:grid">
+            <div className="hidden min-w-[62rem] grid-cols-[1.4fr_1.45fr_1.25fr_.65fr_.65fr_2.5rem] border-b bg-muted/35 px-5 py-2.5 font-mono text-[0.6875rem] font-medium tracking-wider text-muted-foreground uppercase md:grid">
               <span>Domain</span>
-              <span>Current route</span>
-              <span>Provider evidence</span>
+              <span>Expected plan</span>
+              <span>Support evidence</span>
               <span>Sessions</span>
-              <span>Promotions</span>
+              <span>Provider transitions</span>
               <span />
             </div>
             <div className="divide-y">
@@ -382,7 +359,7 @@ function DomainIndex({
                       event.preventDefault()
                       navigate(href)
                     }}
-                    className="group block px-5 py-4 transition-colors hover:bg-muted/25 md:grid md:min-w-[62rem] md:grid-cols-[1.5fr_1.2fr_1.25fr_.7fr_.7fr_2.5rem] md:items-center"
+                    className="group block px-5 py-4 transition-colors hover:bg-muted/25 md:grid md:min-w-[62rem] md:grid-cols-[1.4fr_1.45fr_1.25fr_.65fr_.65fr_2.5rem] md:items-center"
                   >
                     <div className="min-w-0">
                       <p className="truncate font-medium">{domain.hostname}</p>
@@ -393,100 +370,68 @@ function DomainIndex({
                         Last seen {relativeTime(domain.last_seen_at)}
                       </p>
                     </div>
-                    <div className="mt-4 md:mt-0">
-                      <p className="text-xs text-muted-foreground md:hidden">
-                        Current route
-                      </p>
-                      <p className="mt-1 text-sm font-medium md:mt-0">
-                        {providerLabels[domain.current_route.provider]}
+                    <div className="mt-4 min-w-0 md:mt-0">
+                      <p className="truncate text-sm font-medium">
+                        {planLabel(domain.expected_plan)}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {routeReason(domain.current_route.reason)}
+                        <PlanDescription plan={domain.expected_plan} />
                       </p>
                     </div>
                     <div className="mt-4 text-sm text-muted-foreground md:mt-0">
-                      <p className="text-xs md:hidden">Provider evidence</p>
-                      <p className="mt-1 md:mt-0">
-                        <EvidenceSummary domain={domain} />
-                      </p>
+                      <SupportSummary domain={domain} />
                       {domain.active_probe_count > 0 && (
                         <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
-                          {domain.active_probe_count} active{" "}
-                          {domain.active_probe_count === 1 ? "probe" : "probes"}
+                          {domain.active_probe_count} active
                         </p>
                       )}
                     </div>
-                    <div className="mt-4 md:mt-0">
-                      <p className="text-xs text-muted-foreground md:hidden">
-                        Sessions
-                      </p>
-                      <p className="mt-1 text-sm font-medium md:mt-0">
-                        {formatNumber(domain.session_count)}
-                      </p>
-                    </div>
-                    <div className="mt-4 md:mt-0">
-                      <p className="text-xs text-muted-foreground md:hidden">
-                        Promotions
-                      </p>
-                      <p className="mt-1 text-sm font-medium md:mt-0">
-                        {formatNumber(domain.promotion_count)}
-                      </p>
-                    </div>
-                    <ChevronRight
-                      className="hidden size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 md:block"
-                      aria-hidden
-                    />
+                    <p className="mt-4 text-sm font-medium md:mt-0">
+                      {formatNumber(domain.session_count)}
+                    </p>
+                    <p className="mt-4 text-sm font-medium md:mt-0">
+                      {formatNumber(domain.transition_count)}
+                    </p>
+                    <ChevronRight className="hidden size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 md:block" />
                   </a>
                 )
               })}
             </div>
             {(cursorHistory.length > 0 || page.next_cursor) && (
-              <div className="flex items-center justify-between gap-4 border-t bg-muted/10 px-5 py-3">
+              <div className="flex items-center justify-between border-t bg-muted/10 px-5 py-3">
                 <p className="text-xs text-muted-foreground">
-                  Page {cursorHistory.length + 1} · {page.domains.length}{" "}
-                  {page.domains.length === 1 ? "domain" : "domains"}
+                  Page {cursorHistory.length + 1} · {page.domains.length} domains
                 </p>
-                <div className="flex items-center gap-2">
+                <div className="flex gap-2">
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-8 gap-1.5"
                     disabled={!cursorHistory.length || domains.isFetching}
-                    onClick={previousPage}
+                    onClick={() => {
+                      setCursor(cursorHistory.at(-1) ?? null)
+                      setCursorHistory((current) => current.slice(0, -1))
+                    }}
                   >
-                    <ArrowLeft className="size-3.5" aria-hidden />
-                    Previous
+                    <ArrowLeft className="size-3.5" /> Previous
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-8 gap-1.5"
                     disabled={!page.next_cursor || domains.isFetching}
-                    onClick={nextPage}
+                    onClick={() => {
+                      setCursorHistory((current) => [...current, cursor])
+                      setCursor(page.next_cursor)
+                    }}
                   >
-                    Next
-                    <ArrowRight className="size-3.5" aria-hidden />
+                    Next <ArrowRight className="size-3.5" />
                   </Button>
                 </div>
               </div>
             )}
           </>
         ) : (
-          <div className="flex min-h-72 items-center justify-center px-6 text-center">
-            <div>
-              <Globe2
-                className="mx-auto size-6 text-muted-foreground"
-                aria-hidden
-              />
-              <h3 className="mt-4 font-medium">
-                {filtersActive ? "No matching domains" : "No domains observed"}
-              </h3>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {filtersActive
-                  ? "Adjust the filters to broaden the evidence shown."
-                  : "Domains appear after Harbor observes session navigation."}
-              </p>
-            </div>
+          <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">
+            No matching domains.
           </div>
         )}
       </section>
@@ -494,17 +439,22 @@ function DomainIndex({
   )
 }
 
-function CheckCell({ check }: { check: DomainComparisonCheck }) {
+function CheckCell({ check }: { check: DomainHealthCheck }) {
   const metadata = {
-    matches: {
-      label: "Matches",
+    healthy: {
+      label: "Healthy",
       icon: Check,
       className: "text-emerald-700 dark:text-emerald-400",
     },
-    differs: {
-      label: "Differs",
+    unhealthy: {
+      label: "Unhealthy",
       icon: X,
       className: "text-destructive",
+    },
+    inconclusive: {
+      label: "Inconclusive",
+      icon: CircleAlert,
+      className: "text-amber-700 dark:text-amber-400",
     },
     checking: {
       label: "Checking",
@@ -516,16 +466,22 @@ function CheckCell({ check }: { check: DomainComparisonCheck }) {
       icon: Minus,
       className: "text-muted-foreground",
     },
+    declared: {
+      label: "Declared",
+      icon: Check,
+      className: "text-emerald-700 dark:text-emerald-400",
+    },
+    missing: {
+      label: "Missing",
+      icon: X,
+      className: "text-destructive",
+    },
   }[check.state]
   const Icon = metadata.icon
-
   return (
     <div>
       <p className={cn("flex items-center gap-1.5 text-sm font-medium", metadata.className)}>
-        <Icon
-          className={cn("size-3.5", check.state === "checking" && "animate-spin")}
-          aria-hidden
-        />
+        <Icon className={cn("size-3.5", check.state === "checking" && "animate-spin")} />
         {metadata.label}
       </p>
       <p
@@ -535,7 +491,7 @@ function CheckCell({ check }: { check: DomainComparisonCheck }) {
         {check.checked_at
           ? `Checked ${relativeTime(check.checked_at)}`
           : check.state === "checking"
-            ? "Probe in progress"
+            ? "Check in progress"
             : "Not checked yet"}
       </p>
     </div>
@@ -543,28 +499,25 @@ function CheckCell({ check }: { check: DomainComparisonCheck }) {
 }
 
 function MethodCheckCell({ check }: { check: DomainMethodCheck }) {
-  if (check.state === "not_checked") return <CheckCell check={check} />
-  const differs = check.state === "differs"
-  const title = differs
-    ? `Unsupported: ${check.unsupported_methods.join(", ")}`
-    : `Capability manifest v${check.manifest_version}`
-
+  if (check.state === "not_checked" || check.state === "checking") {
+    return <CheckCell check={check} />
+  }
   return (
-    <div title={title}>
+    <div title={check.unsupported_methods.join(", ")}>
       <p
         className={cn(
           "flex items-center gap-1.5 text-sm font-medium",
-          differs
-            ? "text-destructive"
-            : "text-emerald-700 dark:text-emerald-400"
+          check.state === "declared"
+            ? "text-emerald-700 dark:text-emerald-400"
+            : "text-destructive"
         )}
       >
-        {differs ? (
-          <X className="size-3.5" aria-hidden />
+        {check.state === "declared" ? (
+          <Check className="size-3.5" />
         ) : (
-          <Check className="size-3.5" aria-hidden />
+          <X className="size-3.5" />
         )}
-        {check.supported_count}/{check.observed_count} covered
+        {check.declared_count}/{check.observed_count} declared
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
         Manifest v{check.manifest_version}
@@ -573,55 +526,38 @@ function MethodCheckCell({ check }: { check: DomainMethodCheck }) {
   )
 }
 
-function providerDecision(
-  evidence: DomainProviderEvidence,
-  currentProvider: ActivityProvider,
-  currentCost: number
-) {
-  if (evidence.provider === currentProvider) {
-    return { label: "Current route", tone: "current" }
+function SupportBadge({ evidence }: { evidence: DomainProviderEvidence }) {
+  const labels = {
+    supported: "Supported",
+    unsupported: "Unsupported",
+    checking: "Checking",
+    unknown: "Unknown",
   }
-  if (!evidence.automatic_enabled) {
-    return { label: "Disabled", tone: "neutral" }
-  }
-  if (evidence.qualification_state === "qualified") {
-    return { label: "Qualified alternative", tone: "qualified" }
-  }
-  if (
-    evidence.qualification_state === "probing" ||
-    evidence.probe_state === "checking"
-  ) {
-    return { label: "Evaluating", tone: "checking" }
-  }
-  if (evidence.qualification_state === "rejected") {
-    return { label: "Ruled out", tone: "rejected" }
-  }
-  if (evidence.average_cost_units >= currentCost) {
-    return { label: "Not cheaper", tone: "neutral" }
-  }
-  return { label: "Not checked", tone: "neutral" }
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "w-fit font-normal",
+        evidence.support_state === "supported" &&
+          "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+        evidence.support_state === "unsupported" &&
+          "border-destructive/30 bg-destructive/10 text-destructive",
+        evidence.support_state === "checking" &&
+          "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+        evidence.support_state === "unknown" && "text-muted-foreground"
+      )}
+    >
+      {labels[evidence.support_state]}
+    </Badge>
+  )
 }
 
-function ProviderEvidenceRow({
-  evidence,
-  currentProvider,
-  currentCost,
-}: {
-  evidence: DomainProviderEvidence
-  currentProvider: ActivityProvider
-  currentCost: number
-}) {
-  const decision = providerDecision(evidence, currentProvider, currentCost)
+function ProviderRow({ evidence }: { evidence: DomainProviderEvidence }) {
   return (
-    <div className="grid min-w-[82rem] grid-cols-[1.2fr_repeat(5,1fr)_1.15fr] items-center gap-4 px-5 py-4">
+    <div className="grid min-w-[88rem] grid-cols-[1.2fr_repeat(5,1fr)_1fr] items-center gap-4 px-5 py-4">
       <div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
           <p className="font-medium">{providerLabels[evidence.provider]}</p>
-          {evidence.is_default && (
-            <Badge variant="secondary" className="font-normal">
-              Default
-            </Badge>
-          )}
           {!evidence.automatic_enabled && (
             <Badge variant="outline" className="font-normal text-muted-foreground">
               Disabled
@@ -629,43 +565,28 @@ function ProviderEvidenceRow({
           )}
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          {formatNumber(evidence.average_cost_units)} cost units
-          {evidence.cost_is_estimate ? " · estimate" : " · observed"}
+          {formatNumber(evidence.average_cost_units)} cost units ·{" "}
+          {evidence.cost_is_estimate ? "estimate" : "observed"}
         </p>
       </div>
+      <CheckCell check={evidence.checks.navigation} />
       <CheckCell check={evidence.checks.status} />
       <CheckCell check={evidence.checks.headers} />
-      <CheckCell check={evidence.checks.console} />
-      <MethodCheckCell check={evidence.checks.methods} />
+      <MethodCheckCell check={evidence.checks.method_coverage} />
       <CheckCell check={evidence.checks.content} />
-      <Badge
-        variant="outline"
-        className={cn(
-          "w-fit font-normal",
-          decision.tone === "current" &&
-            "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400",
-          decision.tone === "qualified" &&
-            "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-          decision.tone === "checking" &&
-            "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400",
-          decision.tone === "rejected" &&
-            "border-destructive/30 bg-destructive/10 text-destructive",
-          decision.tone === "neutral" && "text-muted-foreground"
+      <div>
+        <SupportBadge evidence={evidence} />
+        {evidence.failure_reason_code && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {evidence.failure_reason_code.replaceAll("_", " ")}
+          </p>
         )}
-      >
-        {decision.label}
-      </Badge>
+      </div>
     </div>
   )
 }
 
-function Fact({
-  label,
-  value,
-}: {
-  label: string
-  value: string | number
-}) {
+function Fact({ label, value }: { label: string; value: string | number }) {
   return (
     <div>
       <p className="text-xs text-muted-foreground">{label}</p>
@@ -674,67 +595,26 @@ function Fact({
   )
 }
 
-function MatchFact({
-  label,
-  value,
-  detail,
-}: {
-  label: string
-  value: boolean | null
-  detail?: string
-}) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <p className="text-xs text-muted-foreground">{label}</p>
-        {detail && <p className="mt-1 text-xs">{detail}</p>}
-      </div>
-      <span
-        className={cn(
-          "text-xs font-medium",
-          value === true && "text-emerald-700 dark:text-emerald-400",
-          value === false && "text-destructive",
-          value === null && "text-muted-foreground"
-        )}
-      >
-        {value === true ? "Match" : value === false ? "Mismatch" : "Pending"}
-      </span>
-    </div>
-  )
-}
-
 function ProbeCard({ probe }: { probe: DomainProbe }) {
+  const checks = [
+    ["Navigation", probe.navigation_state],
+    ["HTTP status", probe.status_state],
+    ["Headers", probe.headers_state],
+    ["Declared methods", probe.method_coverage_state],
+    ["Content sanity", probe.content_state],
+  ]
   return (
     <div className="p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="font-medium">
-              {providerLabels[probe.candidate_provider]}
-            </p>
+          <div className="flex items-center gap-2">
+            <p className="font-medium">{providerLabels[probe.candidate_provider]}</p>
             <Badge variant="outline" className="font-normal capitalize">
-              {probe.state}
+              {probe.outcome ?? probe.state}
             </Badge>
-            {probe.comparison_outcome && (
-              <Badge
-                variant="secondary"
-                className={cn(
-                  "font-normal",
-                  probe.comparison_outcome === "matched" &&
-                    "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-                  probe.comparison_outcome !== "matched" &&
-                    "bg-destructive/10 text-destructive"
-                )}
-              >
-                {probe.comparison_outcome.replace("_", " ")}
-              </Badge>
-            )}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            {probe.trigger === "new_domain"
-              ? "New-domain qualification"
-              : "Existing-domain sample"}{" "}
-            · {formatDate(probe.created_at)}
+            Independent support check · {formatDate(probe.created_at)}
           </p>
         </div>
         {probe.cost_units !== null && (
@@ -743,22 +623,21 @@ function ProbeCard({ probe }: { probe: DomainProbe }) {
           </p>
         )}
       </div>
-      <div className="mt-5 grid gap-4 rounded-md border bg-muted/15 p-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MatchFact
-          label="HTTP status"
-          value={probe.status_matches}
-          detail={`${probe.baseline_status} → ${probe.candidate_status ?? "pending"}`}
-        />
-        <MatchFact label="Selected headers" value={probe.headers_match} />
-        <MatchFact
-          label="Console errors"
-          value={probe.console_errors_acceptable}
-          detail={`${probe.baseline_console_errors} → ${
-            probe.candidate_console_errors ?? "pending"
-          }`}
-        />
-        <MatchFact label="Content fingerprint" value={probe.content_matches} />
+      <div className="mt-4 grid gap-3 rounded-md border bg-muted/15 p-4 sm:grid-cols-2 lg:grid-cols-5">
+        {checks.map(([label, state]) => (
+          <div key={label}>
+            <p className="text-xs text-muted-foreground">{label}</p>
+            <p className="mt-1 text-sm font-medium capitalize">
+              {state?.replaceAll("_", " ") ?? "Pending"}
+            </p>
+          </div>
+        ))}
       </div>
+      {probe.reason_codes.length > 0 && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {probe.reason_codes.map((reason) => reason.replaceAll("_", " ")).join(" · ")}
+        </p>
+      )}
     </div>
   )
 }
@@ -772,8 +651,7 @@ function DomainDetailPage({
 }) {
   const detail = useQuery({
     queryKey: ["domain", domainId],
-    queryFn: () =>
-      apiRequest<DomainDetail>(`/v1/admin/domains/${domainId}`),
+    queryFn: () => apiRequest<DomainDetail>(`/v1/admin/domains/${domainId}`),
   })
   const probes = useQuery({
     queryKey: ["domain-probes", domainId],
@@ -787,8 +665,7 @@ function DomainDetailPage({
         `/v1/admin/domains/${domainId}/sessions?limit=25`
       ),
   })
-
-  if (detail.isLoading) return <LoadingState label="Loading domain evidence" />
+  if (detail.isLoading) return <LoadingState label="Loading domain support" />
   if (detail.isError) {
     return (
       <ErrorState
@@ -806,19 +683,16 @@ function DomainDetailPage({
       <button
         type="button"
         onClick={() => navigate("/domains")}
-        className="mb-5 inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        className="mb-5 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="size-4" aria-hidden />
-        All domains
+        <ArrowLeft className="size-4" /> All domains
       </button>
-
       <header className="flex flex-col gap-5 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0">
-          <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-            <Globe2 className="size-3.5" aria-hidden />
-            Domain evidence
-          </div>
-          <h1 className="truncate text-3xl font-semibold tracking-tight sm:text-4xl">
+        <div>
+          <p className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <Globe2 className="size-3.5" /> Domain support
+          </p>
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             {domain.hostname}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -826,75 +700,52 @@ function DomainDetailPage({
             {relativeTime(domain.last_seen_at)}
           </p>
         </div>
-        <div className="rounded-lg border bg-card px-5 py-4 lg:min-w-80">
+        <div className="rounded-lg border bg-card px-5 py-4 lg:min-w-96">
           <p className="text-xs font-medium text-muted-foreground">
-            Current automatic route
+            Expected automatic plan
           </p>
-          <div className="mt-2 flex items-center justify-between gap-4">
-            <p className="text-lg font-semibold">
-              {providerLabels[domain.current_route.provider]}
-            </p>
-            <Badge variant="secondary" className="font-normal">
-              {routeReason(domain.current_route.reason)}
-            </Badge>
-          </div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {formatNumber(domain.current_route.estimated_cost_units)} estimated
-            cost units
+          <p className="mt-2 text-lg font-semibold">
+            {planLabel(domain.expected_plan)}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            <PlanDescription plan={domain.expected_plan} />
           </p>
         </div>
       </header>
 
-      <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="mt-6 grid gap-3 sm:grid-cols-3">
         <Card className="gap-0 rounded-lg p-5">
           <Fact label="Observed sessions" value={formatNumber(domain.session_count)} />
         </Card>
         <Card className="gap-0 rounded-lg p-5">
-          <Fact
-            label="Eligible acquisitions"
-            value={formatNumber(domain.eligible_acquisition_count)}
-          />
+          <Fact label="Active checks" value={formatNumber(domain.active_probe_count)} />
         </Card>
         <Card className="gap-0 rounded-lg p-5">
-          <Fact
-            label="Active probes"
-            value={formatNumber(domain.active_probe_count)}
-          />
-        </Card>
-        <Card className="gap-0 rounded-lg p-5">
-          <Fact
-            label="Browser promotions"
-            value={formatNumber(domain.promotion?.promotion_count ?? 0)}
-          />
+          <Fact label="Runtime provider transitions" value={formatNumber(domain.transition_count)} />
         </Card>
       </section>
 
       <section className="mt-6 overflow-hidden rounded-lg border bg-card">
         <div className="border-b px-5 py-4">
-          <h2 className="font-semibold">Provider checks</h2>
+          <h2 className="font-semibold">Provider support</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Latest baseline comparison and observed-method coverage for every
-            provider.
+            What Harbor independently believes can support this domain. Cost only
+            orders providers already marked supported.
           </p>
         </div>
         <div className="overflow-x-auto">
-          <div className="grid min-w-[82rem] grid-cols-[1.2fr_repeat(5,1fr)_1.15fr] gap-4 border-b bg-muted/35 px-5 py-2.5 font-mono text-[0.6875rem] font-medium tracking-wider text-muted-foreground uppercase">
+          <div className="grid min-w-[88rem] grid-cols-[1.2fr_repeat(5,1fr)_1fr] gap-4 border-b bg-muted/35 px-5 py-2.5 font-mono text-[0.6875rem] font-medium tracking-wider text-muted-foreground uppercase">
             <span>Provider</span>
+            <span>Navigation</span>
             <span>HTTP status</span>
             <span>Headers</span>
-            <span>Console</span>
-            <span>Known methods</span>
-            <span>Content</span>
-            <span>Decision</span>
+            <span>Declared methods</span>
+            <span>Content sanity</span>
+            <span>Support</span>
           </div>
           <div className="divide-y">
             {domain.providers.map((evidence) => (
-              <ProviderEvidenceRow
-                key={evidence.provider}
-                evidence={evidence}
-                currentProvider={domain.current_route.provider}
-                currentCost={domain.current_route.estimated_cost_units}
-              />
+              <ProviderRow key={evidence.provider} evidence={evidence} />
             ))}
           </div>
         </div>
@@ -903,9 +754,10 @@ function DomainDetailPage({
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.4fr_.8fr]">
         <section className="overflow-hidden rounded-lg border bg-card">
           <div className="border-b px-5 py-4">
-            <h2 className="font-semibold">Qualification probes</h2>
+            <h2 className="font-semibold">Support checks</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Sanitized comparisons against successful baseline acquisitions.
+              Absolute health results and bounded content facts—never comparisons
+              with another provider.
             </p>
           </div>
           {probes.isError ? (
@@ -914,10 +766,7 @@ function DomainDetailPage({
             </div>
           ) : probes.isLoading ? (
             <div className="flex h-32 items-center justify-center">
-              <LoaderCircle
-                className="size-5 animate-spin text-muted-foreground"
-                aria-hidden
-              />
+              <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
             </div>
           ) : probes.data?.probes.length ? (
             <div className="divide-y">
@@ -927,77 +776,46 @@ function DomainDetailPage({
             </div>
           ) : (
             <div className="p-8 text-center text-sm text-muted-foreground">
-              No qualification probes recorded.
+              No support checks recorded.
             </div>
           )}
         </section>
 
-        <div className="space-y-6">
-          <section className="overflow-hidden rounded-lg border bg-card">
-            <div className="border-b px-5 py-4">
-              <h2 className="font-semibold">Browser requirements</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Recorded HTTP-to-browser transitions.
-              </p>
+        <section className="overflow-hidden rounded-lg border bg-card self-start">
+          <div className="border-b px-5 py-4">
+            <h2 className="font-semibold">Observed CDP methods</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Requirements Harbor uses for method coverage.
+            </p>
+          </div>
+          {domain.commands.length ? (
+            <div className="divide-y">
+              {domain.commands.slice(0, 12).map((command) => (
+                <div
+                  key={command.method}
+                  className="flex items-center justify-between gap-4 px-5 py-3"
+                >
+                  <code className="truncate text-xs">{command.method}</code>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {formatNumber(command.command_count)} ·{" "}
+                    {formatNumber(command.session_count)} sessions
+                  </span>
+                </div>
+              ))}
             </div>
-            {domain.promotion ? (
-              <div className="space-y-5 p-5">
-                <Fact
-                  label="Promotion count"
-                  value={formatNumber(domain.promotion.promotion_count)}
-                />
-                <Fact
-                  label="Last trigger"
-                  value={domain.promotion.last_trigger_method}
-                />
-                <Fact
-                  label="Last observed"
-                  value={formatDate(domain.promotion.last_seen_at)}
-                />
-              </div>
-            ) : (
-              <div className="p-5 text-sm leading-6 text-muted-foreground">
-                Harbor has not recorded a browser promotion for this domain.
-              </div>
-            )}
-          </section>
-
-          <section className="overflow-hidden rounded-lg border bg-card">
-            <div className="border-b px-5 py-4">
-              <h2 className="font-semibold">Observed CDP methods</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Most frequent methods associated with this domain.
-              </p>
+          ) : (
+            <div className="p-5 text-sm text-muted-foreground">
+              No CDP method observations recorded.
             </div>
-            {domain.commands.length ? (
-              <div className="divide-y">
-                {domain.commands.slice(0, 10).map((command) => (
-                  <div
-                    key={command.method}
-                    className="flex items-center justify-between gap-4 px-5 py-3"
-                  >
-                    <code className="truncate text-xs">{command.method}</code>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {formatNumber(command.command_count)} commands ·{" "}
-                      {formatNumber(command.session_count)} sessions
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="p-5 text-sm text-muted-foreground">
-                No CDP method observations recorded.
-              </div>
-            )}
-          </section>
-        </div>
+          )}
+        </section>
       </div>
 
       <section className="mt-6 overflow-hidden rounded-lg border bg-card">
         <div className="border-b px-5 py-4">
           <h2 className="font-semibold">Recent sessions</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Acquisition paths and outcomes observed for this domain.
+            Actual provider paths; arrows show runtime transition.
           </p>
         </div>
         {sessions.isError ? (
@@ -1006,17 +824,14 @@ function DomainDetailPage({
           </div>
         ) : sessions.isLoading ? (
           <div className="flex h-32 items-center justify-center">
-            <LoaderCircle
-              className="size-5 animate-spin text-muted-foreground"
-              aria-hidden
-            />
+            <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
           </div>
         ) : sessions.data?.sessions.length ? (
           <div className="divide-y">
             {sessions.data.sessions.map((session) => (
               <div
                 key={session.id}
-                className="grid gap-4 px-5 py-4 md:grid-cols-[1.5fr_1fr_1fr_.7fr]"
+                className="grid gap-4 px-5 py-4 md:grid-cols-[1.5fr_1.2fr_1fr_.7fr]"
               >
                 <div className="min-w-0">
                   <p className="truncate font-mono text-xs">{session.id}</p>
@@ -1025,10 +840,7 @@ function DomainDetailPage({
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground md:hidden">
-                    Acquisition path
-                  </p>
-                  <p className="mt-1 text-sm md:mt-0">
+                  <p className="text-sm">
                     {session.providers.length
                       ? session.providers
                           .map((provider) => providerLabels[provider])
@@ -1039,19 +851,11 @@ function DomainDetailPage({
                     {session.selection_mode}
                   </p>
                 </div>
+                <p className="text-sm capitalize">
+                  {session.selection_reason?.replaceAll("_", " ") ?? "—"}
+                </p>
                 <div>
-                  <p className="text-xs text-muted-foreground md:hidden">
-                    Routing
-                  </p>
-                  <p className="mt-1 text-sm md:mt-0">
-                    {session.routing_reason?.replaceAll("_", " ") ?? "—"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground md:hidden">
-                    Outcome
-                  </p>
-                  <div className="mt-1 flex items-center gap-2 text-sm capitalize md:mt-0">
+                  <p className="flex items-center gap-2 text-sm capitalize">
                     <CircleDot
                       className={cn(
                         "size-3.5",
@@ -1061,10 +865,9 @@ function DomainDetailPage({
                             ? "text-destructive"
                             : "text-amber-600"
                       )}
-                      aria-hidden
                     />
                     {session.state}
-                  </div>
+                  </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {formatNumber(session.actual_cost_units)} units
                   </p>
@@ -1092,31 +895,17 @@ export function DomainsPage({
   return (
     <main className="mx-auto min-h-svh w-full max-w-[100rem] px-4 py-6 sm:px-6 md:py-8 lg:px-10">
       {domainId === undefined && (
-        <header className="mb-6 flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-              <Globe2 className="size-3.5" aria-hidden />
-              Routing evidence
-            </div>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-              Domains
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              Inspect the factual provider evidence Harbor uses for deterministic
-              domain routing.
-            </p>
-          </div>
-          <a
-            href="/routing"
-            onClick={(event) => {
-              event.preventDefault()
-              navigate("/routing")
-            }}
-            className="inline-flex items-center gap-2 self-start text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:self-auto"
-          >
-            Routing policy
-            <ArrowRight className="size-4" aria-hidden />
-          </a>
+        <header className="mb-6 border-b pb-6">
+          <p className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <Globe2 className="size-3.5" /> Routing evidence
+          </p>
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+            Domains
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            Harbor picks the cheapest supported provider and transitions through the
+            support plan when a journey reveals a new requirement.
+          </p>
         </header>
       )}
       {domainId === undefined ? (

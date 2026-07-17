@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from backend.proxy.domains import DomainFilters, DomainQualificationState
+from backend.proxy.domains import DomainFilters, DomainSupportState
 
 router = APIRouter(prefix="/v1/admin/domains", tags=["admin"])
 
@@ -28,9 +28,9 @@ class DomainSessionPageResponse(BaseModel):
 async def list_domains(
     request: Request,
     search: Annotated[str | None, Query(min_length=1, max_length=253)] = None,
-    qualification_state: DomainQualificationState | None = None,
+    support_state: DomainSupportState | None = None,
     has_active_probes: bool | None = None,
-    has_promotions: bool | None = None,
+    has_transitions: bool | None = None,
     before: str | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> DomainPageResponse:
@@ -38,9 +38,9 @@ async def list_domains(
         page = await request.app.state.domains.domains(
             DomainFilters(
                 search=search,
-                qualification_state=qualification_state,
+                support_state=support_state,
                 has_active_probes=has_active_probes,
-                has_promotions=has_promotions,
+                has_transitions=has_transitions,
             ),
             before=before,
             limit=limit,

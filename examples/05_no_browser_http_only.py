@@ -39,7 +39,7 @@ async def main() -> None:
         event["provider"] for event in events if event["event_type"] == "attempt.started"
     ]
     assert attempts == ["http"]
-    assert all(event["event_type"] != "execution.promoted" for event in events)
+    assert all(event["event_type"] != "execution.transitioned" for event in events)
 
 
 if __name__ == "__main__":

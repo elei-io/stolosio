@@ -13,7 +13,7 @@ from backend.proxy.errors import InvalidCdpMessage, ProviderConnectionLost
 async def relay_cdp(
     downstream: WebSocket,
     upstream: ProviderSession,
-    provider: ProviderName,
+    provider: ProviderName | None,
     capabilities: CapabilityRegistry,
     observer: CdpEventObserver | None = None,
 ) -> None:
@@ -41,7 +41,7 @@ async def relay_cdp(
 async def _downstream_to_upstream(
     downstream: WebSocket,
     upstream: ProviderSession,
-    provider: ProviderName,
+    provider: ProviderName | None,
     capabilities: CapabilityRegistry,
     observer: CdpEventObserver | None = None,
 ) -> None:
@@ -64,7 +64,7 @@ async def _downstream_to_upstream(
 
         if observer is not None:
             await observer.command_received(command)
-        if provider is not ProviderName.HTTP and not capabilities.supports(
+        if provider is not None and not capabilities.supports(
             provider,
             method,
             command.get("params"),

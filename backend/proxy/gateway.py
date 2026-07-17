@@ -12,7 +12,7 @@ from backend.events.publisher import EventPublisher, NullEventPublisher
 from backend.proxy.adapters import get_provider_adapter
 from backend.proxy.attempts import AttemptAdmission, AttemptLease
 from backend.proxy.capabilities import CapabilityRegistry
-from backend.proxy.contracts import ProviderName, ProviderSelection, ResolvedSessionSettings
+from backend.proxy.contracts import ProviderSelection, ResolvedSessionSettings
 from backend.proxy.errors import (
     ConnectionRejected,
     ProviderAcquisitionTimeout,
@@ -20,8 +20,10 @@ from backend.proxy.errors import (
     ProviderUnavailable,
     SessionLeaseLost,
 )
-from backend.proxy.no_browser import AdaptiveCdpSession, PromotionHistoryRepository
-from backend.proxy.qualification import QualificationRepository
+from backend.proxy.provider_transition import (
+    ProviderTransitionRepository,
+    ProviderTransitionSession,
+)
 from backend.proxy.routing import RoutingRepository
 from backend.proxy.sessions import SessionAdmission, SessionLease
 from backend.proxy.settings import HarborSettingsResolver, harbor_settings_resolver
@@ -40,9 +42,8 @@ class Gateway:
         settings: Settings,
         event_publisher: EventPublisher | None = None,
         resolver: HarborSettingsResolver = harbor_settings_resolver,
-        promotion_history: PromotionHistoryRepository | None = None,
+        transition_repository: ProviderTransitionRepository | None = None,
         routing: RoutingRepository | None = None,
-        qualification: QualificationRepository | None = None,
     ) -> None:
         self._sessions = sessions
         self._attempts = attempts
@@ -50,9 +51,8 @@ class Gateway:
         self._settings = settings
         self._event_publisher = event_publisher or NullEventPublisher()
         self._resolver = resolver
-        self._promotion_history = promotion_history
+        self._transition_repository = transition_repository
         self._routing = routing
-        self._qualification = qualification
 
     async def connect(self, websocket: WebSocket) -> None:
         session: SessionLease | None = None
@@ -90,43 +90,31 @@ class Gateway:
                     return
                 session = await admission
 
-                probe_provider = (
-                    await self._qualification.provider_for_reference(
-                        str(requested.session_reference)
-                        if requested.session_reference is not None
-                        else None
-                    )
-                    if self._qualification is not None
-                    else None
-                )
-                adaptive = probe_provider is not None or requested.provider in {
-                    ProviderSelection.AUTO,
-                    ProviderSelection.HTTP,
-                }
-                if adaptive:
+                automatic = requested.provider is ProviderSelection.AUTO
+                if automatic:
                     if disconnected.done():
                         client_disconnected = True
                         reason = "client_disconnected"
                         return
-                    if self._promotion_history is None:
-                        raise RuntimeError("No-browser promotion history is unavailable")
+                    if self._transition_repository is None:
+                        raise RuntimeError(
+                            "Provider transition repository is unavailable"
+                        )
                     observer = CdpEventObserver(
                         UUID(session.session.session_id),
                         None,
-                        ProviderName.HTTP,
+                        None,
                         self._event_publisher,
                     )
-                    provider_session = AdaptiveCdpSession(
+                    provider_session = ProviderTransitionSession(
                         session.session,
                         resolved,
                         self._attempts,
                         self._capabilities,
-                        self._promotion_history,
+                        self._transition_repository,
                         observer,
                         self._settings,
                         self._routing,
-                        probe_provider,
-                        force_http=requested.provider is ProviderSelection.HTTP,
                     )
                 else:
                     preparation = asyncio.create_task(self._prepare(session, resolved))
@@ -239,6 +227,10 @@ class Gateway:
     ):
         attempt: AttemptLease | None = None
         try:
+            if resolved.provider.slug is None:
+                raise RuntimeError(
+                    "Direct provider preparation requires a concrete provider"
+                )
             total_timeout = (
                 self._settings.provider_queue_timeout_seconds
                 + self._settings.provider_acquisition_timeout_seconds

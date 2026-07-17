@@ -1,75 +1,30 @@
-# No-Browser Execution
+# Adaptive HTTP Execution
 
-Some browser work is cheap enough that Harbor should not acquire a browser for it.
-Harbor hides this optimization behind the same downstream abstraction used for real
-browser sessions.
+An automatic Harbor session may satisfy a bounded journey through plain HTTP while
+preserving the same downstream CDP endpoint and logical session identity.
 
-## Initial behavior
+The HTTP facade initially covers `page.goto`, `page.content`, declarative
+`Emulation.setScriptExecutionDisabled` state for replay, and the exact Playwright
+bootstrap commands required by those operations.
 
-Harbor maintains in PostgreSQL:
+Every other non-bootstrap command is a new runtime requirement. Harbor asks the domain
+support planner for the full ordered set of remaining compatible candidates. For each
+candidate it acquires the destination, replays safe commands, verifies lifecycle
+catch-up, switches execution, and only then releases the source. A failed destination
+leaves the source intact while Harbor tries the next candidate.
 
-- A log of seen domains.
-- A log of seen Playwright commands.
-- Per-domain counters for Playwright commands.
-- Provider qualification and cost projections.
+If another unsupported method appears, Harbor can transition to the next supported
+provider. Attempted providers are excluded. Commands with unsafe side effects are not
+replayed across providers, and exhausting a safe supported plan returns an explicit
+protocol error.
 
-Unknown and unqualified domains begin on the operator-selected conservative provider.
-HTTP becomes an automatic starting provider only after a strict background
-`page.goto()` plus `page.content()` comparison qualifies it for that domain. Explicit
-`harbor.provider.slug=http` continues to force the HTTP path.
+Explicit `harbor.provider.slug=http` forces HTTP but does not grant unsupported
+behavior. HTTP identifies itself truthfully as Harbor automation and never forwards
+sensitive downstream headers implicitly.
 
-For the initial implementation, only these logical client operations can remain on the
-plain HTTP path:
+Domain eligibility for HTTP comes from the same independent checks as every other
+provider. Content sanity rejects empty JavaScript application shells; HTTP is not
+supported merely because it received status 200.
 
-- `page.goto`
-- `page.content`
-- Configuring `java_script_enabled` through
-  `Emulation.setScriptExecutionDisabled`; Harbor records the setting for replay but
-  does not treat it as browser work.
-
-Every other non-bootstrap command triggers the browser journey. Harbor must:
-
-1. Acquire the configured fallback browser session.
-2. Replay every command already acknowledged by the HTTP facade in its original order,
-   including every navigation and content read.
-3. Wait for the real browser to catch up through the required response and lifecycle
-   boundaries while suppressing duplicate replay output.
-4. Execute the command that triggered browser acquisition.
-5. Use the real browser for subsequent commands on that page.
-
-If a client only calls `page.goto` followed by `page.content`, Harbor may complete
-the work without involving a browser.
-
-HTTP requests identify themselves truthfully as Harbor automation. The default
-`User-Agent` includes the Harbor project URL rather than impersonating a browser, and
-operators can configure `HTTP_USER_AGENT`, `HTTP_ACCEPT`, and
-`HTTP_ACCEPT_LANGUAGE` for their deployment. Sensitive downstream session headers are
-not forwarded implicitly.
-
-Harbor receives CDP messages rather than Playwright API method names. Playwright also
-sends protocol bootstrap commands before navigation, and content retrieval shares CDP
-method names with title access and arbitrary evaluation. Harbor must therefore
-recognize complete, acceptance-tested protocol sequences rather than classify a
-session from method names alone. Unknown sequences take the safe path and acquire a
-real browser.
-
-The first implementation plan and the observed Playwright protocol evidence are in
-[No-Browser Promotion](roadmap/no-browser-promotion.md).
-
-## Future development
-
-Harbor may gradually support more commands on the no-browser path. Each command should
-be added and validated individually.
-
-Potential future commands include:
-
-- Static selectors.
-- Text extraction.
-- Attribute access.
-- Link extraction.
-- Page title access.
-- Response status and header access.
-- Redirect information.
-
-These commands are future targets only. Until implemented, all of them trigger the
-browser journey.
+See [Domain Provider Support](ANALYTICS.md) and
+[Provider Transitions](roadmap/provider-transitions.md).

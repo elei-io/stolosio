@@ -63,7 +63,7 @@ const navigationItems: NavigationItem[] = [
     label: "Domains",
     href: "/domains",
     icon: Globe2,
-    description: "Observed domains and provider qualification history.",
+    description: "Per-domain provider support and runtime transition evidence.",
   },
 ]
 

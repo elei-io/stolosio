@@ -30,11 +30,11 @@ async def main() -> None:
     attempts = [
         event["provider"] for event in events if event["event_type"] == "attempt.started"
     ]
-    promotions = [
-        event["payload"] for event in events if event["event_type"] == "execution.promoted"
+    transitions = [
+        event["payload"] for event in events if event["event_type"] == "execution.transitioned"
     ]
     assert attempts
-    print({"attempts": attempts, "promotions": promotions})
+    print({"attempts": attempts, "provider_transitions": transitions})
 
 
 if __name__ == "__main__":

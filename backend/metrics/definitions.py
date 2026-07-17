@@ -116,9 +116,9 @@ COMMAND_DURATION = Histogram(
     ("provider", "method", "outcome"),
     registry=REGISTRY,
 )
-NO_BROWSER_PROMOTIONS = Counter(
-    "harbor_no_browser_promotions",
-    "Live sessions promoted from the no-browser path by bounded trigger class.",
+PROVIDER_TRANSITIONS = Counter(
+    "harbor_provider_transitions",
+    "Live sessions transitioned between providers by bounded trigger class.",
     ("from_provider", "to_provider", "trigger"),
     registry=REGISTRY,
 )

@@ -31,6 +31,17 @@ def test_camoufox_enables_only_implemented_mapping_baseline() -> None:
     assert not capability_registry.supports(ProviderName.CAMOUFOX, "Page.printToPDF")
 
 
+def test_http_method_name_coverage_does_not_authorize_arbitrary_evaluation() -> None:
+    assert capability_registry.supports_observed_method(
+        ProviderName.HTTP, "Runtime.evaluate"
+    )
+    assert not capability_registry.supports(
+        ProviderName.HTTP,
+        "Runtime.evaluate",
+        {"expression": "document.querySelector('h1').textContent"},
+    )
+
+
 def test_script_execution_capability_depends_on_requested_value() -> None:
     disabled = {"value": True}
     enabled = {"value": False}

@@ -45,9 +45,9 @@ def test_domain_routes_parse_filters_and_return_read_models() -> None:
         "/v1/admin/domains",
         params={
             "search": "example",
-            "qualification_state": "probing",
+            "support_state": "checking",
             "has_active_probes": "true",
-            "has_promotions": "false",
+            "has_transitions": "false",
             "limit": "25",
         },
     )
@@ -58,9 +58,9 @@ def test_domain_routes_parse_filters_and_return_read_models() -> None:
     assert page.status_code == 200
     assert page.json()["summary"] == {"known_domains": 0}
     assert domains.filters.search == "example"
-    assert domains.filters.qualification_state.value == "probing"
+    assert domains.filters.support_state.value == "checking"
     assert domains.filters.has_active_probes is True
-    assert domains.filters.has_promotions is False
+    assert domains.filters.has_transitions is False
     assert detail.json() == {"id": 7, "hostname": "example.test"}
     assert probes.json() == {"probes": [], "next_cursor": None}
     assert sessions.json() == {"sessions": [], "next_cursor": None}
@@ -76,6 +76,6 @@ def test_domain_routes_report_missing_domains_and_invalid_filters() -> None:
     assert client.get("/v1/admin/domains/404/probes").status_code == 404
     assert client.get("/v1/admin/domains/404/sessions").status_code == 404
     assert (
-        client.get("/v1/admin/domains?qualification_state=recommended").status_code
+        client.get("/v1/admin/domains?support_state=recommended").status_code
         == 422
     )

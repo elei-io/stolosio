@@ -11,31 +11,29 @@ from backend.db.models import (
     AcquisitionAttempt,
     Domain,
     DomainCommandStat,
-    DomainPromotionStat,
-    DomainProviderProfile,
+    DomainProviderSupport,
+    DomainProviderTransitionStat,
     GatewaySession,
     ProviderRoutingProfile,
-    QualificationProbe,
     RoutingConfiguration,
     SessionDomain,
+    SupportProbe,
 )
-from backend.proxy.capabilities.manifests import PROVIDER_METHODS
-from backend.proxy.contracts import ProviderName
 
 
-class DomainQualificationState(StrEnum):
-    UNQUALIFIED = "unqualified"
-    PROBING = "probing"
-    QUALIFIED = "qualified"
-    REJECTED = "rejected"
+class DomainSupportState(StrEnum):
+    UNKNOWN = "unknown"
+    CHECKING = "checking"
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
 
 
 @dataclass(frozen=True, slots=True)
 class DomainFilters:
     search: str | None = None
-    qualification_state: DomainQualificationState | None = None
+    support_state: DomainSupportState | None = None
     has_active_probes: bool | None = None
-    has_promotions: bool | None = None
+    has_transitions: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,8 +72,9 @@ def _encode_cursor(kind: str, occurred_at: datetime, identifier: str | int) -> s
 def _decode_cursor(cursor: str, kind: str) -> tuple[datetime, str]:
     try:
         padding = "=" * (-len(cursor) % 4)
-        decoded = json.loads(base64.urlsafe_b64decode(cursor + padding))
-        version, occurred_at, identifier = decoded
+        version, occurred_at, identifier = json.loads(
+            base64.urlsafe_b64decode(cursor + padding)
+        )
         value = datetime.fromisoformat(occurred_at)
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError(f"invalid {kind} cursor") from error
@@ -84,68 +83,81 @@ def _decode_cursor(cursor: str, kind: str) -> tuple[datetime, str]:
     return value, identifier
 
 
-def _provider_evidence(
-    rows: list[DomainProviderProfile],
-    profiles: dict[str, ProviderRoutingProfile],
-    default_provider: str,
-) -> tuple[dict[str, object], dict[str, int]]:
-    candidates: list[tuple[int, str]] = []
-    counts = {"qualified": 0, "probing": 0, "rejected": 0}
+def _support_counts(rows: list[DomainProviderSupport]) -> dict[str, int]:
+    counts = {"unknown": 0, "checking": 0, "supported": 0, "unsupported": 0}
     for row in rows:
-        if row.qualification_state in counts:
-            counts[row.qualification_state] += 1
+        counts[row.support_state] += 1
+    return counts
+
+
+def _expected_plan(
+    rows: list[DomainProviderSupport],
+    profiles: dict[str, ProviderRoutingProfile],
+    configuration: RoutingConfiguration | None,
+) -> dict[str, object]:
+    policy_version = configuration.support_policy_version if configuration else 1
+    candidates: list[dict[str, object]] = []
+    for row in rows:
         profile = profiles.get(row.provider)
         if (
-            row.qualification_state == DomainQualificationState.QUALIFIED
-            and profile is not None
-            and profile.automatic_enabled
+            profile is None
+            or not profile.automatic_enabled
+            or row.support_state != "supported"
+            or row.support_policy_version != policy_version
+            or row.capability_manifest_version != profile.capability_manifest_version
         ):
-            expected_cost = (
-                row.total_cost_units // row.observed_session_count
-                if row.observed_session_count
-                else profile.cost_units_per_second
-            )
-            candidates.append((expected_cost, row.provider))
-
-    if candidates:
-        cost, provider = min(candidates, key=lambda item: (item[0], item[1]))
-        return (
-            {
-                "provider": provider,
-                "reason": "cheapest_qualified",
-                "estimated_cost_units": cost,
-            },
-            counts,
+            continue
+        cost = (
+            row.total_cost_units // row.observed_session_count
+            if row.observed_session_count
+            else profile.cost_units_per_second
         )
-
-    fallback = profiles.get(default_provider)
-    return (
-        {
-            "provider": default_provider,
-            "reason": "unqualified_domain_default",
-            "estimated_cost_units": fallback.cost_units_per_second if fallback else 0,
-        },
-        counts,
+        candidates.append({"provider": row.provider, "estimated_cost_units": cost})
+    candidates.sort(
+        key=lambda candidate: (
+            int(candidate["estimated_cost_units"]),
+            str(candidate["provider"]),
+        )
     )
+    default_provider = configuration.default_provider if configuration else "camoufox"
+    default_profile = profiles.get(default_provider)
+    if (
+        default_profile is not None
+        and default_profile.automatic_enabled
+        and all(candidate["provider"] != default_provider for candidate in candidates)
+    ):
+        candidates.append(
+            {
+                "provider": default_provider,
+                "estimated_cost_units": default_profile.cost_units_per_second,
+            }
+        )
+    if candidates:
+        known_supported = any(
+            row.support_state == "supported"
+            and row.provider == candidates[0]["provider"]
+            for row in rows
+        )
+        return {
+            "reason": "cheapest_supported" if known_supported else "configured_default",
+            "candidates": candidates,
+        }
+    return {"reason": "no_supported_provider", "candidates": []}
 
 
-def _comparison_check(
-    value: bool | None,
+def _check(
+    state: str,
     *,
     checked_at: datetime | None,
     checking: bool,
 ) -> dict[str, object]:
     return {
-        "state": (
-            "matches"
-            if value is True
-            else "differs"
-            if value is False
-            else "checking"
-            if checking
-            else "not_checked"
-        ),
-        "checked_at": _iso(checked_at) if value is not None else None,
+        "state": "checking"
+        if checking
+        else "not_checked"
+        if state == "unknown"
+        else state,
+        "checked_at": _iso(checked_at),
     }
 
 
@@ -160,35 +172,36 @@ class DomainQueryService:
         before: str | None = None,
         limit: int = 50,
     ) -> DomainPage:
-        query = select(Domain, DomainPromotionStat).outerjoin(
-            DomainPromotionStat,
-            DomainPromotionStat.domain_id == Domain.id,
-        )
+        query = select(Domain)
         if filters.search:
             query = query.where(Domain.hostname.ilike(f"%{filters.search.strip()}%"))
-        if filters.qualification_state is not None:
+        if filters.support_state is not None:
             query = query.where(
                 exists(
-                    select(DomainProviderProfile.domain_id).where(
-                        DomainProviderProfile.domain_id == Domain.id,
-                        DomainProviderProfile.qualification_state
-                        == filters.qualification_state.value,
+                    select(DomainProviderSupport.domain_id).where(
+                        DomainProviderSupport.domain_id == Domain.id,
+                        DomainProviderSupport.support_state
+                        == filters.support_state.value,
                     )
                 )
             )
         if filters.has_active_probes is not None:
             active = exists(
-                select(QualificationProbe.domain_id).where(
-                    QualificationProbe.domain_id == Domain.id,
-                    QualificationProbe.state.in_(("queued", "running")),
+                select(SupportProbe.domain_id).where(
+                    SupportProbe.domain_id == Domain.id,
+                    SupportProbe.state.in_(("queued", "running")),
                 )
             )
             query = query.where(active if filters.has_active_probes else ~active)
-        if filters.has_promotions is not None:
-            promoted = func.coalesce(DomainPromotionStat.promotion_count, 0) > 0
-            query = query.where(promoted if filters.has_promotions else ~promoted)
+        if filters.has_transitions is not None:
+            transitioned = exists(
+                select(DomainProviderTransitionStat.domain_id).where(
+                    DomainProviderTransitionStat.domain_id == Domain.id
+                )
+            )
+            query = query.where(transitioned if filters.has_transitions else ~transitioned)
         if before is not None:
-            occurred_at, identifier = _decode_cursor(before, "domain-v1")
+            occurred_at, identifier = _decode_cursor(before, "domain-v2")
             try:
                 domain_id = int(identifier)
             except ValueError as error:
@@ -197,106 +210,114 @@ class DomainQueryService:
                 (Domain.last_seen_at < occurred_at)
                 | ((Domain.last_seen_at == occurred_at) & (Domain.id < domain_id))
             )
-        query = query.order_by(Domain.last_seen_at.desc(), Domain.id.desc()).limit(limit + 1)
-
+        query = query.order_by(Domain.last_seen_at.desc(), Domain.id.desc()).limit(
+            limit + 1
+        )
         async with self._sessions() as database:
-            rows = list(await database.execute(query))
+            rows = list(await database.scalars(query))
             has_more = len(rows) > limit
             rows = rows[:limit]
-            domain_ids = [domain.id for domain, _ in rows]
-            evidence_rows = (
+            domain_ids = [domain.id for domain in rows]
+            evidence = (
                 list(
                     await database.scalars(
-                        select(DomainProviderProfile).where(
-                            DomainProviderProfile.domain_id.in_(domain_ids)
+                        select(DomainProviderSupport).where(
+                            DomainProviderSupport.domain_id.in_(domain_ids)
                         )
                     )
                 )
                 if domain_ids
                 else []
             )
-            active_probe_rows = (
+            active_rows = (
                 list(
                     await database.execute(
-                        select(QualificationProbe.domain_id, func.count())
+                        select(SupportProbe.domain_id, func.count())
                         .where(
-                            QualificationProbe.domain_id.in_(domain_ids),
-                            QualificationProbe.state.in_(("queued", "running")),
+                            SupportProbe.domain_id.in_(domain_ids),
+                            SupportProbe.state.in_(("queued", "running")),
                         )
-                        .group_by(QualificationProbe.domain_id)
+                        .group_by(SupportProbe.domain_id)
+                    )
+                )
+                if domain_ids
+                else []
+            )
+            transition_rows = (
+                list(
+                    await database.execute(
+                        select(
+                            DomainProviderTransitionStat.domain_id,
+                            func.sum(DomainProviderTransitionStat.transition_count),
+                        )
+                        .where(DomainProviderTransitionStat.domain_id.in_(domain_ids))
+                        .group_by(DomainProviderTransitionStat.domain_id)
                     )
                 )
                 if domain_ids
                 else []
             )
             profiles = {
-                profile.provider: profile
-                for profile in await database.scalars(select(ProviderRoutingProfile))
+                row.provider: row
+                for row in await database.scalars(select(ProviderRoutingProfile))
             }
             configuration = await database.get(RoutingConfiguration, "global")
-            default_provider = (
-                configuration.default_provider if configuration is not None else "camoufox"
-            )
             summary = await self._summary(database)
-
-        evidence_by_domain: dict[int, list[DomainProviderProfile]] = {}
-        for evidence in evidence_rows:
-            evidence_by_domain.setdefault(evidence.domain_id, []).append(evidence)
-        active_probes = {domain_id: count for domain_id, count in active_probe_rows}
-
-        result: list[dict[str, object]] = []
-        for domain, promotion in rows:
-            route, counts = _provider_evidence(
-                evidence_by_domain.get(domain.id, []),
-                profiles,
-                default_provider,
-            )
-            result.append(
-                {
-                    "id": domain.id,
-                    "hostname": domain.hostname,
-                    "first_seen_at": _iso(domain.first_seen_at),
-                    "last_seen_at": _iso(domain.last_seen_at),
-                    "session_count": domain.session_count,
-                    "eligible_acquisition_count": domain.eligible_acquisition_count,
-                    "promotion_count": promotion.promotion_count if promotion else 0,
-                    "active_probe_count": active_probes.get(domain.id, 0),
-                    "qualification_counts": counts,
-                    "current_route": route,
-                }
-            )
-
+        evidence_by_domain: dict[int, list[DomainProviderSupport]] = {}
+        for row in evidence:
+            evidence_by_domain.setdefault(row.domain_id, []).append(row)
+        active = {domain_id: int(count) for domain_id, count in active_rows}
+        transitions = {
+            domain_id: int(count or 0) for domain_id, count in transition_rows
+        }
+        result = [
+            {
+                "id": domain.id,
+                "hostname": domain.hostname,
+                "first_seen_at": _iso(domain.first_seen_at),
+                "last_seen_at": _iso(domain.last_seen_at),
+                "session_count": domain.session_count,
+                "eligible_acquisition_count": domain.eligible_acquisition_count,
+                "active_probe_count": active.get(domain.id, 0),
+                "transition_count": transitions.get(domain.id, 0),
+                "support_counts": _support_counts(
+                    evidence_by_domain.get(domain.id, [])
+                ),
+                "expected_plan": _expected_plan(
+                    evidence_by_domain.get(domain.id, []),
+                    profiles,
+                    configuration,
+                ),
+            }
+            for domain in rows
+        ]
         next_cursor = (
-            _encode_cursor("domain-v1", rows[-1][0].last_seen_at, rows[-1][0].id)
+            _encode_cursor("domain-v2", rows[-1].last_seen_at, rows[-1].id)
             if has_more and rows
             else None
         )
-        return DomainPage(domains=result, summary=summary, next_cursor=next_cursor)
+        return DomainPage(result, summary, next_cursor)
 
     async def domain(self, domain_id: int) -> dict[str, object] | None:
         async with self._sessions() as database:
             domain = await database.get(Domain, domain_id)
             if domain is None:
                 return None
-            promotion = await database.get(DomainPromotionStat, domain_id)
             configuration = await database.get(RoutingConfiguration, "global")
-            default_provider = (
-                configuration.default_provider if configuration is not None else "camoufox"
-            )
-            profiles = {
-                profile.provider: profile
-                for profile in await database.scalars(
+            profile_rows = list(
+                await database.scalars(
                     select(ProviderRoutingProfile).order_by(
                         ProviderRoutingProfile.cost_units_per_second,
                         ProviderRoutingProfile.provider,
                     )
                 )
-            }
+            )
+            profiles = {row.provider: row for row in profile_rows}
             evidence = {
                 row.provider: row
                 for row in await database.scalars(
-                    select(DomainProviderProfile).where(
-                        DomainProviderProfile.domain_id == domain_id
+                    select(DomainProviderSupport).where(
+                        DomainProviderSupport.domain_id == domain_id
                     )
                 )
             }
@@ -311,94 +332,41 @@ class DomainQueryService:
                     .limit(50)
                 )
             )
-            probes = list(
+            active_providers = set(
                 await database.scalars(
-                    select(QualificationProbe)
-                    .where(QualificationProbe.domain_id == domain_id)
-                    .order_by(
-                        QualificationProbe.created_at.desc(),
-                        QualificationProbe.id.desc(),
+                    select(SupportProbe.candidate_provider).where(
+                        SupportProbe.domain_id == domain_id,
+                        SupportProbe.state.in_(("queued", "running")),
                     )
                 )
             )
-            active_probe_count = int(
+            transition_count = int(
                 await database.scalar(
-                    select(func.count())
-                    .select_from(QualificationProbe)
-                    .where(
-                        QualificationProbe.domain_id == domain_id,
-                        QualificationProbe.state.in_(("queued", "running")),
-                    )
+                    select(
+                        func.coalesce(
+                            func.sum(DomainProviderTransitionStat.transition_count), 0
+                        )
+                    ).where(DomainProviderTransitionStat.domain_id == domain_id)
                 )
                 or 0
             )
-
-        route, _ = _provider_evidence(list(evidence.values()), profiles, default_provider)
-        latest_completed: dict[str, QualificationProbe] = {}
-        active_providers: set[str] = set()
-        for probe in probes:
-            if probe.state in {"queued", "running"}:
-                active_providers.add(probe.candidate_provider)
-            elif (
-                probe.candidate_provider not in latest_completed
-                and probe.state in {"completed", "failed"}
-            ):
-                latest_completed[probe.candidate_provider] = probe
-        observed_methods = {command.method for command in commands}
-        method_checked_at = max(
-            (command.last_seen_at for command in commands),
-            default=None,
-        )
-        provider_evidence: list[dict[str, object]] = []
-        for provider, profile in profiles.items():
-            row = evidence.get(provider)
-            probe = latest_completed.get(provider)
-            checking = provider in active_providers
+        provider_support = []
+        for profile in profile_rows:
+            row = evidence.get(profile.provider)
+            checking = profile.provider in active_providers
+            checked_at = row.last_checked_at if row else None
             observed = row.observed_session_count if row else 0
             total_cost = row.total_cost_units if row else 0
-            supported_methods = PROVIDER_METHODS.get(
-                ProviderName(provider),
-                frozenset(),
-            )
-            unsupported_methods = sorted(observed_methods - supported_methods)
-            method_state = (
-                "not_checked"
-                if not observed_methods
-                else "matches"
-                if not unsupported_methods
-                else "differs"
-            )
-            finished_at = probe.finished_at if probe else None
-            status_matches = (
-                probe.candidate_status == probe.baseline_status
-                if probe is not None and probe.candidate_status is not None
-                else None
-            )
-            headers_match = (
-                probe.candidate_headers == probe.baseline_headers
-                if probe is not None and probe.candidate_headers is not None
-                else None
-            )
-            console_matches = (
-                probe.candidate_console_errors <= probe.baseline_console_errors
-                if probe is not None and probe.candidate_console_errors is not None
-                else None
-            )
-            content_matches = (
-                probe.candidate_content_fingerprint == probe.baseline_content_fingerprint
-                if probe is not None and probe.candidate_content_fingerprint is not None
-                else None
-            )
-            provider_evidence.append(
+            provider_support.append(
                 {
-                    "provider": provider,
+                    "provider": profile.provider,
                     "automatic_enabled": profile.automatic_enabled,
-                    "is_default": provider == default_provider,
-                    "qualification_state": (
-                        row.qualification_state if row else "unqualified"
-                    ),
+                    "support_state": row.support_state if row else "unknown",
                     "successful_probe_count": row.successful_probe_count if row else 0,
                     "failed_probe_count": row.failed_probe_count if row else 0,
+                    "inconclusive_probe_count": (
+                        row.inconclusive_probe_count if row else 0
+                    ),
                     "observed_session_count": observed,
                     "total_cost_units": total_cost,
                     "average_cost_units": (
@@ -408,51 +376,58 @@ class DomainQueryService:
                     ),
                     "cost_is_estimate": observed == 0,
                     "last_status_code": row.last_status_code if row else None,
-                    "last_verified_at": _iso(row.last_verified_at) if row else None,
-                    "comparison_policy_version": (
-                        row.comparison_policy_version if row else None
+                    "last_checked_at": _iso(checked_at),
+                    "last_supported_at": _iso(row.last_supported_at) if row else None,
+                    "failure_reason_code": row.failure_reason_code if row else None,
+                    "support_policy_version": (
+                        row.support_policy_version if row else None
                     ),
-                    "last_probe_at": _iso(finished_at),
-                    "probe_state": (
-                        "checking"
-                        if checking
-                        else probe.state
-                        if probe is not None
-                        else "not_checked"
+                    "capability_manifest_version": (
+                        profile.capability_manifest_version
                     ),
                     "checks": {
-                        "status": _comparison_check(
-                            status_matches,
-                            checked_at=finished_at,
+                        "navigation": _check(
+                            row.navigation_state if row else "unknown",
+                            checked_at=checked_at,
                             checking=checking,
                         ),
-                        "headers": _comparison_check(
-                            headers_match,
-                            checked_at=finished_at,
+                        "status": _check(
+                            row.status_state if row else "unknown",
+                            checked_at=checked_at,
                             checking=checking,
                         ),
-                        "console": _comparison_check(
-                            console_matches,
-                            checked_at=finished_at,
+                        "headers": _check(
+                            row.headers_state if row else "unknown",
+                            checked_at=checked_at,
                             checking=checking,
                         ),
-                        "methods": {
-                            "state": method_state,
-                            "checked_at": _iso(method_checked_at),
-                            "observed_count": len(observed_methods),
-                            "supported_count": len(observed_methods) - len(unsupported_methods),
-                            "unsupported_methods": unsupported_methods,
-                            "manifest_version": profile.capability_manifest_version,
+                        "method_coverage": {
+                            **_check(
+                                row.method_coverage_state if row else "unknown",
+                                checked_at=checked_at,
+                                checking=checking,
+                            ),
+                            "observed_count": (
+                                row.method_observed_count if row else 0
+                            ),
+                            "declared_count": (
+                                row.method_declared_count if row else 0
+                            ),
+                            "unsupported_methods": (
+                                row.unsupported_methods if row else []
+                            ),
+                            "manifest_version": (
+                                profile.capability_manifest_version
+                            ),
                         },
-                        "content": _comparison_check(
-                            content_matches,
-                            checked_at=finished_at,
+                        "content": _check(
+                            row.content_state if row else "unknown",
+                            checked_at=checked_at,
                             checking=checking,
                         ),
                     },
                 }
             )
-
         return {
             "id": domain.id,
             "hostname": domain.hostname,
@@ -460,28 +435,21 @@ class DomainQueryService:
             "last_seen_at": _iso(domain.last_seen_at),
             "session_count": domain.session_count,
             "eligible_acquisition_count": domain.eligible_acquisition_count,
-            "active_probe_count": active_probe_count,
-            "current_route": route,
-            "providers": provider_evidence,
-            "promotion": (
-                {
-                    "promotion_count": promotion.promotion_count,
-                    "last_trigger_method": promotion.last_trigger_method,
-                    "first_seen_at": _iso(promotion.first_seen_at),
-                    "last_seen_at": _iso(promotion.last_seen_at),
-                }
-                if promotion is not None
-                else None
+            "active_probe_count": len(active_providers),
+            "transition_count": transition_count,
+            "expected_plan": _expected_plan(
+                list(evidence.values()), profiles, configuration
             ),
+            "providers": provider_support,
             "commands": [
                 {
-                    "method": command.method,
-                    "command_count": command.command_count,
-                    "session_count": command.session_count,
-                    "first_seen_at": _iso(command.first_seen_at),
-                    "last_seen_at": _iso(command.last_seen_at),
+                    "method": row.method,
+                    "command_count": row.command_count,
+                    "session_count": row.session_count,
+                    "first_seen_at": _iso(row.first_seen_at),
+                    "last_seen_at": _iso(row.last_seen_at),
                 }
-                for command in commands
+                for row in commands
             ],
         }
 
@@ -492,19 +460,18 @@ class DomainQueryService:
         before: str | None = None,
         limit: int = 50,
     ) -> DomainProbePage | None:
-        query = select(QualificationProbe).where(QualificationProbe.domain_id == domain_id)
+        query = select(SupportProbe).where(SupportProbe.domain_id == domain_id)
         if before is not None:
-            occurred_at, identifier = _decode_cursor(before, "probe-v1")
+            occurred_at, identifier = _decode_cursor(before, "support-probe-v1")
             query = query.where(
-                (QualificationProbe.created_at < occurred_at)
+                (SupportProbe.created_at < occurred_at)
                 | (
-                    (QualificationProbe.created_at == occurred_at)
-                    & (QualificationProbe.id < identifier)
+                    (SupportProbe.created_at == occurred_at)
+                    & (SupportProbe.id < identifier)
                 )
             )
         query = query.order_by(
-            QualificationProbe.created_at.desc(),
-            QualificationProbe.id.desc(),
+            SupportProbe.created_at.desc(), SupportProbe.id.desc()
         ).limit(limit + 1)
         async with self._sessions() as database:
             if await database.get(Domain, domain_id) is None:
@@ -519,31 +486,18 @@ class DomainQueryService:
                 "candidate_provider": row.candidate_provider,
                 "trigger": row.trigger,
                 "state": row.state,
-                "comparison_outcome": row.comparison_outcome,
-                "baseline_status": row.baseline_status,
-                "candidate_status": row.candidate_status,
-                "status_matches": (
-                    row.candidate_status == row.baseline_status
-                    if row.candidate_status is not None
-                    else None
-                ),
-                "headers_match": (
-                    row.candidate_headers == row.baseline_headers
-                    if row.candidate_headers is not None
-                    else None
-                ),
-                "baseline_console_errors": row.baseline_console_errors,
-                "candidate_console_errors": row.candidate_console_errors,
-                "console_errors_acceptable": (
-                    row.candidate_console_errors <= row.baseline_console_errors
-                    if row.candidate_console_errors is not None
-                    else None
-                ),
-                "content_matches": (
-                    row.candidate_content_fingerprint == row.baseline_content_fingerprint
-                    if row.candidate_content_fingerprint is not None
-                    else None
-                ),
+                "outcome": row.outcome,
+                "navigation_state": row.navigation_state,
+                "status_state": row.status_state,
+                "headers_state": row.headers_state,
+                "method_coverage_state": row.method_coverage_state,
+                "content_state": row.content_state,
+                "status_code": row.status_code,
+                "reason_codes": row.reason_codes,
+                "method_observed_count": row.method_observed_count,
+                "method_declared_count": row.method_declared_count,
+                "unsupported_methods": row.unsupported_methods,
+                "content_facts": row.content_facts,
                 "cost_units": row.cost_units,
                 "created_at": _iso(row.created_at),
                 "finished_at": _iso(row.finished_at),
@@ -551,11 +505,11 @@ class DomainQueryService:
             for row in rows
         ]
         next_cursor = (
-            _encode_cursor("probe-v1", rows[-1].created_at, rows[-1].id)
+            _encode_cursor("support-probe-v1", rows[-1].created_at, rows[-1].id)
             if has_more and rows
             else None
         )
-        return DomainProbePage(probes=probes, next_cursor=next_cursor)
+        return DomainProbePage(probes, next_cursor)
 
     async def sessions(
         self,
@@ -579,8 +533,7 @@ class DomainQueryService:
                 )
             )
         query = query.order_by(
-            GatewaySession.created_at.desc(),
-            GatewaySession.id.desc(),
+            GatewaySession.created_at.desc(), GatewaySession.id.desc()
         ).limit(limit + 1)
         async with self._sessions() as database:
             if await database.get(Domain, domain_id) is None:
@@ -621,14 +574,19 @@ class DomainQueryService:
                         else "automatic"
                     ),
                     "providers": [attempt.provider for attempt in session_attempts],
-                    "routing_reason": next(
+                    "selection_reason": next(
                         (
-                            attempt.routing_reason
+                            attempt.selection_reason
                             for attempt in reversed(session_attempts)
-                            if attempt.routing_reason is not None
+                            if attempt.selection_reason is not None
                         ),
                         None,
                     ),
+                    "transition_triggers": [
+                        attempt.transition_trigger
+                        for attempt in session_attempts
+                        if attempt.transition_trigger is not None
+                    ],
                     "actual_cost_units": sum(
                         attempt.actual_cost_units or 0 for attempt in session_attempts
                     ),
@@ -642,45 +600,52 @@ class DomainQueryService:
             if has_more and rows
             else None
         )
-        return DomainSessionPage(sessions=sessions, next_cursor=next_cursor)
+        return DomainSessionPage(sessions, next_cursor)
 
     @staticmethod
     async def _summary(database: AsyncSession) -> dict[str, int]:
         known = int(await database.scalar(select(func.count()).select_from(Domain)) or 0)
-        qualified = int(
+        supported = int(
             await database.scalar(
-                select(func.count(func.distinct(DomainProviderProfile.domain_id)))
-                .join(
-                    ProviderRoutingProfile,
-                    ProviderRoutingProfile.provider == DomainProviderProfile.provider,
-                )
-                .where(
-                    DomainProviderProfile.qualification_state == "qualified",
-                    ProviderRoutingProfile.automatic_enabled.is_(True),
+                select(func.count(func.distinct(DomainProviderSupport.domain_id))).where(
+                    DomainProviderSupport.support_state == "supported"
                 )
             )
             or 0
         )
-        probing = int(
+        checking = int(
             await database.scalar(
-                select(func.count(func.distinct(DomainProviderProfile.domain_id))).where(
-                    DomainProviderProfile.qualification_state == "probing"
+                select(func.count(func.distinct(DomainProviderSupport.domain_id))).where(
+                    DomainProviderSupport.support_state == "checking"
                 )
             )
             or 0
         )
-        promoted = int(
+        unsupported = int(
             await database.scalar(
-                select(func.count())
-                .select_from(DomainPromotionStat)
-                .where(DomainPromotionStat.promotion_count > 0)
+                select(func.count(func.distinct(DomainProviderSupport.domain_id))).where(
+                    DomainProviderSupport.support_state == "unsupported"
+                )
+            )
+            or 0
+        )
+        transitioned = int(
+            await database.scalar(
+                select(func.count(func.distinct(DomainProviderTransitionStat.domain_id)))
             )
             or 0
         )
         return {
             "known_domains": known,
-            "qualified_domains": qualified,
-            "probing_domains": probing,
-            "default_only_domains": max(0, known - qualified),
-            "promoted_domains": promoted,
+            "supported_domains": supported,
+            "checking_domains": checking,
+            "unsupported_domains": unsupported,
+            "no_evidence_domains": max(0, known - len(
+                set(
+                    await database.scalars(
+                        select(DomainProviderSupport.domain_id).distinct()
+                    )
+                )
+            )),
+            "transitioned_domains": transitioned,
         }

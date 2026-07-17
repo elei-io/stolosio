@@ -47,7 +47,7 @@ class CdpEventObserver:
         self,
         session_id: UUID,
         attempt_id: UUID | None,
-        provider: ProviderName,
+        provider: ProviderName | None,
         publisher: EventPublisher,
     ) -> None:
         self._session_id = session_id
@@ -243,7 +243,6 @@ class CdpEventObserver:
         await self._emit(
             EventType.PAGE_CONTENT_OBSERVED,
             {
-                "content_fingerprint": hashlib.sha256(content.encode()).hexdigest(),
                 "content_length": len(content.encode()),
             },
         )

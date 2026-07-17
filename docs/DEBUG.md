@@ -43,7 +43,7 @@ Harbor must not turn those observations into statements such as:
 - The session needs more stealth.
 - The IP should be rotated.
 - The provider was a bad choice.
-- A promotion or provider change is required.
+- A provider change is required.
 - A challenge or CAPTCHA was detected unless that fact was explicitly reported by the
   provider or remote system rather than inferred by Harbor.
 
@@ -100,12 +100,12 @@ Live internal consumers subscribe to
 durable consumers, and PostgreSQL supplies factual historical timelines. There is no
 separate, richer raw stream behind this view.
 
-Harbor also records `page.content_observed` with content length and a SHA-256
-fingerprint, plus `console.message` and `javascript.exception` with bounded source,
-level, and message fingerprint. HTML and unrestricted console text never enter the
-stream. Attempt closure includes normalized Harbor cost units.
+Harbor also records `page.content_observed` with content length, plus `console.message`
+and `javascript.exception` with bounded source, level, and message fingerprint. HTML
+and unrestricted console text never enter the stream. Attempt closure includes
+normalized Harbor cost units.
 
-Whether two acquisitions match and whether a provider is qualified are policy
+Whether a provider supports a domain and how providers are ordered are policy
 conclusions stored outside DEBUG.
 
 ## Downstream WebSocket

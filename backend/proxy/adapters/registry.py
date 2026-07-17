@@ -8,7 +8,9 @@ from backend.settings import settings
 def get_provider_adapter(provider: ProviderName, *, endpoint: str | None = None) -> ProviderAdapter:
     match provider:
         case ProviderName.HTTP:
-            raise NotImplementedError("HTTP execution is handled by the adaptive session")
+            from backend.proxy.adapters.http import HttpAdapter
+
+            return HttpAdapter()
         case ProviderName.CHROMIUM:
             return DiscoveredCdpAdapter(provider, endpoint or str(settings.chromium_url))
         case ProviderName.BROWSERLESS:

@@ -24,8 +24,16 @@ from backend.proxy.contracts import (
     ResolvedSessionSettings,
     SettingSource,
 )
-from backend.proxy.no_browser.history import PromotionHistoryRepository
-from backend.proxy.routing import RoutingChoice, RoutingRepository
+from backend.proxy.provider_transition.history import ProviderTransitionRepository
+from backend.proxy.provider_transition.materialization import (
+    CdpReplayMaterializationStrategy,
+)
+from backend.proxy.routing import (
+    NoSupportedProvider,
+    ProviderCandidate,
+    ProviderPlan,
+    RoutingRepository,
+)
 from backend.settings import Settings
 
 _CLOSED = object()
@@ -66,24 +74,22 @@ _EMPTY_RESULT_METHODS = frozenset(
 )
 
 
-class PromotionError(RuntimeError):
+class ProviderTransitionError(RuntimeError):
     pass
 
 
-class _Promote(Exception):
+class _Transition(Exception):
     def __init__(
         self,
         trigger: str,
         *,
-        record_history: bool = True,
         target: ProviderName | None = None,
-        choice: RoutingChoice | None = None,
+        plan: ProviderPlan | None = None,
     ) -> None:
         super().__init__(trigger)
         self.trigger = trigger
-        self.record_history = record_history
         self.target = target
-        self.choice = choice
+        self.plan = plan
 
 
 @dataclass(slots=True)
@@ -93,24 +99,24 @@ class ReplayEntry:
     events: list[dict[str, Any]] = field(default_factory=list)
 
 
-class AdaptiveCdpSession:
-    """A bounded CDP facade that can replay itself into a real Chromium session."""
+class ProviderTransitionSession:
+    """An automatic CDP facade that moves between verified provider attempts."""
 
-    provider = ProviderName.HTTP
+    provider = None
 
     def __init__(
         self,
         session: HarborSession,
         resolved: ResolvedSessionSettings,
-        attempts: AttemptAdmission,
+        attempts: AttemptAdmission | None,
         capabilities: CapabilityRegistry,
-        history: PromotionHistoryRepository,
-        observer: CdpEventObserver,
+        history: ProviderTransitionRepository | None,
+        observer: CdpEventObserver | None,
         settings: Settings,
         routing: RoutingRepository | None = None,
-        initial_provider: ProviderName | None = None,
         *,
-        force_http: bool,
+        automatic: bool = True,
+        materialization: CdpReplayMaterializationStrategy | None = None,
     ) -> None:
         self._session = session
         self._resolved = resolved
@@ -120,8 +126,8 @@ class AdaptiveCdpSession:
         self._observer = observer
         self._settings = settings
         self._routing = routing
-        self._initial_provider = initial_provider
-        self._force_http = force_http
+        self._automatic = automatic
+        self._materialization = materialization or CdpReplayMaterializationStrategy()
 
         self._messages: asyncio.Queue[str | object] = asyncio.Queue()
         self._closed = False
@@ -154,6 +160,7 @@ class AdaptiveCdpSession:
         self._url = "about:blank"
         self._html = ""
         self._domain: str | None = None
+        self._attempted_providers: set[ProviderName] = set()
 
     async def send(self, message: str) -> None:
         command = json.loads(message)
@@ -164,44 +171,75 @@ class AdaptiveCdpSession:
                 command["method"],
                 command.get("params"),
             ):
-                preferred = (
-                    (await self._routing.settings()).default_provider
-                    if self._routing is not None
-                    else ProviderName.CHROMIUM
-                )
-                target = await self._compatible_promotion_target(preferred, command)
-                if target is not provider and self._capabilities.supports(
-                    target,
-                    command["method"],
-                    command.get("params"),
-                ):
-                    await self._promote(
-                        command,
-                        command["method"],
-                        record_history=True,
-                        target=target,
-                    )
+                if self._routing is not None and self._domain is not None:
+                    try:
+                        plan = await self._routing.plan(
+                            self._domain,
+                            required_commands=self._required_commands(command),
+                            exclude=frozenset(
+                                self._attempted_providers | {provider}
+                            ),
+                        )
+                        await self._transition(command, command["method"], plan=plan)
+                    except (NoSupportedProvider, ProviderTransitionError) as error:
+                        await self._put(
+                            self._response(
+                                command,
+                                error={"code": -32000, "message": str(error)},
+                            )
+                        )
                     return
             await self._forward(command)
             return
 
-        if self._would_exceed_replay_budget(message):
-            await self._promote(command, "replay_budget", record_history=False)
+        if self._automatic and self._would_exceed_replay_budget(message):
+            try:
+                await self._transition(command, "replay_budget")
+            except (NoSupportedProvider, ProviderTransitionError) as error:
+                await self._put(
+                    self._response(
+                        command,
+                        error={"code": -32000, "message": str(error)},
+                    )
+                )
             return
 
         entry = ReplayEntry(command=command)
         self._current_entry = entry
         try:
             result = await self._dispatch(command)
-        except _Promote as promotion:
+        except _Transition as transition:
             self._current_entry = None
-            await self._promote(
-                command,
-                promotion.trigger,
-                record_history=promotion.record_history,
-                target=promotion.target,
-                choice=promotion.choice,
-            )
+            if not self._automatic:
+                code = -32601 if transition.trigger == command["method"] else -32000
+                await self._put(
+                    self._response(
+                        command,
+                        error={
+                            "code": code,
+                            "message": (
+                                f"{transition.trigger} is not supported by provider http"
+                                if code == -32601
+                                else transition.trigger
+                            ),
+                        },
+                    )
+                )
+                return
+            try:
+                await self._transition(
+                    command,
+                    transition.trigger,
+                    target=transition.target,
+                    plan=transition.plan,
+                )
+            except (NoSupportedProvider, ProviderTransitionError) as error:
+                await self._put(
+                    self._response(
+                        command,
+                        error={"code": -32000, "message": str(error)},
+                    )
+                )
             return
         except Exception as error:
             self._current_entry = None
@@ -271,16 +309,16 @@ class AdaptiveCdpSession:
             return {"targetInfo": self._target_info()}
         if method == "Target.createBrowserContext":
             if self._context_created:
-                raise _Promote(method)
+                raise _Transition(method)
             self._context_created = True
             return {"browserContextId": self._context_id}
         if method == "Target.disposeBrowserContext":
             if params.get("browserContextId") != self._context_id:
-                raise _Promote(method)
+                raise _Transition(method)
             return {}
         if method == "Target.createTarget":
             if self._target_created:
-                raise _Promote(method)
+                raise _Transition(method)
             self._target_created = True
             await self._event(
                 "Target.attachedToTarget",
@@ -354,7 +392,7 @@ class AdaptiveCdpSession:
             if object_id in self._utility_objects:
                 self._utility_objects.discard(object_id)
                 return {}
-        raise _Promote(method)
+        raise _Transition(method)
 
     async def _navigate(
         self,
@@ -366,28 +404,26 @@ class AdaptiveCdpSession:
             raise ValueError("Page.navigate requires a URL")
         parsed = urlsplit(url)
         if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
-            raise _Promote("Page.navigate")
+            raise _Transition("Page.navigate")
         self._domain = parsed.hostname.rstrip(".").encode("idna").decode("ascii").lower()
 
-        if self._attempt is None:
-            choice = (
-                RoutingChoice(
-                    self._initial_provider or ProviderName.HTTP,
-                    "qualification_probe" if self._initial_provider else "explicit",
-                    1,
-                    0,
+        if self._attempt is None and self._automatic:
+            if self._routing is None:
+                raise ProviderTransitionError(
+                    "Automatic provider planning is unavailable"
                 )
-                if self._force_http or self._initial_provider is not None or self._routing is None
-                else await self._routing.choose(self._domain)
+            plan = await self._routing.plan(
+                self._domain,
+                required_commands=self._required_commands(),
             )
-            if choice.provider is not ProviderName.HTTP:
-                raise _Promote(
+            candidate = plan.first
+            if candidate.provider is not ProviderName.HTTP:
+                raise _Transition(
                     "routing",
-                    record_history=False,
-                    target=choice.provider,
-                    choice=choice,
+                    target=candidate.provider,
+                    plan=plan,
                 )
-            await self._acquire_http_attempt(choice)
+            await self._acquire_http_attempt(plan, candidate)
 
         request_headers = _http_request_headers(self._settings)
         try:
@@ -398,9 +434,9 @@ class AdaptiveCdpSession:
             ) as client:
                 response = await client.get(url, headers=request_headers)
         except httpx.HTTPError as error:
-            raise _Promote("http_transport_failure", record_history=False) from error
+            raise _Transition("http_transport_failure") from error
         if len(response.content) > self._settings.http_max_response_bytes:
-            raise _Promote("http_response_too_large", record_history=False)
+            raise _Transition("http_response_too_large")
 
         self._url = str(response.url)
         self._html = response.text
@@ -468,34 +504,39 @@ class AdaptiveCdpSession:
         await self._emit_loaded_document(session_id, request_id, len(response.content))
         return {"frameId": self._frame_id, "loaderId": self._loader_id, "isDownload": False}
 
-    async def _acquire_http_attempt(self, choice: RoutingChoice) -> None:
+    async def _acquire_http_attempt(
+        self, plan: ProviderPlan, candidate: ProviderCandidate
+    ) -> None:
+        assert self._attempts is not None
+        assert self._observer is not None
         self._attempt = await self._attempts.acquire(
             self._session,
             self._settings_for(
                 ProviderName.HTTP,
-                SettingSource.EXPLICIT if self._force_http else SettingSource.AUTO,
+                SettingSource.AUTO,
             ),
         )
         await self._attempt.activate()
+        self._attempted_providers.add(ProviderName.HTTP)
         if self._routing is not None and self._domain is not None:
-            await self._routing.record_choice(
+            await self._routing.record_selection(
                 self._attempt.attempt.attempt_id,
                 self._domain,
-                choice,
+                plan,
+                candidate,
             )
         self._observer.bind_attempt(
             ProviderName.HTTP,
             UUID(self._attempt.attempt.attempt_id),
         )
 
-    async def _promote(
+    async def _transition(
         self,
         pending: dict[str, Any],
         trigger: str,
         *,
-        record_history: bool,
         target: ProviderName | None = None,
-        choice: RoutingChoice | None = None,
+        plan: ProviderPlan | None = None,
     ) -> None:
         from_provider = (
             self._upstream.provider
@@ -505,115 +546,134 @@ class AdaptiveCdpSession:
             else None
         )
         if self._upstream is not None:
+            if not self._materialization.can_materialize(
+                entry.command["method"] for entry in self._replay
+            ):
+                raise ProviderTransitionError(
+                    "Cannot transition after commands with non-replay-safe side effects"
+                )
             if any(entry.response is None for entry in self._forwarded.values()):
-                raise PromotionError("Cannot promote with unacknowledged provider commands")
-            if self._upstream_pump is not None:
-                self._upstream_pump.cancel()
-                await asyncio.gather(self._upstream_pump, return_exceptions=True)
-                self._upstream_pump = None
-            with suppress(Exception):
-                await self._upstream.close()
-            self._upstream = None
-            self._upstream_messages = None
-        if self._attempt is not None:
-            await self._attempt.release(failed=False, reason="promoted")
-            self._attempt = None
-        if record_history and self._domain is not None:
-            await self._history.record(self._domain, pending["method"])
-
-        target = target or (
-            (await self._routing.settings()).default_provider
-            if self._routing is not None
-            else ProviderName.CHROMIUM
-        )
-        compatible_target = await self._compatible_promotion_target(target, pending)
-        if compatible_target is not target:
-            choice = None
-            target = compatible_target
-        target_attempt: AttemptLease | None = None
-        upstream: ProviderSession | None = None
-        try:
-            target_settings = self._settings_for(target, SettingSource.AUTO)
-            target_attempt = await self._attempts.acquire(self._session, target_settings)
-            adapter = get_provider_adapter(
-                target,
-                endpoint=target_attempt.attempt.endpoint,
-            )
-            async with asyncio.timeout(self._settings.provider_acquisition_timeout_seconds):
-                upstream = await adapter.acquire(self._session, target_settings)
-            await target_attempt.activate()
-            self._attempt = target_attempt
+                raise ProviderTransitionError(
+                    "Cannot transition with unacknowledged provider commands"
+                )
+        if plan is None:
             if self._routing is not None and self._domain is not None:
-                await self._routing.record_choice(
-                    target_attempt.attempt.attempt_id,
+                plan = await self._routing.plan(
                     self._domain,
-                    choice
-                    or RoutingChoice(
-                        target,
-                        "promotion",
-                        (await self._routing.settings()).configuration_version,
-                        0,
-                    ),
+                    required_commands=self._required_commands(pending),
+                    exclude=frozenset(self._attempted_providers),
                 )
-            self._upstream = upstream
-            self._upstream_messages = upstream.messages().__aiter__()
-            self._observer.bind_attempt(
-                target,
-                UUID(target_attempt.attempt.attempt_id),
-            )
-            self._forward_ids.clear()
-            self._reverse_ids.clear()
-            await self._replay_history()
-            self._upstream_pump = asyncio.create_task(self._pump_upstream())
-            await self._emit_promotion(
-                from_provider.value if from_provider is not None else "lazy",
-                target,
-                trigger,
-            )
-            await self._forward(pending)
-        except BaseException:
-            self._failed = True
-            self._failure_reason = "promotion_failed"
-            if upstream is not None:
-                with suppress(Exception):
-                    await upstream.close()
-            if target_attempt is not None:
-                with suppress(Exception):
-                    await target_attempt.release(failed=True, reason="promotion_failed")
-            self._attempt = None
-            self._upstream = None
-            raise
-
-    async def _compatible_promotion_target(
-        self,
-        preferred: ProviderName,
-        pending: dict[str, Any],
-    ) -> ProviderName:
-        commands = [entry.command for entry in self._replay]
-        commands.append(pending)
-
-        def supports_replay(provider: ProviderName) -> bool:
-            return all(
-                self._capabilities.supports(
-                    provider,
-                    command["method"],
-                    command.get("params"),
+            elif self._routing is not None:
+                settings = await self._routing.settings()
+                selected_provider = target or settings.default_provider
+                plan = ProviderPlan(
+                    (ProviderCandidate(selected_provider, 0, 0),),
+                    "configured_default",
+                    settings.configuration_version,
+                    settings.support_policy_version,
                 )
-                for command in commands
-            )
-
-        if supports_replay(preferred):
-            return preferred
-        if self._routing is not None:
-            for profile in await self._routing.provider_profiles():
-                provider = ProviderName(profile.provider)
-                if (
-                    profile.automatic_enabled
-                    and provider is not ProviderName.HTTP
-                    and supports_replay(provider)
+            else:
+                raise ProviderTransitionError(
+                    "Automatic provider planning is unavailable"
+                )
+        source_attempt = self._attempt
+        source_upstream = self._upstream
+        source_messages = self._upstream_messages
+        source_pump = self._upstream_pump
+        source_forward_event_entry = self._forward_event_entry
+        source_forward_ids = {
+            kind: dict(values) for kind, values in self._forward_ids.items()
+        }
+        source_reverse_ids = {
+            kind: dict(values) for kind, values in self._reverse_ids.items()
+        }
+        last_error: Exception | None = None
+        assert self._attempts is not None
+        assert self._observer is not None
+        for selected in plan.candidates:
+            target = selected.provider
+            if target in self._attempted_providers or target is ProviderName.HTTP:
+                continue
+            target_attempt: AttemptLease | None = None
+            upstream: ProviderSession | None = None
+            self._attempted_providers.add(target)
+            try:
+                target_settings = self._settings_for(target, SettingSource.AUTO)
+                target_attempt = await self._attempts.acquire(self._session, target_settings)
+                adapter = get_provider_adapter(
+                    target,
+                    endpoint=target_attempt.attempt.endpoint,
+                )
+                async with asyncio.timeout(
+                    self._settings.provider_acquisition_timeout_seconds
                 ):
-                    return provider
-        raise PromotionError("No enabled provider can replay the acknowledged commands")
+                    upstream = await adapter.acquire(self._session, target_settings)
+                await target_attempt.activate()
+                self._upstream = upstream
+                self._upstream_messages = upstream.messages().__aiter__()
+                self._forward_ids.clear()
+                self._reverse_ids.clear()
+                await self._replay_history()
+                if self._routing is not None and self._domain is not None:
+                    await self._routing.record_selection(
+                        target_attempt.attempt.attempt_id,
+                        self._domain,
+                        plan,
+                        selected,
+                        transition_trigger=trigger if from_provider is not None else None,
+                    )
+                await self._forward(pending)
+                self._observer.bind_attempt(target, UUID(target_attempt.attempt.attempt_id))
+                self._attempt = target_attempt
+                if source_pump is not None:
+                    source_pump.cancel()
+                    await asyncio.gather(source_pump, return_exceptions=True)
+                if source_upstream is not None:
+                    with suppress(Exception):
+                        await source_upstream.close()
+                if source_attempt is not None:
+                    with suppress(Exception):
+                        await source_attempt.release(
+                            failed=False, reason="provider_transitioned"
+                        )
+                self._upstream_pump = asyncio.create_task(self._pump_upstream())
+                if from_provider is not None:
+                    with suppress(Exception):
+                        await self._emit_transition(
+                            from_provider.value,
+                            target,
+                            trigger,
+                        )
+                return
+            except Exception as error:
+                last_error = error
+                if upstream is not None:
+                    with suppress(Exception):
+                        await upstream.close()
+                if target_attempt is not None:
+                    with suppress(Exception):
+                        await target_attempt.release(
+                            failed=True, reason="provider_transition_attempt_failed"
+                        )
+                self._attempt = source_attempt
+                self._upstream = source_upstream
+                self._upstream_messages = source_messages
+                self._upstream_pump = source_pump
+                self._forward_ids = defaultdict(dict, source_forward_ids)
+                self._reverse_ids = defaultdict(dict, source_reverse_ids)
+                self._forward_event_entry = source_forward_event_entry
+        raise ProviderTransitionError("Supported provider plan exhausted") from last_error
+
+    def _required_commands(
+        self, pending: dict[str, Any] | None = None
+    ) -> tuple[tuple[str, dict | None], ...]:
+        commands = [
+            (entry.command["method"], entry.command.get("params"))
+            for entry in self._replay
+        ]
+        if pending is not None:
+            commands.append((pending["method"], pending.get("params")))
+        return tuple(commands)
 
     async def _replay_history(self) -> None:
         assert self._upstream is not None
@@ -623,7 +683,7 @@ class AdaptiveCdpSession:
             await self._upstream.send(json.dumps(translated, separators=(",", ":")))
             response, events = await self._replay_response(entry.command)
             if "error" in response:
-                raise PromotionError(
+                raise ProviderTransitionError(
                     f"Replay failed for {entry.command['method']}: provider command error"
                 )
             if entry.response is not None:
@@ -652,7 +712,9 @@ class AdaptiveCdpSession:
         response = None
         events: list[dict[str, Any]] = []
         method = command["method"]
-        async with asyncio.timeout(self._settings.no_browser_replay_timeout_seconds):
+        async with asyncio.timeout(
+            self._settings.provider_transition_replay_timeout_seconds
+        ):
             while True:
                 raw = await anext(self._upstream_messages)
                 value = json.loads(raw)
@@ -701,7 +763,16 @@ class AdaptiveCdpSession:
         self._forwarded[command["id"]] = entry
         self._forward_event_entry = entry
         translated = self._rewrite(command, self._forward_ids)
-        await self._upstream.send(json.dumps(translated, separators=(",", ":")))
+        try:
+            await self._upstream.send(json.dumps(translated, separators=(",", ":")))
+        except Exception:
+            self._replay.pop()
+            self._replay_bytes -= len(
+                json.dumps(command, separators=(",", ":")).encode()
+            )
+            self._forwarded.pop(command["id"], None)
+            self._forward_event_entry = None
+            raise
 
     async def _pump_upstream(self) -> None:
         assert self._upstream_messages is not None
@@ -880,13 +951,14 @@ class AdaptiveCdpSession:
             self._current_entry.events.append(event)
         await self._put(event)
 
-    async def _emit_promotion(
+    async def _emit_transition(
         self,
         from_provider: str,
         to_provider: ProviderName,
         trigger_method: str,
     ) -> None:
         assert self._attempt is not None
+        assert self._history is not None
         await self._history.record_transition(
             self._session.session_id,
             self._attempt.attempt.attempt_id,
@@ -930,10 +1002,12 @@ class AdaptiveCdpSession:
 
     def _would_exceed_replay_budget(self, message: str) -> bool:
         return (
-            len(self._replay) + 1 > self._settings.no_browser_replay_max_commands
+            len(self._replay) + 1
+            > self._settings.provider_transition_replay_max_commands
             or self._replay_bytes + len(message.encode())
-            > self._settings.no_browser_replay_max_bytes
+            > self._settings.provider_transition_replay_max_bytes
         )
+
 
     def _is_utility_evaluation(self, params: dict[str, Any]) -> bool:
         expression = params.get("expression")
@@ -1014,3 +1088,28 @@ class AdaptiveCdpSession:
             "receiveHeadersStart": 0,
             "receiveHeadersEnd": 0,
         }
+
+
+class HttpCdpSession(ProviderTransitionSession):
+    """The explicit HTTP provider; it never changes provider automatically."""
+
+    provider = ProviderName.HTTP
+
+    def __init__(
+        self,
+        session: HarborSession,
+        resolved: ResolvedSessionSettings,
+        capabilities: CapabilityRegistry,
+        settings: Settings,
+    ) -> None:
+        super().__init__(
+            session,
+            resolved,
+            None,
+            capabilities,
+            None,
+            None,
+            settings,
+            None,
+            automatic=False,
+        )

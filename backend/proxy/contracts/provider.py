@@ -16,7 +16,7 @@ class ProviderName(StrEnum):
 
 
 class ProviderSession(Protocol):
-    provider: ProviderName
+    provider: ProviderName | None
 
     async def send(self, message: str) -> None: ...
     def messages(self) -> AsyncIterator[str]: ...

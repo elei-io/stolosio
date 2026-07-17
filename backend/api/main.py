@@ -29,13 +29,12 @@ from backend.proxy.attempts import AttemptAdmission
 from backend.proxy.capabilities import capability_registry
 from backend.proxy.domains import DomainQueryService
 from backend.proxy.gateway import Gateway
-from backend.proxy.no_browser import PromotionHistoryRepository
 from backend.proxy.postgres import (
     PostgresAttemptRepository,
     PostgresSessionRepository,
     SessionRepositorySettings,
 )
-from backend.proxy.qualification import QualificationRepository
+from backend.proxy.provider_transition import ProviderTransitionRepository
 from backend.proxy.routing import RoutingRepository
 from backend.proxy.sessions import SessionAdmission
 from backend.settings import settings
@@ -55,7 +54,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     attempt_repository = PostgresAttemptRepository(session_factory)
     routing = RoutingRepository(session_factory)
-    qualification = QualificationRepository(session_factory)
     await routing.ensure_defaults()
     nats_client = None
     try:
@@ -122,9 +120,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         capability_registry,
         settings,
         event_publisher if nats_client is not None else None,
-        promotion_history=PromotionHistoryRepository(session_factory),
+        transition_repository=ProviderTransitionRepository(session_factory),
         routing=routing,
-        qualification=qualification,
     )
     try:
         yield

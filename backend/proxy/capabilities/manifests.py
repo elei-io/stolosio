@@ -1,6 +1,6 @@
 from backend.proxy.contracts import ProviderName
 
-EXAMPLE_BASELINE = frozenset(
+NATIVE_BROWSER_BASELINE = frozenset(
     {
         "Browser.getVersion",
         "Browser.getWindowForTarget",
@@ -33,14 +33,45 @@ EXAMPLE_BASELINE = frozenset(
     }
 )
 
+HTTP_FACADE_METHODS = frozenset(
+    {
+        "Browser.getVersion",
+        "Browser.getWindowForTarget",
+        "Browser.setDownloadBehavior",
+        "Browser.setWindowBounds",
+        "Emulation.setDeviceMetricsOverride",
+        "Emulation.setEmulatedMedia",
+        "Emulation.setFocusEmulationEnabled",
+        "Emulation.setScriptExecutionDisabled",
+        "Log.enable",
+        "Network.enable",
+        "Page.addScriptToEvaluateOnNewDocument",
+        "Page.createIsolatedWorld",
+        "Page.enable",
+        "Page.getFrameTree",
+        "Page.navigate",
+        "Page.setLifecycleEventsEnabled",
+        "Runtime.callFunctionOn",
+        "Runtime.enable",
+        "Runtime.evaluate",
+        "Runtime.releaseObject",
+        "Runtime.runIfWaitingForDebugger",
+        "Target.createBrowserContext",
+        "Target.createTarget",
+        "Target.disposeBrowserContext",
+        "Target.getTargetInfo",
+        "Target.setAutoAttach",
+    }
+)
+
 PROVIDER_METHODS: dict[ProviderName, frozenset[str]] = {
-    ProviderName.HTTP: EXAMPLE_BASELINE,
-    ProviderName.CHROMIUM: EXAMPLE_BASELINE,
-    ProviderName.BROWSERLESS: EXAMPLE_BASELINE | {"Page.setFontFamilies"},
-    ProviderName.LIGHTPANDA: EXAMPLE_BASELINE
+    ProviderName.HTTP: HTTP_FACADE_METHODS,
+    ProviderName.CHROMIUM: NATIVE_BROWSER_BASELINE,
+    ProviderName.BROWSERLESS: NATIVE_BROWSER_BASELINE | {"Page.setFontFamilies"},
+    ProviderName.LIGHTPANDA: NATIVE_BROWSER_BASELINE
     | {
         "Emulation.setScriptExecutionDisabled",
         "Target.closeTarget",
     },
-    ProviderName.CAMOUFOX: EXAMPLE_BASELINE,
+    ProviderName.CAMOUFOX: NATIVE_BROWSER_BASELINE,
 }

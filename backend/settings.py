@@ -52,13 +52,13 @@ class Settings(BaseSettings):
     http_user_agent: str = "HarborBot/0.1 (https://github.com/ekkuleivonen/harbor)"
     http_accept: str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     http_accept_language: str = "en-US,en;q=0.5"
-    no_browser_replay_max_commands: int = 100
-    no_browser_replay_max_bytes: int = 2 * 1024 * 1024
-    no_browser_replay_timeout_seconds: float = 30
-    qualification_harbor_cdp_url: str = "ws://localhost:8411/v1/connect"
-    qualification_schedule_delay_seconds: float = 2
-    qualification_poll_seconds: float = 1
-    qualification_lease_seconds: float = 60
+    provider_transition_replay_max_commands: int = 100
+    provider_transition_replay_max_bytes: int = 2 * 1024 * 1024
+    provider_transition_replay_timeout_seconds: float = 30
+    support_harbor_cdp_url: str = "ws://localhost:8411/v1/connect"
+    support_schedule_delay_seconds: float = 2
+    support_poll_seconds: float = 1
+    support_lease_seconds: float = 60
     chromium_minimum_instances: int = 1
     chromium_maximum_instances: int = 4
     chromium_session_capacity_per_instance: int = 4

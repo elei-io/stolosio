@@ -81,10 +81,9 @@ own the resolved provider settings, FIFO position, provider resource, and outcom
 - Lifecycle and attempt events are inserted transactionally into the PostgreSQL outbox.
   The maintenance worker publishes them; NATS cannot delay admission.
 
-## Current limits
+## Subsequent milestones
 
-- Automatic planning still selects Chromium conservatively.
-- A session currently performs one browser attempt.
-- HTTP/no-browser attempts and promotion are not implemented yet.
-- The registered CDP discovery and target-management HTTP routes remain explicit
-  placeholders.
+This milestone established the logical-session and acquisition-attempt boundary.
+Domain support planning, adaptive HTTP execution, and runtime provider transition were
+implemented by later milestones without changing that boundary. Registered CDP
+discovery and target-management HTTP routes remain explicit placeholders.

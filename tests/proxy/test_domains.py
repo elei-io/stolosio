@@ -6,20 +6,20 @@ from backend.db.models import (
     AcquisitionAttempt,
     Domain,
     DomainCommandStat,
-    DomainPromotionStat,
-    DomainProviderProfile,
+    DomainProviderSupport,
+    DomainProviderTransitionStat,
     GatewaySession,
     ProviderRoutingProfile,
-    QualificationProbe,
     RoutingConfiguration,
     SessionDomain,
+    SupportProbe,
 )
 from backend.proxy.domains import DomainFilters, DomainQueryService
 
 pytestmark = pytest.mark.asyncio
 
 
-async def test_domain_queries_expose_routing_evidence_without_sensitive_probe_data(
+async def test_domain_queries_expose_absolute_support_and_ordered_plan(
     database_sessions,
 ) -> None:
     now = datetime.now(UTC)
@@ -29,8 +29,8 @@ async def test_domain_queries_expose_routing_evidence_without_sensitive_probe_da
                 key="global",
                 default_provider="camoufox",
                 existing_domain_probe_rate_basis_points=100,
-                required_successful_probes=1,
-                comparison_policy_version=1,
+                required_support_confirmations=1,
+                support_policy_version=1,
                 configuration_version=2,
                 updated_at=now,
             )
@@ -63,23 +63,34 @@ async def test_domain_queries_expose_routing_evidence_without_sensitive_probe_da
         database.add(domain)
         await database.flush()
         database.add(
-            DomainProviderProfile(
+            DomainProviderSupport(
                 domain_id=domain.id,
                 provider="lightpanda",
-                qualification_state="qualified",
+                support_state="supported",
                 successful_probe_count=1,
-                failed_probe_count=0,
                 observed_session_count=2,
                 total_cost_units=6,
+                navigation_state="healthy",
+                status_state="healthy",
+                headers_state="healthy",
+                method_coverage_state="declared",
+                content_state="healthy",
+                method_observed_count=1,
+                method_declared_count=1,
                 last_status_code=200,
-                last_verified_at=now,
-                comparison_policy_version=1,
+                last_checked_at=now,
+                last_supported_at=now,
+                support_policy_version=1,
+                capability_manifest_version=1,
             )
         )
         database.add(
-            DomainPromotionStat(
+            DomainProviderTransitionStat(
                 domain_id=domain.id,
-                promotion_count=2,
+                from_provider="http",
+                to_provider="lightpanda",
+                trigger="new_requirement",
+                transition_count=2,
                 last_trigger_method="Runtime.evaluate",
                 first_seen_at=now - timedelta(hours=3),
                 last_seen_at=now,
@@ -92,16 +103,6 @@ async def test_domain_queries_expose_routing_evidence_without_sensitive_probe_da
                 command_count=4,
                 session_count=2,
                 first_seen_at=now - timedelta(hours=3),
-                last_seen_at=now,
-            )
-        )
-        database.add(
-            DomainCommandStat(
-                domain_id=domain.id,
-                method="Page.printToPDF",
-                command_count=1,
-                session_count=1,
-                first_seen_at=now,
                 last_seen_at=now,
             )
         )
@@ -133,28 +134,32 @@ async def test_domain_queries_expose_routing_evidence_without_sensitive_probe_da
                 resolved_settings={},
                 setting_sources={},
                 state="closed",
-                routing_reason="cheapest_qualified",
+                selection_reason="cheapest_supported",
                 actual_cost_units=3,
             )
         )
         database.add(
-            QualificationProbe(
+            SupportProbe(
                 id="00000000-0000-0000-0000-000000000003",
                 domain_id=domain.id,
                 source_session_id=session.id,
                 candidate_provider="lightpanda",
                 trigger="new_domain",
                 target_url="https://example.test/",
-                baseline_status=200,
-                baseline_headers={"content-type": "text/html"},
-                baseline_console_errors=1,
-                baseline_content_fingerprint="a" * 64,
+                required_methods=["Runtime.evaluate"],
                 state="completed",
-                candidate_status=200,
-                candidate_headers={"content-type": "text/html"},
-                candidate_console_errors=0,
-                candidate_content_fingerprint="a" * 64,
-                comparison_outcome="matched",
+                outcome="supported",
+                navigation_state="healthy",
+                status_state="healthy",
+                headers_state="healthy",
+                    method_coverage_state="declared",
+                content_state="healthy",
+                status_code=200,
+                reason_codes=[],
+                method_observed_count=1,
+                method_declared_count=1,
+                unsupported_methods=[],
+                content_facts={"visible_text_chars": 400},
                 cost_units=3,
                 created_at=now - timedelta(minutes=5),
                 finished_at=now - timedelta(minutes=4),
@@ -163,35 +168,25 @@ async def test_domain_queries_expose_routing_evidence_without_sensitive_probe_da
         domain_id = domain.id
 
     service = DomainQueryService(database_sessions)
-    page = await service.domains(DomainFilters(has_promotions=True))
+    page = await service.domains(DomainFilters(has_transitions=True))
     detail = await service.domain(domain_id)
     probes = await service.probes(domain_id)
     sessions = await service.sessions(domain_id)
 
-    assert page.summary["known_domains"] == 1
-    assert page.domains[0]["current_route"] == {
-        "provider": "lightpanda",
-        "reason": "cheapest_qualified",
-        "estimated_cost_units": 3,
+    assert page.domains[0]["expected_plan"] == {
+        "reason": "cheapest_supported",
+        "candidates": [
+            {"provider": "lightpanda", "estimated_cost_units": 3},
+            {"provider": "camoufox", "estimated_cost_units": 12},
+        ],
     }
     assert detail is not None
-    assert detail["promotion"]["last_trigger_method"] == "Runtime.evaluate"
-    assert detail["commands"][0]["method"] == "Runtime.evaluate"
-    assert detail["providers"][0]["qualification_state"] == "qualified"
-    assert detail["providers"][0]["checks"]["status"]["state"] == "matches"
-    assert detail["providers"][0]["checks"]["headers"]["state"] == "matches"
-    assert detail["providers"][0]["checks"]["console"]["state"] == "matches"
-    assert detail["providers"][0]["checks"]["content"]["state"] == "matches"
-    assert detail["providers"][0]["checks"]["methods"]["state"] == "differs"
-    assert detail["providers"][0]["checks"]["methods"]["unsupported_methods"] == [
-        "Page.printToPDF"
-    ]
-    assert detail["providers"][1]["checks"]["status"]["state"] == "not_checked"
+    assert detail["transition_count"] == 2
+    assert detail["providers"][0]["support_state"] == "supported"
+    assert detail["providers"][0]["checks"]["content"]["state"] == "healthy"
+    assert "console" not in detail["providers"][0]["checks"]
     assert probes is not None
-    assert probes.probes[0]["status_matches"] is True
-    assert probes.probes[0]["headers_match"] is True
+    assert probes.probes[0]["outcome"] == "supported"
     assert "target_url" not in probes.probes[0]
-    assert "baseline_headers" not in probes.probes[0]
     assert sessions is not None
-    assert sessions.sessions[0]["providers"] == ["lightpanda"]
-    assert sessions.sessions[0]["routing_reason"] == "cheapest_qualified"
+    assert sessions.sessions[0]["selection_reason"] == "cheapest_supported"

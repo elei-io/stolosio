@@ -135,7 +135,7 @@ class GatewaySession(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     terminal_reason: Mapped[str | None] = mapped_column(String(64))
-    qualification_evaluated_at: Mapped[datetime | None] = mapped_column(
+    support_evaluated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), index=True
     )
 
@@ -183,8 +183,10 @@ class AcquisitionAttempt(Base):
     domain_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("domains.id", ondelete="SET NULL"), index=True
     )
-    routing_reason: Mapped[str | None] = mapped_column(String(32))
-    routing_version: Mapped[int | None]
+    selection_reason: Mapped[str | None] = mapped_column(String(32))
+    plan_version: Mapped[int | None]
+    plan_position: Mapped[int | None]
+    transition_trigger: Mapped[str | None] = mapped_column(String(64))
     estimated_cost_units: Mapped[int | None] = mapped_column(BigInteger)
     actual_cost_units: Mapped[int | None] = mapped_column(BigInteger)
     cost_projected: Mapped[bool] = mapped_column(
