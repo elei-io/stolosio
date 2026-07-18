@@ -5,9 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import SessionEventRecord
-from backend.events.contracts import SessionEvent
+from backend.events.contracts import SessionEvent, provider_from_storage
 from backend.events.publisher import EventPublisher
-from backend.proxy.contracts import ProviderName
 
 
 class LifecycleOutboxPublisher:
@@ -44,7 +43,7 @@ class LifecycleOutboxPublisher:
                     event_type=row.event_type,
                     session_id=UUID(row.session_id),
                     occurred_at=row.occurred_at,
-                    provider=ProviderName(row.provider) if row.provider else None,
+                    provider=provider_from_storage(row.provider),
                     attempt_id=UUID(row.attempt_id) if row.attempt_id else None,
                     payload=row.payload,
                 )

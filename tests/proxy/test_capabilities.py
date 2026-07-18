@@ -1,6 +1,7 @@
 import pytest
 
 from backend.proxy.capabilities import capability_registry
+from backend.proxy.capabilities.http import CONTENT_EXPRESSION, UTILITY_CALL
 from backend.proxy.contracts import ProviderName
 
 
@@ -31,14 +32,38 @@ def test_camoufox_enables_only_implemented_mapping_baseline() -> None:
     assert not capability_registry.supports(ProviderName.CAMOUFOX, "Page.printToPDF")
 
 
-def test_http_method_name_coverage_does_not_authorize_arbitrary_evaluation() -> None:
-    assert capability_registry.supports_observed_method(
-        ProviderName.HTTP, "Runtime.evaluate"
-    )
+def test_http_method_name_does_not_authorize_arbitrary_evaluation() -> None:
     assert not capability_registry.supports(
         ProviderName.HTTP,
         "Runtime.evaluate",
         {"expression": "document.querySelector('h1').textContent"},
+    )
+
+
+def test_http_content_capability_requires_the_exact_executable_shape() -> None:
+    object_id = "harbor-http-utility-test"
+    valid = {
+        "objectId": object_id,
+        "functionDeclaration": UTILITY_CALL,
+        "arguments": [
+            {"objectId": object_id},
+            {"value": True},
+            {"value": True},
+            {"value": CONTENT_EXPRESSION},
+            {"value": 1},
+            {"value": {"v": "undefined"}},
+        ],
+        "returnByValue": True,
+        "awaitPromise": True,
+    }
+
+    assert capability_registry.supports(
+        ProviderName.HTTP, "Runtime.callFunctionOn", valid
+    )
+    assert not capability_registry.supports(
+        ProviderName.HTTP,
+        "Runtime.callFunctionOn",
+        {**valid, "returnByValue": False},
     )
 
 

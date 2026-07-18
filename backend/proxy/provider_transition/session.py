@@ -1,6 +1,6 @@
 import asyncio
-import hashlib
 import json
+import logging
 import time
 from collections import Counter, defaultdict
 from collections.abc import AsyncIterator
@@ -16,6 +16,7 @@ from backend.events.cdp import CdpEventObserver
 from backend.proxy.adapters import get_provider_adapter
 from backend.proxy.attempts import AttemptAdmission, AttemptLease
 from backend.proxy.capabilities import CapabilityRegistry
+from backend.proxy.capabilities.http import is_content_call, is_utility_evaluation
 from backend.proxy.contracts import (
     HarborSession,
     ProviderName,
@@ -34,21 +35,15 @@ from backend.proxy.routing import (
     ProviderPlan,
     RoutingRepository,
 )
+from backend.proxy.runtime_compatibility import (
+    RuntimeCompatibilityRepository,
+    SessionCompatibilityTracker,
+)
 from backend.settings import Settings
 
+logger = logging.getLogger(__name__)
+
 _CLOSED = object()
-_UTILITY_EXPRESSION_SHA256_PREFIX = "6947ff8ef8a7"
-_UTILITY_CALL = "(utilityScript, ...args) => utilityScript.evaluate(...args)"
-_CONTENT_EXPRESSION = """() => {
-        let retVal = "";
-        if (document.doctype)
-          retVal = new XMLSerializer().serializeToString(document.doctype);
-        if (document.documentElement)
-          retVal += document.documentElement.outerHTML;
-        return retVal;
-      }"""
-
-
 def _http_request_headers(settings: Settings) -> dict[str, str]:
     return {
         "User-Agent": settings.http_user_agent,
@@ -114,6 +109,7 @@ class ProviderTransitionSession:
         observer: CdpEventObserver | None,
         settings: Settings,
         routing: RoutingRepository | None = None,
+        runtime_compatibility: RuntimeCompatibilityRepository | None = None,
         *,
         automatic: bool = True,
         materialization: CdpReplayMaterializationStrategy | None = None,
@@ -126,12 +122,14 @@ class ProviderTransitionSession:
         self._observer = observer
         self._settings = settings
         self._routing = routing
+        self._runtime_compatibility = runtime_compatibility
         self._automatic = automatic
         self._materialization = materialization or CdpReplayMaterializationStrategy()
 
         self._messages: asyncio.Queue[str | object] = asyncio.Queue()
         self._closed = False
         self._failed = False
+        self._compatibility_valid = True
         self._failure_reason = "provider_connection_lost"
         self._attempt: AttemptLease | None = None
         self._upstream: ProviderSession | None = None
@@ -161,9 +159,11 @@ class ProviderTransitionSession:
         self._html = ""
         self._domain: str | None = None
         self._attempted_providers: set[ProviderName] = set()
+        self._compatibility = SessionCompatibilityTracker()
 
     async def send(self, message: str) -> None:
         command = json.loads(message)
+        self._track_command(command)
         if self._upstream is not None:
             provider = self._upstream.provider
             if not self._capabilities.supports(
@@ -172,6 +172,7 @@ class ProviderTransitionSession:
                 command.get("params"),
             ):
                 if self._routing is not None and self._domain is not None:
+                    await self._suppress(provider, command["method"])
                     try:
                         plan = await self._routing.plan(
                             self._domain,
@@ -182,6 +183,7 @@ class ProviderTransitionSession:
                         )
                         await self._transition(command, command["method"], plan=plan)
                     except (NoSupportedProvider, ProviderTransitionError) as error:
+                        self._compatibility_valid = False
                         await self._put(
                             self._response(
                                 command,
@@ -196,6 +198,7 @@ class ProviderTransitionSession:
             try:
                 await self._transition(command, "replay_budget")
             except (NoSupportedProvider, ProviderTransitionError) as error:
+                self._compatibility_valid = False
                 await self._put(
                     self._response(
                         command,
@@ -226,6 +229,11 @@ class ProviderTransitionSession:
                     )
                 )
                 return
+            if (
+                transition.trigger == command["method"]
+                and self._domain is not None
+            ):
+                await self._suppress(ProviderName.HTTP, command["method"])
             try:
                 await self._transition(
                     command,
@@ -234,6 +242,7 @@ class ProviderTransitionSession:
                     plan=transition.plan,
                 )
             except (NoSupportedProvider, ProviderTransitionError) as error:
+                self._compatibility_valid = False
                 await self._put(
                     self._response(
                         command,
@@ -243,6 +252,7 @@ class ProviderTransitionSession:
             return
         except Exception as error:
             self._current_entry = None
+            self._compatibility_valid = False
             await self._put(
                 self._response(
                     command,
@@ -286,7 +296,53 @@ class ProviderTransitionSession:
                     reason=self._failure_reason if self._failed else "client_disconnected",
                 )
             self._attempt = None
+        if (
+            self._automatic
+            and not self._failed
+            and self._compatibility_valid
+            and self._runtime_compatibility is not None
+        ):
+            with suppress(Exception):
+                await self._runtime_compatibility.record_session(
+                    self._session.session_id,
+                    self._compatibility.domains,
+                )
         await self._messages.put(_CLOSED)
+
+    def _track_command(self, command: dict[str, Any]) -> None:
+        method = command.get("method")
+        if not isinstance(method, str):
+            return
+        params = command.get("params")
+        typed_params = params if isinstance(params, dict) else None
+        if method == "Page.navigate" and isinstance(typed_params, dict):
+            url = typed_params.get("url")
+            parsed = urlsplit(url) if isinstance(url, str) else None
+            if parsed is not None and parsed.hostname is not None:
+                hostname = (
+                    parsed.hostname.rstrip(".")
+                    .encode("idna")
+                    .decode("ascii")
+                    .lower()
+                )
+                self._domain = hostname
+                self._compatibility.navigate(hostname, method, typed_params)
+                return
+        self._compatibility.command(method, typed_params)
+
+    async def _suppress(self, provider: ProviderName, method: str) -> None:
+        if (
+            not self._automatic
+            or self._runtime_compatibility is None
+            or self._domain is None
+        ):
+            return
+        await self._runtime_compatibility.suppress(
+            session_id=self._session.session_id,
+            hostname=self._domain,
+            provider=provider,
+            method=method,
+        )
 
     async def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
         method = command["method"]
@@ -374,7 +430,7 @@ class ProviderTransitionSession:
             return {}
         if method == "Page.navigate":
             return await self._navigate(params, session_id)
-        if method == "Runtime.evaluate" and self._is_utility_evaluation(params):
+        if method == "Runtime.evaluate" and is_utility_evaluation(params):
             object_id = f"harbor-http-utility-{uuid4().hex}"
             self._utility_objects.add(object_id)
             return {
@@ -385,7 +441,9 @@ class ProviderTransitionSession:
                     "objectId": object_id,
                 }
             }
-        if method == "Runtime.callFunctionOn" and self._is_content_call(params):
+        if method == "Runtime.callFunctionOn" and is_content_call(
+            params, utility_objects=self._utility_objects
+        ):
             return {"result": {"type": "string", "value": self._html}}
         if method == "Runtime.releaseObject":
             object_id = params.get("objectId")
@@ -568,9 +626,9 @@ class ProviderTransitionSession:
                 selected_provider = target or settings.default_provider
                 plan = ProviderPlan(
                     (ProviderCandidate(selected_provider, 0, 0),),
-                    "configured_default",
+                    "configured_default_bootstrap",
                     settings.configuration_version,
-                    settings.support_policy_version,
+                    settings.health_policy_version,
                 )
             else:
                 raise ProviderTransitionError(
@@ -599,7 +657,15 @@ class ProviderTransitionSession:
             self._attempted_providers.add(target)
             try:
                 target_settings = self._settings_for(target, SettingSource.AUTO)
-                target_attempt = await self._attempts.acquire(self._session, target_settings)
+                target_attempt = await self._attempts.acquire(
+                    self._session,
+                    target_settings,
+                    replacement_for=(
+                        source_attempt.attempt.attempt_id
+                        if source_attempt is not None
+                        else None
+                    ),
+                )
                 adapter = get_provider_adapter(
                     target,
                     endpoint=target_attempt.attempt.endpoint,
@@ -647,6 +713,11 @@ class ProviderTransitionSession:
                 return
             except Exception as error:
                 last_error = error
+                logger.warning(
+                    "Provider transition candidate %s failed",
+                    target.value,
+                    exc_info=True,
+                )
                 if upstream is not None:
                     with suppress(Exception):
                         await upstream.close()
@@ -744,6 +815,7 @@ class ProviderTransitionSession:
             command["method"],
             command.get("params"),
         ):
+            self._compatibility_valid = False
             await self._observer.command_unsupported(command["id"])
             await self._put(
                 self._response(
@@ -779,6 +851,8 @@ class ProviderTransitionSession:
         try:
             async for raw in self._upstream_messages:
                 value = json.loads(raw)
+                if value.get("method") == "Runtime.executionContextsCleared":
+                    self._clear_execution_context_mappings()
                 rewritten = self._rewrite(value, self._reverse_ids)
                 command_id = rewritten.get("id")
                 if isinstance(command_id, int):
@@ -786,6 +860,13 @@ class ProviderTransitionSession:
                     if entry is not None:
                         entry.response = rewritten
                         self._forward_event_entry = entry
+                        if "error" in rewritten:
+                            self._compatibility_valid = False
+                            if self._is_unsupported_response(rewritten):
+                                await self._suppress(
+                                    self._upstream.provider,
+                                    entry.command["method"],
+                                )
                 elif (
                     isinstance(rewritten.get("method"), str)
                     and self._forward_event_entry is not None
@@ -795,6 +876,28 @@ class ProviderTransitionSession:
         finally:
             if not self._closed:
                 await self._messages.put(_CLOSED)
+
+    def _clear_execution_context_mappings(self) -> None:
+        """Forget context-scoped IDs before forwarding replacement contexts."""
+        for kind in ("execution", "object"):
+            self._forward_ids.pop(kind, None)
+            self._reverse_ids.pop(kind, None)
+
+    @staticmethod
+    def _is_unsupported_response(response: dict[str, Any]) -> bool:
+        error = response.get("error")
+        if not isinstance(error, dict):
+            return False
+        if error.get("code") == -32601:
+            return True
+        message = error.get("message")
+        if not isinstance(message, str):
+            return False
+        normalized = message.lower()
+        return any(
+            marker in normalized
+            for marker in ("not supported", "method not found", "unknown method")
+        )
 
     def _pair_identifiers(self, synthetic: Any, actual: Any, parent: str | None = None) -> None:
         if isinstance(synthetic, dict) and isinstance(actual, dict):
@@ -1009,34 +1112,6 @@ class ProviderTransitionSession:
         )
 
 
-    def _is_utility_evaluation(self, params: dict[str, Any]) -> bool:
-        expression = params.get("expression")
-        if not isinstance(expression, str):
-            return False
-        return (
-            hashlib.sha256(expression.encode())
-            .hexdigest()
-            .startswith(_UTILITY_EXPRESSION_SHA256_PREFIX)
-        )
-
-    def _is_content_call(self, params: dict[str, Any]) -> bool:
-        object_id = params.get("objectId")
-        arguments = params.get("arguments")
-        if object_id not in self._utility_objects or not isinstance(arguments, list):
-            return False
-        if params.get("functionDeclaration") != _UTILITY_CALL or len(arguments) != 6:
-            return False
-        return (
-            arguments[0] == {"objectId": object_id}
-            and arguments[1] == {"value": True}
-            and arguments[2] == {"value": True}
-            and arguments[3] == {"value": _CONTENT_EXPRESSION}
-            and arguments[4] == {"value": 1}
-            and arguments[5] == {"value": {"v": "undefined"}}
-            and params.get("returnByValue") is True
-            and params.get("awaitPromise") is True
-        )
-
     def _target_info(self) -> dict[str, Any]:
         return {
             "targetId": self._target_id,
@@ -1110,6 +1185,7 @@ class HttpCdpSession(ProviderTransitionSession):
             None,
             None,
             settings,
+            None,
             None,
             automatic=False,
         )

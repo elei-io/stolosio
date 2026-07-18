@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -8,8 +8,9 @@ from backend.db.models import (
     AcquisitionAttempt,
     Domain,
     DomainCommandStat,
-    DomainProviderSupport,
+    DomainProviderCostStat,
     GatewaySession,
+    HealthProbe,
     SessionDomain,
     SessionDomainCommand,
     SessionEventRecord,
@@ -34,7 +35,7 @@ class EventRecorder:
                         session_id=str(event.session_id),
                         attempt_id=str(event.attempt_id) if event.attempt_id else None,
                         event_type=event.event_type,
-                        provider=event.provider.value if event.provider else "unknown",
+                        provider=event.provider.value if event.provider else None,
                         reason=event.payload.get("reason"),
                         occurred_at=event.occurred_at,
                         payload=event.payload,
@@ -59,6 +60,18 @@ class EventRecorder:
             return set(rows)
 
     async def _project(self, database: AsyncSession, event: SessionEvent) -> None:
+        probe_session = await database.scalar(
+            select(GatewaySession.id)
+            .join(
+                HealthProbe,
+                HealthProbe.id == GatewaySession.client_reference,
+            )
+            .where(GatewaySession.id == str(event.session_id))
+            .limit(1)
+        )
+        if probe_session is not None:
+            return
+
         event_type = EventType(event.event_type)
         url = event.payload.get("url")
         if isinstance(url, str):
@@ -120,16 +133,27 @@ class EventRecorder:
         ):
             return
         await database.execute(
-            update(DomainProviderSupport)
-            .where(
-                DomainProviderSupport.domain_id == attempt.domain_id,
-                DomainProviderSupport.provider == attempt.provider,
-            )
+            insert(DomainProviderCostStat)
             .values(
-                observed_session_count=DomainProviderSupport.observed_session_count + 1,
-                total_cost_units=(
-                    DomainProviderSupport.total_cost_units + attempt.actual_cost_units
-                ),
+                domain_id=attempt.domain_id,
+                provider=attempt.provider,
+                observed_attempt_count=1,
+                total_cost_units=attempt.actual_cost_units,
+            )
+            .on_conflict_do_update(
+                index_elements=[
+                    DomainProviderCostStat.domain_id,
+                    DomainProviderCostStat.provider,
+                ],
+                set_={
+                    "observed_attempt_count": (
+                        DomainProviderCostStat.observed_attempt_count + 1
+                    ),
+                    "total_cost_units": (
+                        DomainProviderCostStat.total_cost_units
+                        + attempt.actual_cost_units
+                    ),
+                },
             )
         )
         attempt.cost_projected = True

@@ -10,6 +10,7 @@ from backend.api.routes.admin_domains import router as admin_domains_router
 from backend.api.routes.admin_events import router as admin_events_router
 from backend.api.routes.admin_fleets import router as admin_fleets_router
 from backend.api.routes.admin_routing import router as admin_routing_router
+from backend.api.routes.admin_sessions import router as admin_sessions_router
 from backend.api.routes.debug import router as debug_router
 from backend.api.routes.fleet import router as fleet_router
 from backend.api.routes.health import router as health_router
@@ -29,6 +30,7 @@ from backend.proxy.attempts import AttemptAdmission
 from backend.proxy.capabilities import capability_registry
 from backend.proxy.domains import DomainQueryService
 from backend.proxy.gateway import Gateway
+from backend.proxy.health import HealthRepository
 from backend.proxy.postgres import (
     PostgresAttemptRepository,
     PostgresSessionRepository,
@@ -36,6 +38,8 @@ from backend.proxy.postgres import (
 )
 from backend.proxy.provider_transition import ProviderTransitionRepository
 from backend.proxy.routing import RoutingRepository
+from backend.proxy.runtime_compatibility import RuntimeCompatibilityRepository
+from backend.proxy.session_queries import SessionQueryService
 from backend.proxy.sessions import SessionAdmission
 from backend.settings import settings
 
@@ -92,6 +96,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.fleet_admin = FleetService(fleet_repository)
     app.state.routing = routing
     app.state.domains = DomainQueryService(session_factory)
+    app.state.session_queries = SessionQueryService(session_factory)
+    app.state.health = HealthRepository(session_factory)
     app.state.activity_history = ActivityHistoryService(session_factory)
     app.state.activity_stream = (
         ActivityStreamService(
@@ -122,6 +128,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         event_publisher if nats_client is not None else None,
         transition_repository=ProviderTransitionRepository(session_factory),
         routing=routing,
+        runtime_compatibility=RuntimeCompatibilityRepository(session_factory),
     )
     try:
         yield
@@ -137,6 +144,7 @@ app.include_router(admin_events_router)
 app.include_router(admin_fleets_router)
 app.include_router(admin_domains_router)
 app.include_router(admin_routing_router)
+app.include_router(admin_sessions_router)
 app.include_router(health_router)
 app.include_router(debug_router)
 app.include_router(fleet_router)

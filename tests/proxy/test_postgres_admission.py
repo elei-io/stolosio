@@ -123,6 +123,55 @@ async def test_provider_queue_full_releases_no_other_session_capacity(
 
 
 @pytest.mark.asyncio
+async def test_transition_replacement_can_overlap_one_active_source_attempt(
+    database_sessions: async_sessionmaker[AsyncSession],
+    session_repository: PostgresSessionRepository,
+    attempt_repository: PostgresAttemptRepository,
+    admission_settings: Settings,
+) -> None:
+    session = await admit(session_repository, admission_settings, "transition")
+    _, http = await harbor_settings_resolver.resolve(
+        [("harbor.provider.slug", "http")]
+    )
+    _, lightpanda = await harbor_settings_resolver.resolve(
+        [("harbor.provider.slug", "lightpanda")]
+    )
+    admissions = attempt_admission(attempt_repository, admission_settings)
+    source = await admissions.acquire(session.session, http)
+    await source.activate()
+
+    with pytest.raises(
+        RuntimeError,
+        match="already has a live acquisition attempt",
+    ):
+        await admissions.acquire(session.session, lightpanda)
+
+    replacement = await admissions.acquire(
+        session.session,
+        lightpanda,
+        replacement_for=source.attempt.attempt_id,
+    )
+    await replacement.activate()
+
+    async with database_sessions() as database:
+        rows = list(
+            await database.scalars(
+                select(AcquisitionAttempt)
+                .where(AcquisitionAttempt.session_id == session.session.session_id)
+                .order_by(AcquisitionAttempt.ordinal)
+            )
+        )
+    assert [(row.provider, row.state) for row in rows] == [
+        ("http", "active"),
+        ("lightpanda", "active"),
+    ]
+
+    await replacement.release()
+    await source.release()
+    await session.release()
+
+
+@pytest.mark.asyncio
 async def test_provider_attempts_are_claimed_in_fifo_order(
     session_repository: PostgresSessionRepository,
     attempt_repository: PostgresAttemptRepository,

@@ -1,19 +1,24 @@
-# Domain Support Routing
+# Domain Eligibility Routing
 
 Status: implemented.
 
-Harbor builds an independent domain/provider support matrix from absolute navigation,
-HTTP, header, method-coverage, and content-sanity checks. A leased PostgreSQL worker
-checks all enabled providers. Support evidence is versioned by policy and capability
-manifest.
+Harbor probes absolute navigation, HTTP, and header health for every provider.
+Content health combines absolute rejection with bounded relative completeness inside
+a synchronized provider cohort. An upper reference envelope from at least two healthy
+full-browser participants can reject a provider that returns materially less primary
+content across multiple dimensions.
+Runtime command compatibility comes only from exact command shapes observed in
+automatic sessions.
 
-Automatic runtime planning orders supported providers by cost and appends the
-configured default as the final compatible candidate. When no provider is known to be
-supported, the configured default is the plan. Runtime transitions exclude attempted
-providers and try the full remaining plan. No baseline provider or cross-provider
-content comparison participates in the decision.
+An incompatible live command suppresses that domain/provider pair immediately and
+causes a replay-safe transition. One later compatible session restores it without a
+probe; the escalating session and older concurrent sessions cannot restore it.
 
-Acceptance coverage includes configured-default routing, cheapest-supported ordering
-with a final default, expensive alternatives, JS app shells ruling out HTTP, dynamic
-meaningful content, version invalidation, and explicit failure after the full plan is
-exhausted.
+Automatic planning orders enabled providers that are both healthy and runtime-eligible
+by cost. The configured default bootstraps domains with no current health evidence; it
+is not appended around known evidence and is not a behavioral baseline.
+
+Acceptance coverage includes the three-session suppress/restore/reuse sequence,
+concurrent-session ordering, synchronized health cohorts, JavaScript app-shell
+rejection, relative primary-content completeness, cost ordering, and explicit plan
+exhaustion.

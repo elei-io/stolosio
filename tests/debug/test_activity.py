@@ -102,6 +102,41 @@ async def test_activity_history_filters_and_pages_events(
 
 
 @pytest.mark.asyncio
+async def test_activity_history_treats_retired_unknown_provider_as_unbound(
+    database_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    session_id = uuid4()
+    event = SessionEvent.create(EventType.SESSION_REQUESTED, session_id)
+    async with database_sessions.begin() as database:
+        database.add(
+            GatewaySession(
+                id=str(session_id),
+                owner_id="test",
+                lease_token=str(uuid4()),
+                requested_settings={},
+                state="closed",
+            )
+        )
+        database.add(
+            SessionEventRecord(
+                event_id=event.event_id,
+                schema_version=event.schema_version,
+                session_id=str(session_id),
+                event_type=event.event_type,
+                provider="unknown",
+                occurred_at=event.occurred_at,
+                payload=event.payload,
+            )
+        )
+
+    page = await ActivityHistoryService(database_sessions).events(
+        ActivityEventFilters()
+    )
+
+    assert page.events[0]["provider"] is None
+
+
+@pytest.mark.asyncio
 async def test_activity_stream_filters_events_without_losing_sequence_position() -> None:
     session_id = uuid4()
     ignored = SessionEvent.create(

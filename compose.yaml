@@ -58,7 +58,7 @@ services:
         - --quiet
         - --tries=1
         - --spider
-        - http://localhost:5173
+        - http://127.0.0.1:5173
       interval: 5s
       timeout: 3s
       retries: 20
@@ -85,15 +85,15 @@ services:
       nats:
         condition: service_started
 
-  support:
+  health:
     build: .
-    command: uv run python -m backend.workers.support
+    command: uv run python -m backend.workers.health
     env_file:
       - path: .env
         required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://harbor:harbor@postgres:5432/harbor
-      SUPPORT_HARBOR_CDP_URL: ws://api:8000/v1/connect
+      HEALTH_HARBOR_CDP_URL: ws://api:8000/v1/connect
     volumes:
       - .:/app
       - /app/.venv

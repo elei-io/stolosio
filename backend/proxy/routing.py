@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.db.models import (
     AcquisitionAttempt,
     Domain,
-    DomainProviderSupport,
+    DomainProviderCostStat,
+    DomainProviderHealth,
+    DomainProviderRuntimeState,
     ProviderRoutingProfile,
     RoutingConfiguration,
 )
@@ -25,7 +27,7 @@ _DEFAULT_COSTS = {
 
 
 class NoSupportedProvider(RuntimeError):
-    """The support matrix has no provider able to execute the required journey."""
+    """No healthy, runtime-eligible provider can execute the journey."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,12 +42,12 @@ class ProviderPlan:
     candidates: tuple[ProviderCandidate, ...]
     reason: str
     configuration_version: int
-    support_policy_version: int
+    health_policy_version: int
 
     @property
     def first(self) -> ProviderCandidate:
         if not self.candidates:
-            raise NoSupportedProvider("No supported provider remains in the plan")
+            raise NoSupportedProvider("No eligible provider remains in the plan")
         return self.candidates[0]
 
 
@@ -53,8 +55,8 @@ class ProviderPlan:
 class RoutingSettings:
     default_provider: ProviderName
     existing_domain_probe_rate_basis_points: int
-    required_support_confirmations: int
-    support_policy_version: int
+    required_health_confirmations: int
+    health_policy_version: int
     configuration_version: int
 
 
@@ -76,8 +78,8 @@ class RoutingRepository:
                     key="global",
                     default_provider=ProviderName.CAMOUFOX.value,
                     existing_domain_probe_rate_basis_points=100,
-                    required_support_confirmations=1,
-                    support_policy_version=1,
+                    required_health_confirmations=1,
+                    health_policy_version=1,
                     configuration_version=1,
                     updated_at=now,
                 )
@@ -90,10 +92,12 @@ class RoutingRepository:
                         provider=provider.value,
                         automatic_enabled=True,
                         cost_units_per_second=cost,
-                        capability_manifest_version=1,
+                        provider_contract_version=1,
                         updated_at=now,
                     )
-                    .on_conflict_do_nothing(index_elements=[ProviderRoutingProfile.provider])
+                    .on_conflict_do_nothing(
+                        index_elements=[ProviderRoutingProfile.provider]
+                    )
                 )
 
     async def settings(self) -> RoutingSettings:
@@ -104,8 +108,8 @@ class RoutingRepository:
         return RoutingSettings(
             ProviderName(row.default_provider),
             row.existing_domain_probe_rate_basis_points,
-            row.required_support_confirmations,
-            row.support_policy_version,
+            row.required_health_confirmations,
+            row.health_policy_version,
             row.configuration_version,
         )
 
@@ -114,10 +118,12 @@ class RoutingRepository:
         *,
         default_provider: ProviderName | None = None,
         existing_domain_probe_rate_basis_points: int | None = None,
-        required_support_confirmations: int | None = None,
+        required_health_confirmations: int | None = None,
     ) -> RoutingSettings:
         async with self._sessions.begin() as database:
-            row = await database.get(RoutingConfiguration, "global", with_for_update=True)
+            row = await database.get(
+                RoutingConfiguration, "global", with_for_update=True
+            )
             if row is None:
                 raise RuntimeError("Routing configuration is not initialized")
             if default_provider is not None:
@@ -133,8 +139,8 @@ class RoutingRepository:
                 row.existing_domain_probe_rate_basis_points = (
                     existing_domain_probe_rate_basis_points
                 )
-            if required_support_confirmations is not None:
-                row.required_support_confirmations = required_support_confirmations
+            if required_health_confirmations is not None:
+                row.required_health_confirmations = required_health_confirmations
             row.configuration_version += 1
             row.updated_at = datetime.now(UTC)
         return await self.settings()
@@ -193,13 +199,12 @@ class RoutingRepository:
             configuration = await database.get(RoutingConfiguration, "global")
             if configuration is None:
                 configuration_version = 1
-                support_policy_version = 1
+                health_policy_version = 1
                 default_provider = ProviderName.CAMOUFOX
             else:
                 configuration_version = configuration.configuration_version
-                support_policy_version = configuration.support_policy_version
+                health_policy_version = configuration.health_policy_version
                 default_provider = ProviderName(configuration.default_provider)
-
             profiles = list(
                 await database.scalars(
                     select(ProviderRoutingProfile).where(
@@ -213,17 +218,45 @@ class RoutingRepository:
             domain_id = await database.scalar(
                 select(Domain.id).where(Domain.hostname == hostname)
             )
-            evidence = (
+            health = (
                 list(
                     await database.scalars(
-                        select(DomainProviderSupport).where(
-                            DomainProviderSupport.domain_id == domain_id
+                        select(DomainProviderHealth).where(
+                            DomainProviderHealth.domain_id == domain_id
                         )
                     )
                 )
                 if domain_id is not None
                 else []
             )
+            runtime = {
+                ProviderName(row.provider): row
+                for row in (
+                    list(
+                        await database.scalars(
+                            select(DomainProviderRuntimeState).where(
+                                DomainProviderRuntimeState.domain_id == domain_id
+                            )
+                        )
+                    )
+                    if domain_id is not None
+                    else []
+                )
+            }
+            costs = {
+                ProviderName(row.provider): row
+                for row in (
+                    list(
+                        await database.scalars(
+                            select(DomainProviderCostStat).where(
+                                DomainProviderCostStat.domain_id == domain_id
+                            )
+                        )
+                    )
+                    if domain_id is not None
+                    else []
+                )
+            }
 
         def command_compatible(provider: ProviderName) -> bool:
             return all(
@@ -231,61 +264,77 @@ class RoutingRepository:
                 for method, params in required_commands
             )
 
-        supported: list[tuple[ProviderName, int]] = []
-        for row in evidence:
-            provider = ProviderName(row.provider)
+        eligible: list[tuple[ProviderName, int]] = []
+        for evidence in health:
+            provider = ProviderName(evidence.provider)
             profile = profile_by_provider.get(provider)
+            runtime_state = runtime.get(provider)
+            suppressed = (
+                runtime_state is not None
+                and runtime_state.provider_contract_version
+                == profile.provider_contract_version
+                and runtime_state.state == "suppressed"
+            ) if profile is not None else False
             if (
                 profile is None
                 or provider in exclude
-                or row.support_state != "supported"
-                or row.support_policy_version != support_policy_version
-                or row.capability_manifest_version
-                != profile.capability_manifest_version
+                or evidence.health_state != "healthy"
+                or evidence.health_policy_version != health_policy_version
+                or evidence.provider_contract_version
+                != profile.provider_contract_version
+                or suppressed
                 or not command_compatible(provider)
             ):
                 continue
+            cost = costs.get(provider)
             expected_cost = (
-                row.total_cost_units // row.observed_session_count
-                if row.observed_session_count
+                cost.total_cost_units // cost.observed_attempt_count
+                if cost is not None and cost.observed_attempt_count
                 else profile.cost_units_per_second
             )
-            supported.append((provider, expected_cost))
+            eligible.append((provider, expected_cost))
 
-        supported.sort(key=lambda item: (item[1], item[0].value))
-        default_profile = profile_by_provider.get(default_provider)
-        default_available = (
-            default_profile is not None
-            and default_provider not in exclude
-            and command_compatible(default_provider)
-        )
-        if default_available and all(
-            provider is not default_provider for provider, _ in supported
-        ):
-            supported.append(
-                (default_provider, default_profile.cost_units_per_second)
-            )
-        if supported:
-            reason = (
-                "cheapest_supported"
-                if any(
-                    row.support_state == "supported"
-                    and ProviderName(row.provider) == supported[0][0]
-                    for row in evidence
-                )
-                else "configured_default"
-            )
+        eligible.sort(key=lambda item: (item[1], item[0].value))
+        if eligible:
             return ProviderPlan(
                 tuple(
                     ProviderCandidate(provider, cost, position)
-                    for position, (provider, cost) in enumerate(supported)
+                    for position, (provider, cost) in enumerate(eligible)
                 ),
-                reason,
+                "cheapest_eligible",
                 configuration_version,
-                support_policy_version,
+                health_policy_version,
+            )
+
+        # The configured default is a bootstrap path only. Once Harbor has current
+        # healthy evidence, runtime suppression and health conclusions are binding.
+        has_current_health = any(
+            row.health_state == "healthy"
+            and row.health_policy_version == health_policy_version
+            for row in health
+        )
+        default_profile = profile_by_provider.get(default_provider)
+        if (
+            not has_current_health
+            and default_profile is not None
+            and default_provider not in exclude
+            and command_compatible(default_provider)
+        ):
+            return ProviderPlan(
+                (
+                    ProviderCandidate(
+                        default_provider,
+                        default_profile.cost_units_per_second,
+                        0,
+                    ),
+                ),
+                "configured_default_bootstrap",
+                configuration_version,
+                health_policy_version,
             )
         raise NoSupportedProvider(
-            f"No enabled provider for {hostname} can execute the required commands"
+            f"No healthy, runtime-eligible provider for {hostname} "
+            "can execute the required commands"
         )
 
     async def record_selection(
@@ -313,7 +362,9 @@ class RoutingRepository:
                 )
                 .returning(Domain.id)
             )
-            row = await database.get(AcquisitionAttempt, attempt_id, with_for_update=True)
+            row = await database.get(
+                AcquisitionAttempt, attempt_id, with_for_update=True
+            )
             if row is None:
                 return
             row.domain_id = domain_id

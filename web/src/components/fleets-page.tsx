@@ -16,6 +16,8 @@ import { type FormEvent, useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { extractApiError } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type {
@@ -170,12 +172,12 @@ function MetricCard({
   icon: typeof Activity
 }) {
   return (
-    <div className="rounded-lg border bg-card p-5">
+    <div className="rounded-lg border bg-card p-4">
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-muted-foreground">{label}</p>
         <Icon className="size-4 text-muted-foreground" aria-hidden />
       </div>
-      <p className="mt-4 text-3xl font-semibold tracking-tight">
+      <p className="mt-3 text-2xl font-semibold tracking-tight">
         {numberFormatter.format(value)}
       </p>
       <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
@@ -279,14 +281,14 @@ function FleetList({
         />
       </section>
 
-      <section className="mt-6 overflow-hidden rounded-lg border bg-card">
-        <div className="border-b px-5 py-4">
+      <section className="mt-5 overflow-hidden rounded-lg border bg-card">
+        <div className="border-b px-4 py-3">
           <h2 className="font-semibold">Managed providers</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Browser fleets with instance-backed session capacity.
           </p>
         </div>
-        <div className="hidden min-w-[60rem] grid-cols-[1.35fr_1fr_1fr_1fr_1fr_2.5rem] border-b bg-muted/35 px-5 py-2.5 font-mono text-[0.6875rem] font-medium tracking-wider text-muted-foreground uppercase md:grid">
+        <div className="hidden min-w-[52rem] grid-cols-[1.35fr_1fr_1fr_1fr_1fr_2rem] gap-2 border-b bg-muted/35 px-4 py-2 font-mono text-[0.625rem] font-medium tracking-wider text-muted-foreground uppercase md:grid">
           <span>Provider</span>
           <span>Instances</span>
           <span>Slots</span>
@@ -310,11 +312,11 @@ function FleetList({
                   event.preventDefault()
                   navigate(href)
                 }}
-                className="group block px-5 py-4 transition-colors hover:bg-muted/25 md:grid md:min-w-[60rem] md:grid-cols-[1.35fr_1fr_1fr_1fr_1fr_2.5rem] md:items-center"
+                className="group block px-4 py-3 transition-colors hover:bg-muted/25 md:grid md:min-w-[52rem] md:grid-cols-[1.35fr_1fr_1fr_1fr_1fr_2rem] md:items-center md:gap-2"
               >
                 <div>
-                  <div className="flex items-center gap-3">
-                    <span className="flex size-9 items-center justify-center rounded-md border bg-background">
+                  <div className="flex items-center gap-2">
+                    <span className="flex size-8 items-center justify-center rounded-md border bg-background">
                       <Server
                         className="size-4 text-muted-foreground"
                         aria-hidden
@@ -455,14 +457,14 @@ function NumberField({
   return (
     <label className="block">
       <span className="text-sm font-medium">{label}</span>
-      <input
+      <Input
         type="number"
         name={name}
         min={min}
         max={max}
         value={value}
         onChange={(event) => onChange(name, event.target.valueAsNumber)}
-        className="mt-2 h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="mt-2 h-10 bg-background"
       />
       <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
         {help}
@@ -546,16 +548,14 @@ function ConfigurationForm({
               Allow this provider fleet to contribute managed capacity.
             </span>
           </span>
-          <input
-            type="checkbox"
+          <Switch
             checked={values.enabled ?? false}
-            onChange={(event) =>
+            onCheckedChange={(checked) =>
               setValues((current) => ({
                 ...current,
-                enabled: event.target.checked,
+                enabled: checked,
               }))
             }
-            className="size-4 accent-primary"
           />
         </label>
 
@@ -631,16 +631,18 @@ function FleetDetail({
 
   return (
     <>
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         type="button"
         onClick={() => navigate("/fleets")}
-        className="mb-5 flex items-center gap-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+        className="mb-5 -ml-3 gap-2 text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="size-4" aria-hidden />
         All fleets
-      </button>
+      </Button>
 
-      <header className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="mb-3 flex items-center gap-3">
             <StatusBadge row={row} />
@@ -665,7 +667,7 @@ function FleetDetail({
         </div>
       </header>
 
-      <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="Active attempts"
           value={snapshot?.active_attempts ?? 0}
@@ -692,22 +694,22 @@ function FleetDetail({
         />
       </section>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]">
+      <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(20rem,0.85fr)]">
         <div className="space-y-6">
           <section className="rounded-lg border bg-card">
-            <div className="border-b px-5 py-4">
+            <div className="border-b px-4 py-3">
               <h2 className="font-semibold">Capacity</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 Current usable capacity comes only from ready, healthy
                 instances.
               </p>
             </div>
-            <div className="p-5">
+            <div className="p-4">
               <CapacityBar
                 available={snapshot?.available_slots ?? 0}
                 total={snapshot?.total_slots ?? 0}
               />
-              <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-5 sm:grid-cols-4">
+              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-4 sm:grid-cols-4">
                 {[
                   ["Observed", snapshot?.observed_instances ?? 0],
                   ["Ready", snapshot?.ready_instances ?? 0],
@@ -723,7 +725,7 @@ function FleetDetail({
             </div>
           </section>
 
-          <section className="rounded-lg border border-dashed bg-muted/15 p-6">
+          <section className="rounded-lg border border-dashed bg-muted/15 p-4">
             <div className="flex items-start gap-4">
               <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-background">
                 <Server className="size-4 text-muted-foreground" aria-hidden />
@@ -781,9 +783,9 @@ export function FleetsPage({ provider, navigate }: FleetPageProps) {
   }
 
   return (
-    <main className="mx-auto min-h-[calc(100svh-4rem)] w-full max-w-[100rem] px-4 py-6 sm:px-6 md:min-h-svh lg:px-10 lg:py-8">
+    <main className="mx-auto min-h-[calc(100svh-4rem)] w-full max-w-[100rem] px-4 py-6 sm:px-6 md:min-h-svh lg:px-8 lg:py-8">
       {!provider && (
-        <header className="mb-6 flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-end sm:justify-between">
+        <header className="mb-5 flex flex-col gap-4 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
               <span className="size-2 rounded-full bg-emerald-500" />

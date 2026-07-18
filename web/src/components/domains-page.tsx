@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ArrowLeft,
   ArrowRight,
@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
+import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -36,13 +37,12 @@ import type {
   DomainHealthCheck,
   DomainDetail,
   DomainListItem,
-  DomainMethodCheck,
   DomainPage,
   DomainPlan,
-  DomainProbe,
   DomainProbePage,
   DomainProviderEvidence,
   DomainSessionPage,
+  TriggerDomainProbesResponse,
 } from "@/types/api"
 
 const providerLabels: Record<ActivityProvider, string> = {
@@ -53,11 +53,13 @@ const providerLabels: Record<ActivityProvider, string> = {
   camoufox: "Camoufox",
 }
 
-const supportFilterLabels: Record<string, string> = {
-  all: "All support states",
-  supported: "Supported",
+const eligibilityFilterLabels: Record<string, string> = {
+  all: "All routing states",
+  eligible: "Eligible",
+  suppressed: "Suppressed",
   checking: "Checking",
-  unsupported: "Unsupported",
+  unhealthy: "Unhealthy",
+  inconclusive: "Inconclusive",
   unknown: "Unknown",
 }
 
@@ -68,6 +70,25 @@ async function apiRequest<T>(url: string): Promise<T> {
     throw new Error(extractApiError(body))
   }
   return (await response.json()) as T
+}
+
+async function triggerDomainProbes({
+  domainId,
+  providers,
+}: {
+  domainId: number
+  providers?: ActivityProvider[]
+}): Promise<TriggerDomainProbesResponse> {
+  const response = await fetch(`/v1/admin/domains/${domainId}/probes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(providers ? { providers } : {}),
+  })
+  const body: unknown = await response.json().catch(() => undefined)
+  if (!response.ok) {
+    throw new Error(extractApiError(body))
+  }
+  return body as TriggerDomainProbesResponse
 }
 
 function formatNumber(value: number) {
@@ -93,7 +114,7 @@ function relativeTime(value: string) {
 }
 
 function planLabel(plan: DomainPlan) {
-  if (plan.reason === "no_supported_provider") return "No supported provider"
+  if (plan.reason === "no_eligible_provider") return "No eligible provider"
   if (!plan.candidates.length) return "No plan"
   return plan.candidates
     .map((candidate) => providerLabels[candidate.provider])
@@ -101,13 +122,13 @@ function planLabel(plan: DomainPlan) {
 }
 
 function PlanDescription({ plan }: { plan: DomainPlan }) {
-  if (plan.reason === "configured_default") {
-    return <span>Configured default</span>
+  if (plan.reason === "configured_default_bootstrap") {
+    return <span>Configured bootstrap provider</span>
   }
-  if (plan.reason === "no_supported_provider") {
-    return <span className="text-destructive">No supported path</span>
+  if (plan.reason === "no_eligible_provider") {
+    return <span className="text-destructive">No eligible path</span>
   }
-  return <span>Cheapest supported first</span>
+  return <span>Cheapest eligible first</span>
 }
 
 function LoadingState({ label }: { label: string }) {
@@ -127,7 +148,7 @@ function LoadingState({ label }: { label: string }) {
 function ErrorState({
   error,
   retry,
-  label = "Domain support evidence is unavailable",
+  label = "Domain routing evidence is unavailable",
 }: {
   error: unknown
   retry: () => void
@@ -162,7 +183,7 @@ function SummaryCard({
   icon: typeof Globe2
 }) {
   return (
-    <Card className="gap-0 rounded-lg p-5">
+    <Card className="gap-0 rounded-lg p-4">
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-medium text-muted-foreground">{label}</p>
@@ -179,24 +200,27 @@ function SummaryCard({
   )
 }
 
-function SupportSummary({ domain }: { domain: DomainListItem }) {
+function HealthSummary({ domain }: { domain: DomainListItem }) {
   const parts = []
-  if (domain.support_counts.supported) {
-    parts.push(`${domain.support_counts.supported} supported`)
+  if (domain.health_counts.healthy) {
+    parts.push(`${domain.health_counts.healthy} healthy`)
   }
-  if (domain.support_counts.checking) {
-    parts.push(`${domain.support_counts.checking} checking`)
+  if (domain.suppressed_provider_count) {
+    parts.push(`${domain.suppressed_provider_count} suppressed`)
   }
-  if (domain.support_counts.unsupported) {
-    parts.push(`${domain.support_counts.unsupported} unsupported`)
+  if (domain.health_counts.checking) {
+    parts.push(`${domain.health_counts.checking} checking`)
   }
-  return <span>{parts.length ? parts.join(" · ") : "No support evidence"}</span>
+  if (domain.health_counts.unhealthy) {
+    parts.push(`${domain.health_counts.unhealthy} unhealthy`)
+  }
+  return <span>{parts.length ? parts.join(" · ") : "No health evidence"}</span>
 }
 
 function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
   const [search, setSearch] = useState("")
   const [debouncedSearch, setDebouncedSearch] = useState("")
-  const [support, setSupport] = useState("all")
+  const [eligibility, setEligibility] = useState("all")
   const [transitionsOnly, setTransitionsOnly] = useState(false)
   const [activeProbesOnly, setActiveProbesOnly] = useState(false)
   const [cursor, setCursor] = useState<string | null>(null)
@@ -219,12 +243,12 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
   const query = useMemo(() => {
     const params = new URLSearchParams({ limit: "100" })
     if (debouncedSearch) params.set("search", debouncedSearch)
-    if (support !== "all") params.set("support_state", support)
+    if (eligibility !== "all") params.set("eligibility_state", eligibility)
     if (transitionsOnly) params.set("has_transitions", "true")
     if (activeProbesOnly) params.set("has_active_probes", "true")
     if (cursor) params.set("before", cursor)
     return params.toString()
-  }, [activeProbesOnly, cursor, debouncedSearch, transitionsOnly, support])
+  }, [activeProbesOnly, cursor, debouncedSearch, transitionsOnly, eligibility])
   const domains = useQuery({
     queryKey: ["domains", query],
     queryFn: () => apiRequest<DomainPage>(`/v1/admin/domains?${query}`),
@@ -234,9 +258,11 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
     setCursorHistory([])
   }
 
-  if (domains.isLoading) return <LoadingState label="Loading domain support" />
+  if (domains.isLoading) return <LoadingState label="Loading domain health" />
   if (domains.isError) {
-    return <ErrorState error={domains.error} retry={() => void domains.refetch()} />
+    return (
+      <ErrorState error={domains.error} retry={() => void domains.refetch()} />
+    )
   }
   const page = domains.data
   if (!page) return null
@@ -251,15 +277,15 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
           icon={Globe2}
         />
         <SummaryCard
-          label="Supported"
-          value={page.summary.supported_domains}
-          detail="At least one supported provider"
+          label="Healthy"
+          value={page.summary.healthy_domains}
+          detail="At least one healthy provider"
           icon={ShieldCheck}
         />
         <SummaryCard
-          label="Checking"
-          value={page.summary.checking_domains}
-          detail="Support checks in progress"
+          label="Suppressed"
+          value={page.summary.suppressed_domains}
+          detail="Runtime incompatibility observed"
           icon={FlaskConical}
         />
         <SummaryCard
@@ -277,11 +303,11 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
       </section>
 
       <section className="mt-6 overflow-hidden rounded-lg border bg-card">
-        <div className="flex flex-col gap-4 border-b px-5 py-4 xl:flex-row xl:items-end xl:justify-between">
+        <div className="flex flex-col gap-3 border-b px-4 py-3 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <h2 className="font-semibold">Observed domains</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Expected provider plans derived from absolute support evidence.
+              Health, runtime compatibility, and the resulting cheapest route.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
@@ -296,20 +322,24 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
               />
             </span>
             <Select
-              value={support}
+              value={eligibility}
               onValueChange={(value) => {
-                setSupport(value ?? "all")
+                setEligibility(value ?? "all")
                 resetPagination()
               }}
             >
               <SelectTrigger className="h-9 w-full sm:w-44">
-                <SelectValue>{supportFilterLabels[support]}</SelectValue>
+                <SelectValue>
+                  {eligibilityFilterLabels[eligibility]}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All support states</SelectItem>
-                <SelectItem value="supported">Supported</SelectItem>
+                <SelectItem value="all">All routing states</SelectItem>
+                <SelectItem value="eligible">Eligible</SelectItem>
+                <SelectItem value="suppressed">Suppressed</SelectItem>
                 <SelectItem value="checking">Checking</SelectItem>
-                <SelectItem value="unsupported">Unsupported</SelectItem>
+                <SelectItem value="unhealthy">Unhealthy</SelectItem>
+                <SelectItem value="inconclusive">Inconclusive</SelectItem>
                 <SelectItem value="unknown">Unknown</SelectItem>
               </SelectContent>
             </Select>
@@ -340,10 +370,10 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
 
         {page.domains.length ? (
           <>
-            <div className="hidden min-w-[62rem] grid-cols-[1.4fr_1.45fr_1.25fr_.65fr_.65fr_2.5rem] border-b bg-muted/35 px-5 py-2.5 font-mono text-[0.6875rem] font-medium tracking-wider text-muted-foreground uppercase md:grid">
+            <div className="hidden min-w-[54rem] grid-cols-[1.4fr_1.45fr_1.25fr_.65fr_.65fr_2rem] gap-2 border-b bg-muted/35 px-4 py-2 font-mono text-[0.625rem] font-medium tracking-wider text-muted-foreground uppercase md:grid">
               <span>Domain</span>
               <span>Expected plan</span>
-              <span>Support evidence</span>
+              <span>Provider evidence</span>
               <span>Sessions</span>
               <span>Provider transitions</span>
               <span />
@@ -359,7 +389,7 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
                       event.preventDefault()
                       navigate(href)
                     }}
-                    className="group block px-5 py-4 transition-colors hover:bg-muted/25 md:grid md:min-w-[62rem] md:grid-cols-[1.4fr_1.45fr_1.25fr_.65fr_.65fr_2.5rem] md:items-center"
+                    className="group block px-4 py-3 transition-colors hover:bg-muted/25 md:grid md:min-w-[54rem] md:grid-cols-[1.4fr_1.45fr_1.25fr_.65fr_.65fr_2rem] md:items-center md:gap-2"
                   >
                     <div className="min-w-0">
                       <p className="truncate font-medium">{domain.hostname}</p>
@@ -379,7 +409,7 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
                       </p>
                     </div>
                     <div className="mt-4 text-sm text-muted-foreground md:mt-0">
-                      <SupportSummary domain={domain} />
+                      <HealthSummary domain={domain} />
                       {domain.active_probe_count > 0 && (
                         <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                           {domain.active_probe_count} active
@@ -398,9 +428,10 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
               })}
             </div>
             {(cursorHistory.length > 0 || page.next_cursor) && (
-              <div className="flex items-center justify-between border-t bg-muted/10 px-5 py-3">
+              <div className="flex items-center justify-between border-t bg-muted/10 px-4 py-2.5">
                 <p className="text-xs text-muted-foreground">
-                  Page {cursorHistory.length + 1} · {page.domains.length} domains
+                  Page {cursorHistory.length + 1} · {page.domains.length}{" "}
+                  domains
                 </p>
                 <div className="flex gap-2">
                   <Button
@@ -442,7 +473,7 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
 function CheckCell({ check }: { check: DomainHealthCheck }) {
   const metadata = {
     healthy: {
-      label: "Healthy",
+      label: "OK",
       icon: Check,
       className: "text-emerald-700 dark:text-emerald-400",
     },
@@ -466,122 +497,152 @@ function CheckCell({ check }: { check: DomainHealthCheck }) {
       icon: Minus,
       className: "text-muted-foreground",
     },
-    declared: {
-      label: "Declared",
-      icon: Check,
-      className: "text-emerald-700 dark:text-emerald-400",
-    },
-    missing: {
-      label: "Missing",
-      icon: X,
-      className: "text-destructive",
-    },
   }[check.state]
   const Icon = metadata.icon
   return (
     <div>
-      <p className={cn("flex items-center gap-1.5 text-sm font-medium", metadata.className)}>
-        <Icon className={cn("size-3.5", check.state === "checking" && "animate-spin")} />
+      <p
+        className={cn(
+          "flex items-center gap-1 text-xs font-medium",
+          metadata.className
+        )}
+      >
+        <Icon
+          className={cn("size-3", check.state === "checking" && "animate-spin")}
+        />
         {metadata.label}
       </p>
       <p
-        className="mt-1 text-xs text-muted-foreground"
+        className="mt-0.5 text-[0.6875rem] whitespace-nowrap text-muted-foreground"
         title={check.checked_at ? formatDate(check.checked_at) : undefined}
       >
         {check.checked_at
-          ? `Checked ${relativeTime(check.checked_at)}`
+          ? relativeTime(check.checked_at)
           : check.state === "checking"
-            ? "Check in progress"
-            : "Not checked yet"}
+            ? "In progress"
+            : "Never"}
       </p>
     </div>
   )
 }
 
-function MethodCheckCell({ check }: { check: DomainMethodCheck }) {
-  if (check.state === "not_checked" || check.state === "checking") {
-    return <CheckCell check={check} />
-  }
-  return (
-    <div title={check.unsupported_methods.join(", ")}>
-      <p
-        className={cn(
-          "flex items-center gap-1.5 text-sm font-medium",
-          check.state === "declared"
-            ? "text-emerald-700 dark:text-emerald-400"
-            : "text-destructive"
-        )}
-      >
-        {check.state === "declared" ? (
-          <Check className="size-3.5" />
-        ) : (
-          <X className="size-3.5" />
-        )}
-        {check.declared_count}/{check.observed_count} declared
-      </p>
-      <p className="mt-1 text-xs text-muted-foreground">
-        Manifest v{check.manifest_version}
-      </p>
-    </div>
-  )
-}
-
-function SupportBadge({ evidence }: { evidence: DomainProviderEvidence }) {
-  const labels = {
-    supported: "Supported",
-    unsupported: "Unsupported",
-    checking: "Checking",
-    unknown: "Unknown",
-  }
+function RoutingBadge({ evidence }: { evidence: DomainProviderEvidence }) {
+  const label = evidence.routing_eligible
+    ? "Eligible"
+    : evidence.runtime_state === "suppressed"
+      ? "Suppressed"
+      : evidence.health_state === "healthy"
+        ? "Disabled"
+        : evidence.health_state.replaceAll("_", " ")
   return (
     <Badge
       variant="outline"
       className={cn(
-        "w-fit font-normal",
-        evidence.support_state === "supported" &&
+        "w-fit font-normal capitalize",
+        evidence.routing_eligible &&
           "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-        evidence.support_state === "unsupported" &&
+        evidence.runtime_state === "suppressed" &&
           "border-destructive/30 bg-destructive/10 text-destructive",
-        evidence.support_state === "checking" &&
+        evidence.health_state === "checking" &&
           "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400",
-        evidence.support_state === "unknown" && "text-muted-foreground"
+        !evidence.routing_eligible &&
+          evidence.runtime_state !== "suppressed" &&
+          "text-muted-foreground"
       )}
     >
-      {labels[evidence.support_state]}
+      {label}
     </Badge>
   )
 }
 
-function ProviderRow({ evidence }: { evidence: DomainProviderEvidence }) {
-  return (
-    <div className="grid min-w-[88rem] grid-cols-[1.2fr_repeat(5,1fr)_1fr] items-center gap-4 px-5 py-4">
+function RuntimeCell({ evidence }: { evidence: DomainProviderEvidence }) {
+  if (evidence.runtime_state === "eligible") {
+    return (
       <div>
-        <div className="flex items-center gap-2">
-          <p className="font-medium">{providerLabels[evidence.provider]}</p>
+        <p className="flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+          <Check className="size-3" /> Compatible
+        </p>
+        <p className="mt-0.5 text-[0.6875rem] text-muted-foreground">Active</p>
+      </div>
+    )
+  }
+  return (
+    <div>
+      <p className="flex items-center gap-1 text-xs font-medium text-destructive">
+        <X className="size-3" /> Suppressed
+      </p>
+      <p
+        className="mt-0.5 max-w-28 truncate text-[0.6875rem] text-muted-foreground"
+        title={evidence.runtime.incompatible_method ?? undefined}
+      >
+        {evidence.runtime.incompatible_method ?? "Incompatible command"}
+      </p>
+      {evidence.runtime.suppressed_at && (
+        <p className="mt-0.5 text-[0.6875rem] text-muted-foreground">
+          Seen {relativeTime(evidence.runtime.suppressed_at)}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function ProviderRow({
+  evidence,
+  pending,
+  onCheck,
+}: {
+  evidence: DomainProviderEvidence
+  pending: boolean
+  onCheck: () => void
+}) {
+  return (
+    <div className="grid min-w-[58rem] grid-cols-[minmax(7rem,1.15fr)_repeat(4,minmax(5rem,.8fr))_minmax(7rem,1fr)_minmax(6rem,.8fr)_auto] items-center gap-2 px-4 py-3">
+      <div>
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm font-medium">
+            {providerLabels[evidence.provider]}
+          </p>
           {!evidence.automatic_enabled && (
-            <Badge variant="outline" className="font-normal text-muted-foreground">
+            <Badge
+              variant="outline"
+              className="px-1.5 py-0 text-[0.625rem] font-normal text-muted-foreground"
+            >
               Disabled
             </Badge>
           )}
         </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {formatNumber(evidence.average_cost_units)} cost units ·{" "}
+        <p className="mt-0.5 text-[0.6875rem] text-muted-foreground">
+          {formatNumber(evidence.average_cost_units)} units ·{" "}
           {evidence.cost_is_estimate ? "estimate" : "observed"}
         </p>
       </div>
       <CheckCell check={evidence.checks.navigation} />
       <CheckCell check={evidence.checks.status} />
       <CheckCell check={evidence.checks.headers} />
-      <MethodCheckCell check={evidence.checks.method_coverage} />
       <CheckCell check={evidence.checks.content} />
+      <RuntimeCell evidence={evidence} />
       <div>
-        <SupportBadge evidence={evidence} />
+        <RoutingBadge evidence={evidence} />
         {evidence.failure_reason_code && (
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-0.5 truncate text-[0.6875rem] text-muted-foreground">
             {evidence.failure_reason_code.replaceAll("_", " ")}
           </p>
         )}
       </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-8 w-fit gap-1.5 px-2.5"
+        disabled={pending}
+        onClick={onCheck}
+      >
+        {pending ? (
+          <LoaderCircle className="size-3 animate-spin" aria-hidden />
+        ) : (
+          <FlaskConical className="size-3" aria-hidden />
+        )}
+        {pending ? "Checking" : evidence.last_checked_at ? "Recheck" : "Check"}
+      </Button>
     </div>
   )
 }
@@ -595,53 +656,6 @@ function Fact({ label, value }: { label: string; value: string | number }) {
   )
 }
 
-function ProbeCard({ probe }: { probe: DomainProbe }) {
-  const checks = [
-    ["Navigation", probe.navigation_state],
-    ["HTTP status", probe.status_state],
-    ["Headers", probe.headers_state],
-    ["Declared methods", probe.method_coverage_state],
-    ["Content sanity", probe.content_state],
-  ]
-  return (
-    <div className="p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <p className="font-medium">{providerLabels[probe.candidate_provider]}</p>
-            <Badge variant="outline" className="font-normal capitalize">
-              {probe.outcome ?? probe.state}
-            </Badge>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Independent support check · {formatDate(probe.created_at)}
-          </p>
-        </div>
-        {probe.cost_units !== null && (
-          <p className="text-xs text-muted-foreground">
-            {formatNumber(probe.cost_units)} cost units
-          </p>
-        )}
-      </div>
-      <div className="mt-4 grid gap-3 rounded-md border bg-muted/15 p-4 sm:grid-cols-2 lg:grid-cols-5">
-        {checks.map(([label, state]) => (
-          <div key={label}>
-            <p className="text-xs text-muted-foreground">{label}</p>
-            <p className="mt-1 text-sm font-medium capitalize">
-              {state?.replaceAll("_", " ") ?? "Pending"}
-            </p>
-          </div>
-        ))}
-      </div>
-      {probe.reason_codes.length > 0 && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          {probe.reason_codes.map((reason) => reason.replaceAll("_", " ")).join(" · ")}
-        </p>
-      )}
-    </div>
-  )
-}
-
 function DomainDetailPage({
   domainId,
   navigate,
@@ -649,23 +663,47 @@ function DomainDetailPage({
   domainId: number
   navigate: (href: string) => void
 }) {
+  const queryClient = useQueryClient()
   const detail = useQuery({
     queryKey: ["domain", domainId],
     queryFn: () => apiRequest<DomainDetail>(`/v1/admin/domains/${domainId}`),
+    refetchInterval: (query) =>
+      query.state.data?.active_probe_count ? 1_000 : false,
   })
   const probes = useQuery({
     queryKey: ["domain-probes", domainId],
     queryFn: () =>
-      apiRequest<DomainProbePage>(`/v1/admin/domains/${domainId}/probes`),
+      apiRequest<DomainProbePage>(
+        `/v1/admin/domains/${domainId}/probes?limit=8`
+      ),
+    refetchInterval: detail.data?.active_probe_count ? 1_000 : false,
   })
   const sessions = useQuery({
     queryKey: ["domain-sessions", domainId],
     queryFn: () =>
       apiRequest<DomainSessionPage>(
-        `/v1/admin/domains/${domainId}/sessions?limit=25`
+        `/v1/admin/domains/${domainId}/sessions?limit=8`
       ),
   })
-  if (detail.isLoading) return <LoadingState label="Loading domain support" />
+  const trigger = useMutation({
+    mutationFn: triggerDomainProbes,
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ["domain", domainId] })
+      void queryClient.invalidateQueries({
+        queryKey: ["domain-probes", domainId],
+      })
+      const count = result.scheduled.length
+      if (count) {
+        toast.success(
+          `${count} health ${count === 1 ? "check" : "checks"} queued`
+        )
+      } else {
+        toast.info("The requested health checks are already in progress")
+      }
+    },
+    onError: (error) => toast.error(extractApiError(error)),
+  })
+  if (detail.isLoading) return <LoadingState label="Loading domain health" />
   if (detail.isError) {
     return (
       <ErrorState
@@ -680,17 +718,19 @@ function DomainDetailPage({
 
   return (
     <>
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         type="button"
         onClick={() => navigate("/domains")}
-        className="mb-5 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+        className="mb-5 -ml-3 gap-2 text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="size-4" /> All domains
-      </button>
-      <header className="flex flex-col gap-5 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
+      </Button>
+      <header className="flex flex-col gap-4 border-b pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-            <Globe2 className="size-3.5" /> Domain support
+            <Globe2 className="size-3.5" /> Domain routing
           </p>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             {domain.hostname}
@@ -700,7 +740,7 @@ function DomainDetailPage({
             {relativeTime(domain.last_seen_at)}
           </p>
         </div>
-        <div className="rounded-lg border bg-card px-5 py-4 lg:min-w-96">
+        <div className="rounded-lg border bg-card px-4 py-3 lg:min-w-80">
           <p className="text-xs font-medium text-muted-foreground">
             Expected automatic plan
           </p>
@@ -713,51 +753,93 @@ function DomainDetailPage({
         </div>
       </header>
 
-      <section className="mt-6 grid gap-3 sm:grid-cols-3">
-        <Card className="gap-0 rounded-lg p-5">
-          <Fact label="Observed sessions" value={formatNumber(domain.session_count)} />
+      <section className="mt-5 grid gap-3 sm:grid-cols-3">
+        <Card className="gap-0 rounded-lg p-4">
+          <Fact
+            label="Observed sessions"
+            value={formatNumber(domain.session_count)}
+          />
         </Card>
-        <Card className="gap-0 rounded-lg p-5">
-          <Fact label="Active checks" value={formatNumber(domain.active_probe_count)} />
+        <Card className="gap-0 rounded-lg p-4">
+          <Fact
+            label="Active checks"
+            value={formatNumber(domain.active_probe_count)}
+          />
         </Card>
-        <Card className="gap-0 rounded-lg p-5">
-          <Fact label="Runtime provider transitions" value={formatNumber(domain.transition_count)} />
+        <Card className="gap-0 rounded-lg p-4">
+          <Fact
+            label="Runtime provider transitions"
+            value={formatNumber(domain.transition_count)}
+          />
         </Card>
       </section>
 
-      <section className="mt-6 overflow-hidden rounded-lg border bg-card">
-        <div className="border-b px-5 py-4">
-          <h2 className="font-semibold">Provider support</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            What Harbor independently believes can support this domain. Cost only
-            orders providers already marked supported.
-          </p>
+      <section className="mt-5 overflow-hidden rounded-lg border bg-card">
+        <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="font-semibold">Provider eligibility</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Synchronized health checks establish safe acquisition and compare
+              primary content. Real sessions suppress or restore runtime
+              compatibility. Cost orders providers eligible on both.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0 gap-2"
+            disabled={trigger.isPending}
+            onClick={() => trigger.mutate({ domainId })}
+          >
+            {trigger.isPending && !trigger.variables?.providers ? (
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
+            ) : (
+              <FlaskConical className="size-3.5" aria-hidden />
+            )}
+            Check all providers
+          </Button>
         </div>
         <div className="overflow-x-auto">
-          <div className="grid min-w-[88rem] grid-cols-[1.2fr_repeat(5,1fr)_1fr] gap-4 border-b bg-muted/35 px-5 py-2.5 font-mono text-[0.6875rem] font-medium tracking-wider text-muted-foreground uppercase">
+          <div className="grid min-w-[58rem] grid-cols-[minmax(7rem,1.15fr)_repeat(4,minmax(5rem,.8fr))_minmax(7rem,1fr)_minmax(6rem,.8fr)_auto] gap-2 border-b bg-muted/35 px-4 py-2 font-mono text-[0.625rem] font-medium tracking-wider text-muted-foreground uppercase">
             <span>Provider</span>
             <span>Navigation</span>
-            <span>HTTP status</span>
+            <span>HTTP</span>
             <span>Headers</span>
-            <span>Declared methods</span>
-            <span>Content sanity</span>
-            <span>Support</span>
+            <span>Content</span>
+            <span>Runtime fit</span>
+            <span>Routing</span>
+            <span>Action</span>
           </div>
           <div className="divide-y">
             {domain.providers.map((evidence) => (
-              <ProviderRow key={evidence.provider} evidence={evidence} />
+              <ProviderRow
+                key={evidence.provider}
+                evidence={evidence}
+                pending={
+                  evidence.checks.navigation.state === "checking" ||
+                  (trigger.isPending &&
+                    (!trigger.variables?.providers ||
+                      trigger.variables.providers.includes(evidence.provider)))
+                }
+                onCheck={() =>
+                  trigger.mutate({
+                    domainId,
+                    providers: [evidence.provider],
+                  })
+                }
+              />
             ))}
           </div>
         </div>
       </section>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.4fr_.8fr]">
+      <div className="mt-5 grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
         <section className="overflow-hidden rounded-lg border bg-card">
-          <div className="border-b px-5 py-4">
-            <h2 className="font-semibold">Support checks</h2>
+          <div className="border-b px-4 py-3">
+            <h2 className="font-semibold">Recent probes</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Absolute health results and bounded content facts—never comparisons
-              with another provider.
+              Absolute response health plus bounded primary-content comparison
+              within each provider cohort.
             </p>
           </div>
           {probes.isError ? (
@@ -769,23 +851,80 @@ function DomainDetailPage({
               <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
             </div>
           ) : probes.data?.probes.length ? (
-            <div className="divide-y">
-              {probes.data.probes.map((probe) => (
-                <ProbeCard key={probe.id} probe={probe} />
-              ))}
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[38rem] table-fixed text-left text-sm">
+                <colgroup>
+                  <col className="w-[17%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[18%]" />
+                </colgroup>
+                <thead className="border-b bg-muted/35 font-mono text-[0.6875rem] tracking-wider text-muted-foreground uppercase">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Provider</th>
+                    <th className="px-2 py-2 font-medium">Result</th>
+                    <th className="px-2 py-2 font-medium">Nav</th>
+                    <th className="px-2 py-2 font-medium">HTTP</th>
+                    <th className="px-2 py-2 font-medium">Headers</th>
+                    <th className="px-2 py-2 font-medium">Content</th>
+                    <th className="px-3 py-2 text-right font-medium">When</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {probes.data.probes.map((probe) => (
+                    <tr key={probe.id}>
+                      <td className="truncate px-3 py-2 font-medium">
+                        {providerLabels[probe.candidate_provider]}
+                      </td>
+                      <td className="px-2 py-2">
+                        <Badge
+                          variant="outline"
+                          className="font-normal capitalize"
+                        >
+                          {probe.outcome === "healthy"
+                            ? "OK"
+                            : (probe.outcome ?? probe.state)}
+                        </Badge>
+                      </td>
+                      {[
+                        probe.navigation_state,
+                        probe.status_state,
+                        probe.headers_state,
+                        probe.content_state,
+                      ].map((state, index) => (
+                        <td
+                          key={index}
+                          className="truncate px-2 py-2 text-xs capitalize"
+                        >
+                          {state === "healthy"
+                            ? "OK"
+                            : (state?.replaceAll("_", " ") ?? "Pending")}
+                        </td>
+                      ))}
+                      <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-muted-foreground">
+                        {relativeTime(probe.created_at)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div className="p-8 text-center text-sm text-muted-foreground">
-              No support checks recorded.
+              No health checks recorded.
             </div>
           )}
         </section>
 
-        <section className="overflow-hidden rounded-lg border bg-card self-start">
-          <div className="border-b px-5 py-4">
+        <section className="self-start overflow-hidden rounded-lg border bg-card">
+          <div className="border-b px-4 py-3">
             <h2 className="font-semibold">Observed CDP methods</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Requirements Harbor uses for method coverage.
+              Historical telemetry only. Runtime decisions use exact command
+              shapes from individual sessions.
             </p>
           </div>
           {domain.commands.length ? (
@@ -793,7 +932,7 @@ function DomainDetailPage({
               {domain.commands.slice(0, 12).map((command) => (
                 <div
                   key={command.method}
-                  className="flex items-center justify-between gap-4 px-5 py-3"
+                  className="flex items-center justify-between gap-3 px-4 py-2.5"
                 >
                   <code className="truncate text-xs">{command.method}</code>
                   <span className="shrink-0 text-xs text-muted-foreground">
@@ -811,8 +950,8 @@ function DomainDetailPage({
         </section>
       </div>
 
-      <section className="mt-6 overflow-hidden rounded-lg border bg-card">
-        <div className="border-b px-5 py-4">
+      <section className="mt-5 overflow-hidden rounded-lg border bg-card">
+        <div className="border-b px-4 py-3">
           <h2 className="font-semibold">Recent sessions</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Actual provider paths; arrows show runtime transition.
@@ -827,53 +966,58 @@ function DomainDetailPage({
             <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
           </div>
         ) : sessions.data?.sessions.length ? (
-          <div className="divide-y">
-            {sessions.data.sessions.map((session) => (
-              <div
-                key={session.id}
-                className="grid gap-4 px-5 py-4 md:grid-cols-[1.5fr_1.2fr_1fr_.7fr]"
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-mono text-xs">{session.id}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {formatDate(session.created_at)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm">
-                    {session.providers.length
-                      ? session.providers
-                          .map((provider) => providerLabels[provider])
-                          .join(" → ")
-                      : "No attempt"}
-                  </p>
-                  <p className="mt-1 text-xs capitalize text-muted-foreground">
-                    {session.selection_mode}
-                  </p>
-                </div>
-                <p className="text-sm capitalize">
-                  {session.selection_reason?.replaceAll("_", " ") ?? "—"}
-                </p>
-                <div>
-                  <p className="flex items-center gap-2 text-sm capitalize">
-                    <CircleDot
-                      className={cn(
-                        "size-3.5",
-                        session.state === "closed"
-                          ? "text-emerald-600"
-                          : session.state === "failed"
-                            ? "text-destructive"
-                            : "text-amber-600"
-                      )}
-                    />
-                    {session.state}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {formatNumber(session.actual_cost_units)} units
-                  </p>
-                </div>
-              </div>
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[42rem] text-left text-sm">
+              <thead className="border-b bg-muted/35 font-mono text-[0.6875rem] tracking-wider text-muted-foreground uppercase">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Session</th>
+                  <th className="px-3 py-2.5 font-medium">Provider path</th>
+                  <th className="px-3 py-2.5 font-medium">Reason</th>
+                  <th className="px-3 py-2.5 font-medium">State</th>
+                  <th className="px-4 py-2 text-right font-medium">Cost</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {sessions.data.sessions.map((session) => (
+                  <tr key={session.id}>
+                    <td className="max-w-64 px-4 py-2">
+                      <p className="truncate font-mono text-xs">{session.id}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {relativeTime(session.created_at)}
+                      </p>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {session.providers.length
+                        ? session.providers
+                            .map((provider) => providerLabels[provider])
+                            .join(" → ")
+                        : "No attempt"}
+                    </td>
+                    <td className="px-3 py-2.5 capitalize">
+                      {session.selection_reason?.replaceAll("_", " ") ?? "—"}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span className="flex items-center gap-2 capitalize">
+                        <CircleDot
+                          className={cn(
+                            "size-3.5",
+                            session.state === "closed"
+                              ? "text-emerald-600"
+                              : session.state === "failed"
+                                ? "text-destructive"
+                                : "text-amber-600"
+                          )}
+                        />
+                        {session.state}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right whitespace-nowrap text-muted-foreground">
+                      {formatNumber(session.actual_cost_units)} units
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : (
           <div className="p-8 text-center text-sm text-muted-foreground">
@@ -893,9 +1037,9 @@ export function DomainsPage({
   navigate: (href: string) => void
 }) {
   return (
-    <main className="mx-auto min-h-svh w-full max-w-[100rem] px-4 py-6 sm:px-6 md:py-8 lg:px-10">
+    <main className="mx-auto min-h-svh w-full max-w-[100rem] px-4 py-6 sm:px-6 md:py-8 lg:px-8">
       {domainId === undefined && (
-        <header className="mb-6 border-b pb-6">
+        <header className="mb-5 border-b pb-4">
           <p className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <Globe2 className="size-3.5" /> Routing evidence
           </p>
@@ -903,8 +1047,9 @@ export function DomainsPage({
             Domains
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Harbor picks the cheapest supported provider and transitions through the
-            support plan when a journey reveals a new requirement.
+            Harbor picks the cheapest healthy, runtime-compatible provider. A
+            live incompatibility suppresses that provider until one later
+            compatible session restores it.
           </p>
         </header>
       )}

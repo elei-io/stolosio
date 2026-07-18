@@ -10,8 +10,8 @@ router = APIRouter(prefix="/v1/admin/routing", tags=["admin"])
 class RoutingResponse(BaseModel):
     default_provider: ProviderName
     existing_domain_probe_rate_basis_points: int
-    required_support_confirmations: int
-    support_policy_version: int
+    required_health_confirmations: int
+    health_policy_version: int
     configuration_version: int
 
     @classmethod
@@ -19,8 +19,8 @@ class RoutingResponse(BaseModel):
         return cls(
             default_provider=value.default_provider,
             existing_domain_probe_rate_basis_points=(value.existing_domain_probe_rate_basis_points),
-            required_support_confirmations=value.required_support_confirmations,
-            support_policy_version=value.support_policy_version,
+            required_health_confirmations=value.required_health_confirmations,
+            health_policy_version=value.health_policy_version,
             configuration_version=value.configuration_version,
         )
 
@@ -30,7 +30,7 @@ class RoutingUpdate(BaseModel):
 
     default_provider: ProviderName | None = None
     existing_domain_probe_rate_basis_points: int | None = Field(default=None, ge=0, le=10_000)
-    required_support_confirmations: int | None = Field(default=None, ge=1, le=100)
+    required_health_confirmations: int | None = Field(default=None, ge=1, le=100)
 
     @model_validator(mode="after")
     def require_value(self) -> "RoutingUpdate":
@@ -43,7 +43,7 @@ class ProviderRoutingResponse(BaseModel):
     provider: ProviderName
     automatic_enabled: bool
     cost_units_per_second: int
-    capability_manifest_version: int
+    provider_contract_version: int
 
 
 class ProviderRoutingUpdate(BaseModel):
@@ -88,7 +88,7 @@ async def list_provider_routing(request: Request) -> list[ProviderRoutingRespons
             provider=ProviderName(row.provider),
             automatic_enabled=row.automatic_enabled,
             cost_units_per_second=row.cost_units_per_second,
-            capability_manifest_version=row.capability_manifest_version,
+            provider_contract_version=row.provider_contract_version,
         )
         for row in rows
     ]
@@ -113,5 +113,5 @@ async def update_provider_routing(
         provider=ProviderName(row.provider),
         automatic_enabled=row.automatic_enabled,
         cost_units_per_second=row.cost_units_per_second,
-        capability_manifest_version=row.capability_manifest_version,
+        provider_contract_version=row.provider_contract_version,
     )

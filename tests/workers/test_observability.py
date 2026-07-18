@@ -10,6 +10,7 @@ from backend.db.models import (
     Domain,
     DomainCommandStat,
     GatewaySession,
+    HealthProbe,
     SessionEventRecord,
 )
 from backend.debug import HistoricalDebugTimeline
@@ -121,6 +122,102 @@ async def test_recorder_is_idempotent_and_projects_domain_evidence(
         "command.received",
     }
     assert all("recommendation" not in event.payload for event in timeline)
+
+
+@pytest.mark.asyncio
+async def test_recorder_keeps_preselection_events_providerless(
+    database_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    session_id = uuid4()
+    await add_session(database_sessions, session_id)
+    event = SessionEvent.create(EventType.SESSION_REQUESTED, session_id)
+
+    assert await EventRecorder(database_sessions).record([event]) == 1
+
+    async with database_sessions() as database:
+        row = await database.scalar(select(SessionEventRecord))
+    assert row is not None
+    assert row.provider is None
+
+    timeline = await HistoricalDebugTimeline(database_sessions).events(session_id)
+    assert timeline[0].provider is None
+
+
+@pytest.mark.asyncio
+async def test_recorder_keeps_probe_sessions_out_of_domain_projections(
+    database_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    source_session_id = uuid4()
+    probe_session_id = uuid4()
+    probe_id = str(uuid4())
+    now = datetime.now(UTC)
+    await add_session(database_sessions, source_session_id)
+    await add_session(database_sessions, probe_session_id)
+    async with database_sessions.begin() as database:
+        domain = Domain(
+            hostname="source.test",
+            first_seen_at=now,
+            last_seen_at=now,
+            session_count=1,
+        )
+        database.add(domain)
+        await database.flush()
+        candidate = await database.get(
+            GatewaySession,
+            str(probe_session_id),
+        )
+        assert candidate is not None
+        candidate.client_reference = probe_id
+        database.add(
+            HealthProbe(
+                id=probe_id,
+                domain_id=domain.id,
+                source_session_id=str(source_session_id),
+                candidate_provider="http",
+                trigger="manual",
+                target_url="https://candidate.test/",
+                state="running",
+                created_at=now,
+            )
+        )
+
+    recorder = EventRecorder(database_sessions)
+    navigation = SessionEvent.create(
+        EventType.NAVIGATION_RESPONSE,
+        probe_session_id,
+        provider=ProviderName.HTTP,
+        occurred_at=now,
+        payload={"url": "https://candidate.test/", "status": 200},
+    )
+    command = SessionEvent.create(
+        EventType.COMMAND_RECEIVED,
+        probe_session_id,
+        provider=ProviderName.HTTP,
+        occurred_at=now,
+        payload={
+            "command_id": 1,
+            "method": "Runtime.callFunctionOn",
+            "domain": "candidate.test",
+        },
+    )
+
+    assert await recorder.record([navigation, command]) == 2
+
+    async with database_sessions() as database:
+        candidate_domain = await database.scalar(
+            select(Domain).where(Domain.hostname == "candidate.test")
+        )
+        command_count = await database.scalar(
+            select(func.count()).select_from(DomainCommandStat)
+        )
+        event_count = await database.scalar(
+            select(func.count())
+            .select_from(SessionEventRecord)
+            .where(SessionEventRecord.session_id == str(probe_session_id))
+        )
+    assert candidate_domain is None
+    assert command_count == 0
+    assert event_count == 2
 
 
 @pytest.mark.asyncio

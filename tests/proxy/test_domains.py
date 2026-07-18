@@ -6,20 +6,22 @@ from backend.db.models import (
     AcquisitionAttempt,
     Domain,
     DomainCommandStat,
-    DomainProviderSupport,
+    DomainProviderCostStat,
+    DomainProviderHealth,
+    DomainProviderRuntimeState,
     DomainProviderTransitionStat,
     GatewaySession,
+    HealthProbe,
     ProviderRoutingProfile,
     RoutingConfiguration,
     SessionDomain,
-    SupportProbe,
 )
 from backend.proxy.domains import DomainFilters, DomainQueryService
 
 pytestmark = pytest.mark.asyncio
 
 
-async def test_domain_queries_expose_absolute_support_and_ordered_plan(
+async def test_domain_queries_expose_health_runtime_state_and_ordered_plan(
     database_sessions,
 ) -> None:
     now = datetime.now(UTC)
@@ -29,8 +31,8 @@ async def test_domain_queries_expose_absolute_support_and_ordered_plan(
                 key="global",
                 default_provider="camoufox",
                 existing_domain_probe_rate_basis_points=100,
-                required_support_confirmations=1,
-                support_policy_version=1,
+                required_health_confirmations=1,
+                health_policy_version=1,
                 configuration_version=2,
                 updated_at=now,
             )
@@ -41,14 +43,14 @@ async def test_domain_queries_expose_absolute_support_and_ordered_plan(
                     provider="lightpanda",
                     automatic_enabled=True,
                     cost_units_per_second=4,
-                    capability_manifest_version=1,
+                    provider_contract_version=1,
                     updated_at=now,
                 ),
                 ProviderRoutingProfile(
                     provider="camoufox",
                     automatic_enabled=True,
                     cost_units_per_second=12,
-                    capability_manifest_version=1,
+                    provider_contract_version=1,
                     updated_at=now,
                 ),
             ]
@@ -62,49 +64,55 @@ async def test_domain_queries_expose_absolute_support_and_ordered_plan(
         )
         database.add(domain)
         await database.flush()
-        database.add(
-            DomainProviderSupport(
-                domain_id=domain.id,
-                provider="lightpanda",
-                support_state="supported",
-                successful_probe_count=1,
-                observed_session_count=2,
-                total_cost_units=6,
-                navigation_state="healthy",
-                status_state="healthy",
-                headers_state="healthy",
-                method_coverage_state="declared",
-                content_state="healthy",
-                method_observed_count=1,
-                method_declared_count=1,
-                last_status_code=200,
-                last_checked_at=now,
-                last_supported_at=now,
-                support_policy_version=1,
-                capability_manifest_version=1,
-            )
-        )
-        database.add(
-            DomainProviderTransitionStat(
-                domain_id=domain.id,
-                from_provider="http",
-                to_provider="lightpanda",
-                trigger="new_requirement",
-                transition_count=2,
-                last_trigger_method="Runtime.evaluate",
-                first_seen_at=now - timedelta(hours=3),
-                last_seen_at=now,
-            )
-        )
-        database.add(
-            DomainCommandStat(
-                domain_id=domain.id,
-                method="Runtime.evaluate",
-                command_count=4,
-                session_count=2,
-                first_seen_at=now - timedelta(hours=3),
-                last_seen_at=now,
-            )
+        database.add_all(
+            [
+                DomainProviderHealth(
+                    domain_id=domain.id,
+                    provider="lightpanda",
+                    health_state="healthy",
+                    successful_probe_count=1,
+                    navigation_state="healthy",
+                    status_state="healthy",
+                    headers_state="healthy",
+                    content_state="healthy",
+                    last_status_code=200,
+                    last_checked_at=now,
+                    last_healthy_at=now,
+                    health_policy_version=1,
+                    provider_contract_version=1,
+                ),
+                DomainProviderRuntimeState(
+                    domain_id=domain.id,
+                    provider="lightpanda",
+                    state="eligible",
+                    last_evidence_at=now,
+                    provider_contract_version=1,
+                ),
+                DomainProviderCostStat(
+                    domain_id=domain.id,
+                    provider="lightpanda",
+                    observed_attempt_count=2,
+                    total_cost_units=6,
+                ),
+                DomainProviderTransitionStat(
+                    domain_id=domain.id,
+                    from_provider="http",
+                    to_provider="lightpanda",
+                    trigger="new_requirement",
+                    transition_count=2,
+                    last_trigger_method="Runtime.evaluate",
+                    first_seen_at=now - timedelta(hours=3),
+                    last_seen_at=now,
+                ),
+                DomainCommandStat(
+                    domain_id=domain.id,
+                    method="Runtime.evaluate",
+                    command_count=4,
+                    session_count=2,
+                    first_seen_at=now - timedelta(hours=3),
+                    last_seen_at=now,
+                ),
+            ]
         )
         session = GatewaySession(
             id="00000000-0000-0000-0000-000000000001",
@@ -117,53 +125,46 @@ async def test_domain_queries_expose_absolute_support_and_ordered_plan(
         )
         database.add(session)
         await database.flush()
-        database.add(
-            SessionDomain(
-                session_id=session.id,
-                domain_id=domain.id,
-                first_seen_at=session.created_at,
-                last_seen_at=session.closed_at,
-            )
-        )
-        database.add(
-            AcquisitionAttempt(
-                id="00000000-0000-0000-0000-000000000002",
-                session_id=session.id,
-                ordinal=1,
-                provider="lightpanda",
-                resolved_settings={},
-                setting_sources={},
-                state="closed",
-                selection_reason="cheapest_supported",
-                actual_cost_units=3,
-            )
-        )
-        database.add(
-            SupportProbe(
-                id="00000000-0000-0000-0000-000000000003",
-                domain_id=domain.id,
-                source_session_id=session.id,
-                candidate_provider="lightpanda",
-                trigger="new_domain",
-                target_url="https://example.test/",
-                required_methods=["Runtime.evaluate"],
-                state="completed",
-                outcome="supported",
-                navigation_state="healthy",
-                status_state="healthy",
-                headers_state="healthy",
-                    method_coverage_state="declared",
-                content_state="healthy",
-                status_code=200,
-                reason_codes=[],
-                method_observed_count=1,
-                method_declared_count=1,
-                unsupported_methods=[],
-                content_facts={"visible_text_chars": 400},
-                cost_units=3,
-                created_at=now - timedelta(minutes=5),
-                finished_at=now - timedelta(minutes=4),
-            )
+        database.add_all(
+            [
+                SessionDomain(
+                    session_id=session.id,
+                    domain_id=domain.id,
+                    first_seen_at=session.created_at,
+                    last_seen_at=session.closed_at,
+                ),
+                AcquisitionAttempt(
+                    id="00000000-0000-0000-0000-000000000002",
+                    session_id=session.id,
+                    ordinal=1,
+                    provider="lightpanda",
+                    resolved_settings={},
+                    setting_sources={},
+                    state="closed",
+                    selection_reason="cheapest_eligible",
+                    actual_cost_units=3,
+                ),
+                HealthProbe(
+                    id="00000000-0000-0000-0000-000000000003",
+                    domain_id=domain.id,
+                    source_session_id=session.id,
+                    candidate_provider="lightpanda",
+                    trigger="new_domain",
+                    target_url="https://example.test/",
+                    state="completed",
+                    outcome="healthy",
+                    navigation_state="healthy",
+                    status_state="healthy",
+                    headers_state="healthy",
+                    content_state="healthy",
+                    status_code=200,
+                    reason_codes=[],
+                    content_facts={"visible_text_chars": 400},
+                    cost_units=3,
+                    created_at=now - timedelta(minutes=5),
+                    finished_at=now - timedelta(minutes=4),
+                ),
+            ]
         )
         domain_id = domain.id
 
@@ -174,19 +175,25 @@ async def test_domain_queries_expose_absolute_support_and_ordered_plan(
     sessions = await service.sessions(domain_id)
 
     assert page.domains[0]["expected_plan"] == {
-        "reason": "cheapest_supported",
+        "reason": "cheapest_eligible",
         "candidates": [
             {"provider": "lightpanda", "estimated_cost_units": 3},
-            {"provider": "camoufox", "estimated_cost_units": 12},
         ],
     }
     assert detail is not None
     assert detail["transition_count"] == 2
-    assert detail["providers"][0]["support_state"] == "supported"
-    assert detail["providers"][0]["checks"]["content"]["state"] == "healthy"
-    assert "console" not in detail["providers"][0]["checks"]
+    assert detail["providers"][0]["health_state"] == "healthy"
+    assert detail["providers"][0]["runtime_state"] == "eligible"
+    assert detail["providers"][0]["routing_eligible"] is True
+    assert set(detail["providers"][0]["checks"]) == {
+        "navigation",
+        "status",
+        "headers",
+        "content",
+    }
     assert probes is not None
-    assert probes.probes[0]["outcome"] == "supported"
+    assert probes.probes[0]["outcome"] == "healthy"
     assert "target_url" not in probes.probes[0]
+    assert "method_coverage_state" not in probes.probes[0]
     assert sessions is not None
-    assert sessions.sessions[0]["selection_reason"] == "cheapest_supported"
+    assert sessions.sessions[0]["selection_reason"] == "cheapest_eligible"

@@ -17,7 +17,9 @@ import { useTheme } from "@/components/theme-provider"
 import { ActivityPage } from "@/components/activity-page"
 import { DomainsPage } from "@/components/domains-page"
 import { FleetsPage } from "@/components/fleets-page"
+import { OverviewPage } from "@/components/overview-page"
 import { RoutingPage } from "@/components/routing-page"
+import { SessionsPage } from "@/components/sessions-page"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -131,12 +133,17 @@ export default function App() {
   const domainId = pathname.startsWith("/domains/")
     ? Number(pathname.slice("/domains/".length))
     : undefined
+  const sessionId = pathname.startsWith("/sessions/")
+    ? pathname.slice("/sessions/".length)
+    : undefined
 
   return (
     <div className="min-h-svh bg-background text-foreground">
       {sidebarOpen && (
-        <button
-          className="fixed inset-0 z-30 bg-black/35 md:hidden"
+        <Button
+          type="button"
+          variant="ghost"
+          className="fixed inset-0 z-30 h-auto w-auto rounded-none bg-black/35 p-0 hover:bg-black/35 md:hidden"
           aria-label="Close navigation"
           onClick={() => setSidebarOpen(false)}
         />
@@ -144,14 +151,14 @@ export default function App() {
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform md:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 flex w-56 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform md:translate-x-0",
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
-        <div className="flex h-16 items-center justify-between border-b border-sidebar-border px-5">
+        <div className="flex h-14 items-center justify-between border-b border-sidebar-border px-4">
           <a
             href="/activity"
-            className="flex items-center gap-3 font-semibold tracking-tight"
+            className="flex items-center gap-2.5 font-semibold tracking-tight"
             onClick={(event) => {
               event.preventDefault()
               navigate("/activity")
@@ -173,7 +180,7 @@ export default function App() {
           </Button>
         </div>
 
-        <nav className="flex-1 px-3 py-6" aria-label="Harbor navigation">
+        <nav className="flex-1 px-3 py-4" aria-label="Harbor navigation">
           <p className="mb-2 px-3 text-[0.6875rem] font-semibold tracking-[0.16em] text-muted-foreground">
             OPERATE
           </p>
@@ -188,7 +195,7 @@ export default function App() {
                     href={href}
                     aria-current={isActive ? "page" : undefined}
                     className={cn(
-                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      "flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                       isActive
                         ? "bg-sidebar-accent text-sidebar-accent-foreground"
                         : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground"
@@ -219,7 +226,7 @@ export default function App() {
         </div>
       </aside>
 
-      <div className="md:pl-64">
+      <div className="md:pl-56">
         <header className="flex h-16 items-center border-b bg-background px-4 md:hidden">
           <Button
             variant="ghost"
@@ -235,12 +242,16 @@ export default function App() {
           </span>
         </header>
 
-        {activeItem.href === "/activity" ? (
+        {activeItem.href === "/overview" ? (
+          <OverviewPage navigate={navigate} />
+        ) : activeItem.href === "/activity" ? (
           <ActivityPage />
         ) : activeItem.href === "/fleets" ? (
           <FleetsPage provider={fleetProvider} navigate={navigate} />
         ) : activeItem.href === "/routing" ? (
           <RoutingPage />
+        ) : activeItem.href === "/sessions" ? (
+          <SessionsPage sessionId={sessionId} navigate={navigate} />
         ) : activeItem.href === "/domains" ? (
           <DomainsPage
             domainId={Number.isInteger(domainId) ? domainId : undefined}

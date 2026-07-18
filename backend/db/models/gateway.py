@@ -135,7 +135,7 @@ class GatewaySession(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     terminal_reason: Mapped[str | None] = mapped_column(String(64))
-    support_evaluated_at: Mapped[datetime | None] = mapped_column(
+    health_evaluated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), index=True
     )
 

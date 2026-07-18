@@ -75,6 +75,8 @@ class AttemptAdmission:
         self,
         session: HarborSession,
         resolved: ResolvedSessionSettings,
+        *,
+        replacement_for: str | None = None,
     ) -> AttemptLease:
         provider = resolved.provider.slug
         if provider is None:
@@ -102,6 +104,7 @@ class AttemptAdmission:
                     for field, source in resolved.sources.items()
                     if field != "harbor.session.reference"
                 },
+                replacement_for=replacement_for,
             )
             if status is AttemptAdmissionStatus.FULL:
                 raise ProviderQueueFull

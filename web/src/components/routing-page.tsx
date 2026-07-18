@@ -112,13 +112,13 @@ function policySummary(
   const probeRate = formatPercentage(
     configuration.existing_domain_probe_rate_basis_points
   )
-  const confirmations = configuration.required_support_confirmations
+  const confirmations = configuration.required_health_confirmations
 
-  return `When no provider is known to support a domain, Harbor uses ${defaultLabel}${
+  return `When Harbor has no current health evidence for a domain, it bootstraps with ${defaultLabel}${
     defaultCost === undefined ? "" : ` (${defaultCost} units/s)`
-  }. Harbor checks every enabled provider independently and marks support after ${confirmations} healthy ${
+  }. Harbor checks every enabled provider independently and marks it healthy after ${confirmations} healthy ${
     confirmations === 1 ? "probe" : "probes"
-  }. Runtime selects the cheapest supported provider and transitions through the full plan when requirements change. The configured default remains the final automatic candidate. ${probeRate}% of later eligible sessions are rechecked.`
+  }. Runtime selects the cheapest healthy, compatible provider. An incompatible command suppresses a provider immediately; one later compatible session restores it. ${probeRate}% of later eligible sessions are rechecked for health.`
 }
 
 function LoadingState() {
@@ -170,7 +170,7 @@ function PolicySettings({
     String(configuration.existing_domain_probe_rate_basis_points / 100)
   )
   const [requiredProbes, setRequiredProbes] = useState(
-    String(configuration.required_support_confirmations)
+    String(configuration.required_health_confirmations)
   )
 
   const basisPoints = Math.round(Number(probeRate) * 100)
@@ -185,7 +185,7 @@ function PolicySettings({
   const dirty =
     defaultProvider !== configuration.default_provider ||
     basisPoints !== configuration.existing_domain_probe_rate_basis_points ||
-    requiredProbeCount !== configuration.required_support_confirmations
+    requiredProbeCount !== configuration.required_health_confirmations
 
   const mutation = useMutation({
     mutationFn: updateRoutingConfiguration,
@@ -207,8 +207,8 @@ function PolicySettings({
     if (basisPoints !== configuration.existing_domain_probe_rate_basis_points) {
       update.existing_domain_probe_rate_basis_points = basisPoints
     }
-    if (requiredProbeCount !== configuration.required_support_confirmations) {
-      update.required_support_confirmations = requiredProbeCount
+    if (requiredProbeCount !== configuration.required_health_confirmations) {
+      update.required_health_confirmations = requiredProbeCount
     }
     mutation.mutate(update)
   }
@@ -220,11 +220,12 @@ function PolicySettings({
   return (
     <Card className="gap-0 rounded-lg">
       <form onSubmit={submit}>
-        <div className="flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="font-semibold">Automatic routing policy</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Configure the final automatic candidate and support evidence.
+              Configure health evidence and the unknown-domain bootstrap
+              provider.
             </p>
           </div>
           <Badge
@@ -237,7 +238,7 @@ function PolicySettings({
         </div>
 
         <div className="grid divide-y lg:grid-cols-3 lg:divide-x lg:divide-y-0">
-          <div className="p-5">
+          <div className="p-4">
             <Label htmlFor="routing-default">
               <ShieldCheck
                 className="size-4 text-muted-foreground"
@@ -246,7 +247,7 @@ function PolicySettings({
               Configured default
             </Label>
             <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-              Final candidate when evidence cannot select a supported provider.
+              Used only while a domain has no current healthy provider evidence.
             </span>
             <Select
               value={defaultProvider}
@@ -267,7 +268,7 @@ function PolicySettings({
             </Select>
           </div>
 
-          <div className="p-5">
+          <div className="p-4">
             <Label htmlFor="routing-probe-rate">
               <Gauge className="size-4 text-muted-foreground" aria-hidden />
               Existing-domain probe rate
@@ -296,13 +297,13 @@ function PolicySettings({
             </span>
           </div>
 
-          <div className="p-5">
+          <div className="p-4">
             <Label htmlFor="routing-required-probes">
               <Check className="size-4 text-muted-foreground" aria-hidden />
               Required healthy probes
             </Label>
             <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-              Independent confirmations needed before support is trusted.
+              Independent confirmations needed before health is trusted.
             </span>
             <Input
               id="routing-required-probes"
@@ -316,14 +317,15 @@ function PolicySettings({
               className="mt-4 h-10"
             />
             <span className="mt-2 block text-xs text-muted-foreground">
-              Hard health failures mark the provider unsupported; ambiguous results remain checking.
+              Hard health failures mark the provider unhealthy; ambiguous
+              results remain inconclusive.
             </span>
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 border-t bg-muted/15 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-t bg-muted/15 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-muted-foreground">
-            Support policy v{configuration.support_policy_version}
+            Health policy v{configuration.health_policy_version}
           </p>
           <Button
             type="submit"
@@ -397,7 +399,7 @@ function ProviderRow({
   return (
     <form
       onSubmit={submit}
-      className="grid gap-4 px-5 py-4 md:grid-cols-[minmax(12rem,1.4fr)_minmax(10rem,1fr)_minmax(11rem,1fr)_minmax(8rem,0.8fr)_6rem] md:items-center"
+      className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(10rem,1.4fr)_minmax(8rem,1fr)_minmax(9rem,1fr)_minmax(7rem,0.8fr)_5rem] md:items-center"
     >
       <div className="flex items-center gap-3">
         <span
@@ -485,7 +487,7 @@ function ProviderRow({
           <span className="text-sm text-muted-foreground">Excluded</span>
         )}
         <p className="mt-1 text-[0.6875rem] text-muted-foreground">
-          Capability v{profile.capability_manifest_version}
+          Provider contract v{profile.provider_contract_version}
         </p>
       </div>
 
@@ -540,7 +542,7 @@ function ProviderPolicy({
 
   return (
     <Card className="gap-0 rounded-lg">
-      <div className="flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="font-semibold">Provider policy</h2>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -553,7 +555,7 @@ function ProviderPolicy({
         </span>
       </div>
 
-      <div className="hidden grid-cols-[minmax(12rem,1.4fr)_minmax(10rem,1fr)_minmax(11rem,1fr)_minmax(8rem,0.8fr)_6rem] border-b bg-muted/35 px-5 py-2.5 font-mono text-[0.6875rem] font-medium tracking-wider text-muted-foreground uppercase md:grid">
+      <div className="hidden grid-cols-[minmax(10rem,1.4fr)_minmax(8rem,1fr)_minmax(9rem,1fr)_minmax(7rem,0.8fr)_5rem] gap-3 border-b bg-muted/35 px-4 py-2 font-mono text-[0.625rem] font-medium tracking-wider text-muted-foreground uppercase md:grid">
         <span>Provider</span>
         <span>Automatic</span>
         <span>Cost per second</span>
@@ -564,7 +566,7 @@ function ProviderPolicy({
       <div className="divide-y">
         {sortedProfiles.map((profile) => (
           <ProviderRow
-            key={`${profile.provider}:${profile.automatic_enabled}:${profile.cost_units_per_second}:${profile.capability_manifest_version}`}
+            key={`${profile.provider}:${profile.automatic_enabled}:${profile.cost_units_per_second}:${profile.provider_contract_version}`}
             profile={profile}
             rank={ranks.get(profile.provider)}
             isDefault={profile.provider === configuration.default_provider}
@@ -572,10 +574,10 @@ function ProviderPolicy({
         ))}
       </div>
 
-      <div className="flex gap-3 border-t bg-muted/15 px-5 py-4 text-xs leading-5 text-muted-foreground">
+      <div className="flex gap-3 border-t bg-muted/15 px-4 py-3 text-xs leading-5 text-muted-foreground">
         <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
         <p>
-          Routing eligibility controls support checks and automatic selection. It
+          Routing eligibility controls health checks and automatic selection. It
           does not disable a managed fleet or prevent explicit{" "}
           <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.6875rem] text-foreground">
             harbor.provider.slug
@@ -607,8 +609,8 @@ export function RoutingPage() {
   }
 
   return (
-    <main className="mx-auto min-h-[calc(100svh-4rem)] w-full max-w-7xl px-4 py-6 sm:px-6 md:min-h-svh lg:px-10 lg:py-10">
-      <header className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-end sm:justify-between">
+    <main className="mx-auto min-h-[calc(100svh-4rem)] w-full max-w-[100rem] px-4 py-6 sm:px-6 md:min-h-svh lg:px-8 lg:py-8">
+      <header className="flex flex-col gap-4 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <Network className="size-3.5" aria-hidden />
@@ -618,8 +620,8 @@ export function RoutingPage() {
             Routing
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Control automatic provider selection, support evidence, and
-            relative acquisition cost.
+            Control automatic provider selection, health evidence, and relative
+            acquisition cost.
           </p>
         </div>
         {configuration.data && (
@@ -633,14 +635,14 @@ export function RoutingPage() {
         )}
       </header>
 
-      <div className="py-6">
+      <div className="py-5">
         {loading ? (
           <LoadingState />
         ) : error || !configuration.data || !profiles.data ? (
           <ErrorState error={error} retry={retry} />
         ) : (
-          <div className="space-y-6">
-            <Card className="relative block overflow-hidden rounded-lg border-l-4 border-l-primary px-5 py-5 sm:px-6">
+          <div className="space-y-4">
+            <Card className="relative block overflow-hidden rounded-lg border-l-4 border-l-primary px-4 py-4 sm:px-5">
               <div className="absolute -top-16 -right-10 size-40 rounded-full border border-primary/8" />
               <div className="absolute -top-7 -right-3 size-24 rounded-full border border-primary/8" />
               <div className="relative flex max-w-4xl gap-4">
@@ -659,7 +661,7 @@ export function RoutingPage() {
             </Card>
 
             <PolicySettings
-              key={`${configuration.data.configuration_version}:${configuration.data.default_provider}:${configuration.data.existing_domain_probe_rate_basis_points}:${configuration.data.required_support_confirmations}`}
+              key={`${configuration.data.configuration_version}:${configuration.data.default_provider}:${configuration.data.existing_domain_probe_rate_basis_points}:${configuration.data.required_health_confirmations}`}
               configuration={configuration.data}
               profiles={profiles.data}
             />

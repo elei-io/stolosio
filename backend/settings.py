@@ -55,10 +55,11 @@ class Settings(BaseSettings):
     provider_transition_replay_max_commands: int = 100
     provider_transition_replay_max_bytes: int = 2 * 1024 * 1024
     provider_transition_replay_timeout_seconds: float = 30
-    support_harbor_cdp_url: str = "ws://localhost:8411/v1/connect"
-    support_schedule_delay_seconds: float = 2
-    support_poll_seconds: float = 1
-    support_lease_seconds: float = 60
+    health_harbor_cdp_url: str = "ws://localhost:8411/v1/connect"
+    health_schedule_delay_seconds: float = 2
+    health_poll_seconds: float = 1
+    health_lease_seconds: float = 60
+    health_browser_settle_seconds: float = 8
     chromium_minimum_instances: int = 1
     chromium_maximum_instances: int = 4
     chromium_session_capacity_per_instance: int = 4

@@ -24,8 +24,79 @@ export type ActivityEventPage = {
 export type ActivityProvider =
   "http" | "chromium" | "browserless" | "lightpanda" | "camoufox"
 
+export type HarborSessionState =
+  | "requested"
+  | "admitted"
+  | "open"
+  | "closing"
+  | "closed"
+  | "failed"
+
+export type SessionDomainSummary = {
+  id: number
+  hostname: string
+}
+
+export type SessionListItem = {
+  id: string
+  client_reference: string | null
+  state: HarborSessionState
+  created_at: string
+  closed_at: string | null
+  duration_seconds: number | null
+  terminal_reason: string | null
+  providers: ActivityProvider[]
+  selection_mode: "automatic" | "explicit"
+  selection_reason: string | null
+  transition_triggers: string[]
+  actual_cost_units: number
+  domains: SessionDomainSummary[]
+}
+
+export type SessionPage = {
+  sessions: SessionListItem[]
+  next_cursor: string | null
+}
+
+export type SessionAttempt = {
+  id: string
+  ordinal: number
+  provider: ActivityProvider
+  provider_instance_id: string | null
+  state: string
+  selection_reason: string | null
+  transition_trigger: string | null
+  plan_version: number | null
+  plan_position: number | null
+  estimated_cost_units: number | null
+  actual_cost_units: number | null
+  resolved_setting_keys: string[]
+  setting_sources: Record<string, unknown>
+  created_at: string
+  queued_at: string | null
+  acquiring_at: string | null
+  active_at: string | null
+  finished_at: string | null
+  terminal_reason: string | null
+}
+
+export type SessionDetail = SessionListItem & {
+  requested_setting_keys: string[]
+  admitted_at: string | null
+  opened_at: string | null
+  closing_at: string | null
+  lease_expires_at: string | null
+  command_count: number
+  attempts: SessionAttempt[]
+}
+
 export type ManagedProvider =
   "chromium" | "browserless" | "lightpanda" | "camoufox"
+
+export type GatewayFleetSnapshot = {
+  active_sessions: number
+  capacity: number
+}
 
 export type ProviderFleetSnapshot = {
   provider: ActivityProvider
@@ -65,22 +136,22 @@ export type FleetConfigurationUpdate = {
 export type RoutingConfiguration = {
   default_provider: ActivityProvider
   existing_domain_probe_rate_basis_points: number
-  required_support_confirmations: number
-  support_policy_version: number
+  required_health_confirmations: number
+  health_policy_version: number
   configuration_version: number
 }
 
 export type RoutingConfigurationUpdate = {
   default_provider?: ActivityProvider
   existing_domain_probe_rate_basis_points?: number
-  required_support_confirmations?: number
+  required_health_confirmations?: number
 }
 
 export type ProviderRoutingProfile = {
   provider: ActivityProvider
   automatic_enabled: boolean
   cost_units_per_second: number
-  capability_manifest_version: number
+  provider_contract_version: number
 }
 
 export type ProviderRoutingUpdate = {
@@ -88,11 +159,10 @@ export type ProviderRoutingUpdate = {
   cost_units_per_second?: number
 }
 
-export type DomainSupportState =
-  | "unknown"
-  | "checking"
-  | "supported"
-  | "unsupported"
+export type DomainHealthState =
+  "unknown" | "checking" | "healthy" | "unhealthy" | "inconclusive"
+
+export type DomainRuntimeState = "eligible" | "suppressed"
 
 export type DomainPlanCandidate = {
   provider: ActivityProvider
@@ -101,17 +171,18 @@ export type DomainPlanCandidate = {
 
 export type DomainPlan = {
   reason:
-    | "cheapest_supported"
-    | "configured_default"
-    | "no_supported_provider"
+    | "cheapest_eligible"
+    | "configured_default_bootstrap"
+    | "no_eligible_provider"
   candidates: DomainPlanCandidate[]
 }
 
 export type DomainSummary = {
   known_domains: number
-  supported_domains: number
+  healthy_domains: number
   checking_domains: number
-  unsupported_domains: number
+  unhealthy_domains: number
+  suppressed_domains: number
   no_evidence_domains: number
   transitioned_domains: number
 }
@@ -125,12 +196,14 @@ export type DomainListItem = {
   eligible_acquisition_count: number
   transition_count: number
   active_probe_count: number
-  support_counts: {
+  health_counts: {
     unknown: number
     checking: number
-    supported: number
-    unsupported: number
+    healthy: number
+    unhealthy: number
+    inconclusive: number
   }
+  suppressed_provider_count: number
   expected_plan: DomainPlan
 }
 
@@ -143,48 +216,45 @@ export type DomainPage = {
 export type DomainProviderEvidence = {
   provider: ActivityProvider
   automatic_enabled: boolean
-  support_state: DomainSupportState
+  health_state: DomainHealthState
+  runtime_state: DomainRuntimeState
+  routing_eligible: boolean
   successful_probe_count: number
   failed_probe_count: number
   inconclusive_probe_count: number
-  observed_session_count: number
+  observed_attempt_count: number
   total_cost_units: number
   average_cost_units: number
   cost_is_estimate: boolean
   last_status_code: number | null
   last_checked_at: string | null
-  last_supported_at: string | null
+  last_healthy_at: string | null
   failure_reason_code: string | null
-  support_policy_version: number | null
-  capability_manifest_version: number
+  health_policy_version: number | null
+  provider_contract_version: number
+  runtime: {
+    state: DomainRuntimeState
+    suppressed_at: string | null
+    suppressed_session_id: string | null
+    incompatible_method: string | null
+    restored_at: string | null
+    restored_session_id: string | null
+    last_evidence_at: string | null
+  }
   checks: {
     navigation: DomainHealthCheck
     status: DomainHealthCheck
     headers: DomainHealthCheck
-    method_coverage: DomainMethodCheck
     content: DomainHealthCheck
   }
 }
 
 export type DomainCheckState =
-  | "healthy"
-  | "unhealthy"
-  | "inconclusive"
-  | "checking"
-  | "not_checked"
-  | "declared"
-  | "missing"
+  "healthy" | "unhealthy" | "inconclusive" | "checking" | "not_checked"
 
 export type DomainHealthCheck = {
   state: DomainCheckState
   checked_at: string | null
-}
-
-export type DomainMethodCheck = DomainHealthCheck & {
-  observed_count: number
-  declared_count: number
-  unsupported_methods: string[]
-  manifest_version: number
 }
 
 export type DomainCommandStat = {
@@ -211,22 +281,25 @@ export type DomainDetail = {
 
 export type DomainProbe = {
   id: string
+  cohort_id: string
   source_session_id: string
   candidate_provider: ActivityProvider
-  trigger: "new_domain" | "existing_sample"
+  trigger: "new_domain" | "existing_sample" | "manual"
   state: "queued" | "running" | "completed" | "failed"
-  outcome: "supported" | "unsupported" | "inconclusive" | null
+  outcome: "healthy" | "unhealthy" | "inconclusive" | null
   navigation_state: string | null
   status_state: string | null
   headers_state: string | null
-  method_coverage_state: string | null
   content_state: string | null
   status_code: number | null
   reason_codes: string[]
-  method_observed_count: number
-  method_declared_count: number
-  unsupported_methods: string[]
   content_facts: Record<string, number | boolean>
+  comparison_state:
+    | "pending"
+    | "not_applicable"
+    | "inconclusive"
+    | "comparable"
+    | "materially_incomplete"
   cost_units: number | null
   created_at: string
   finished_at: string | null
@@ -235,6 +308,11 @@ export type DomainProbe = {
 export type DomainProbePage = {
   probes: DomainProbe[]
   next_cursor: string | null
+}
+
+export type TriggerDomainProbesResponse = {
+  scheduled: { id: string; provider: ActivityProvider }[]
+  already_active: { id: string; provider: ActivityProvider }[]
 }
 
 export type DomainSession = {

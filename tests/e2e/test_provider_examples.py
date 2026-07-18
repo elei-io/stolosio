@@ -92,7 +92,7 @@ async def test_omitted_provider_uses_automatic_plan() -> None:
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     os.getenv("HARBOR_E2E_TRANSITIONS") != "1",
-    reason="prepare multi-provider support evidence and set HARBOR_E2E_TRANSITIONS=1",
+    reason="prepare multi-provider eligibility evidence and set HARBOR_E2E_TRANSITIONS=1",
 )
 async def test_runtime_transition_replays_all_prior_navigations() -> None:
     base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
@@ -143,7 +143,7 @@ async def test_no_browser_example_programs(example: str) -> None:
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     os.getenv("HARBOR_E2E_TRANSITIONS") != "1",
-    reason="prepare multi-provider support evidence and set HARBOR_E2E_TRANSITIONS=1",
+    reason="prepare multi-provider eligibility evidence and set HARBOR_E2E_TRANSITIONS=1",
 )
 @pytest.mark.parametrize(
     "example",

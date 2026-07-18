@@ -17,7 +17,7 @@ class FakeRouting:
                 provider="http",
                 automatic_enabled=True,
                 cost_units_per_second=1,
-                capability_manifest_version=1,
+                provider_contract_version=1,
             )
         ]
 

@@ -9,6 +9,13 @@ from pydantic import BaseModel, ConfigDict
 from backend.proxy.contracts import ProviderName
 
 
+def provider_from_storage(value: str | None) -> ProviderName | None:
+    """Decode persisted provider attribution, including the retired sentinel."""
+    if value is None or value == "unknown":
+        return None
+    return ProviderName(value)
+
+
 class _Envelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

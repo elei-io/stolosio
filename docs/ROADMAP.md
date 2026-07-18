@@ -17,9 +17,9 @@ client.
   serve navigation and content through plain HTTP, then acquire Chromium and continue
   the same CDP session after replaying safe acknowledged history when another operation
   is observed.
-- [Domain support routing](roadmap/deterministic-routing.md): check every provider
-  independently, order supported providers by cost, and retain a configured default
-  as the final automatic candidate.
+- [Domain eligibility routing](roadmap/deterministic-routing.md): probe acquisition
+  health independently, suppress exact runtime incompatibilities, restore after one
+  later compatible session, and order eligible providers by cost.
 
 ## Next
 

@@ -53,6 +53,7 @@ class PostgresAttemptRepository:
         max_queued: int,
         resolved_settings: dict[str, object],
         setting_sources: dict[str, object],
+        replacement_for: str | None = None,
     ) -> tuple[AttemptAdmissionStatus, ProviderAttempt]:
         async with self._sessions.begin() as database:
             now = await self._now(database)
@@ -62,16 +63,28 @@ class PostgresAttemptRepository:
             await self._lock_provider(database, provider.value)
             await self._expire_stale(database, provider.value, now)
 
-            live_for_session = await database.scalar(
-                select(func.count())
-                .select_from(AcquisitionAttempt)
-                .where(
-                    AcquisitionAttempt.session_id == session.session_id,
-                    AcquisitionAttempt.state.in_(_LIVE_ATTEMPT_STATES),
+            live_for_session = list(
+                await database.scalars(
+                    select(AcquisitionAttempt)
+                    .where(
+                        AcquisitionAttempt.session_id == session.session_id,
+                        AcquisitionAttempt.state.in_(_LIVE_ATTEMPT_STATES),
+                    )
+                    .with_for_update()
                 )
             )
-            if int(live_for_session or 0):
-                raise RuntimeError("Harbor session already has a live acquisition attempt")
+            if replacement_for is None and live_for_session:
+                raise RuntimeError(
+                    "Harbor session already has a live acquisition attempt"
+                )
+            if replacement_for is not None and (
+                len(live_for_session) != 1
+                or live_for_session[0].id != replacement_for
+                or live_for_session[0].state != AttemptState.ACTIVE.value
+            ):
+                raise RuntimeError(
+                    "Harbor transition source is not the session's active attempt"
+                )
             ordinal = (
                 int(
                     await database.scalar(

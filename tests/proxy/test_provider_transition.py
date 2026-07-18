@@ -112,6 +112,28 @@ async def test_disabling_javascript_remains_lazy_and_is_recorded_for_replay() ->
     assert [entry.command for entry in facade._replay] == [command]
 
 
+@pytest.mark.asyncio
+async def test_failed_automatic_session_does_not_publish_compatibility() -> None:
+    recorded = []
+
+    class Compatibility:
+        async def record_session(self, *values):
+            recorded.append(values)
+
+    facade = transition_session(FakeProviderSession([]))
+    facade._runtime_compatibility = Compatibility()  # type: ignore[assignment]
+    facade._track_command(
+        {
+            "method": "Page.navigate",
+            "params": {"url": "https://example.test/"},
+        }
+    )
+    await facade.fail("provider_connection_lost")
+    await facade.close()
+
+    assert recorded == []
+
+
 def test_materialization_strategy_rejects_side_effecting_commands() -> None:
     strategy = CdpReplayMaterializationStrategy()
 
@@ -128,6 +150,13 @@ async def test_exhausted_support_plan_returns_explicit_protocol_error() -> None:
     facade = transition_session(FakeProviderSession([]))
     facade._routing = EmptyPlan()  # type: ignore[assignment]
     facade._domain = "example.test"
+    suppressed = []
+
+    class Compatibility:
+        async def suppress(self, **values):
+            suppressed.append(values)
+
+    facade._runtime_compatibility = Compatibility()  # type: ignore[assignment]
     command = {"id": 30, "method": "Page.printToPDF", "params": {}}
 
     await facade.send(json.dumps(command))
@@ -137,6 +166,14 @@ async def test_exhausted_support_plan_returns_explicit_protocol_error() -> None:
         "id": 30,
         "error": {"code": -32000, "message": "No supported provider remains"},
     }
+    assert suppressed == [
+        {
+            "session_id": facade._session.session_id,
+            "hostname": "example.test",
+            "provider": ProviderName.CHROMIUM,
+            "method": "Page.printToPDF",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -207,6 +244,62 @@ async def test_transition_replays_every_acknowledged_command_in_order_with_id_ma
 
 
 @pytest.mark.asyncio
+async def test_navigation_clears_stale_execution_context_and_object_mappings() -> None:
+    upstream = FakeProviderSession(
+        [
+            {
+                "method": "Runtime.executionContextsCleared",
+                "params": {},
+                "sessionId": "actual-session",
+            },
+            {
+                "method": "Runtime.executionContextCreated",
+                "params": {
+                    "context": {
+                        "id": 3,
+                        "uniqueId": "new-default-context",
+                    }
+                },
+                "sessionId": "actual-session",
+            },
+        ]
+    )
+    facade = transition_session(upstream)
+    facade._capabilities = CapabilityRegistry(
+        {ProviderName.CHROMIUM: frozenset({"Runtime.evaluate"})}
+    )
+    facade._forward_ids["session"]["synthetic-session"] = "actual-session"
+    facade._reverse_ids["session"]["actual-session"] = "synthetic-session"
+    facade._forward_ids["execution"][3] = 2
+    facade._reverse_ids["execution"][2] = 3
+    facade._forward_ids["object"]["synthetic-object"] = "actual-object"
+    facade._reverse_ids["object"]["actual-object"] = "synthetic-object"
+
+    await facade._pump_upstream()
+    await facade._forward(
+        {
+            "id": 24,
+            "method": "Runtime.evaluate",
+            "params": {"expression": "document.title", "contextId": 3},
+            "sessionId": "synthetic-session",
+        }
+    )
+
+    assert upstream.sent == [
+        {
+            "id": 24,
+            "method": "Runtime.evaluate",
+            "params": {"expression": "document.title", "contextId": 3},
+            "sessionId": "actual-session",
+        }
+    ]
+    assert "execution" not in facade._forward_ids
+    assert "execution" not in facade._reverse_ids
+    assert "object" not in facade._forward_ids
+    assert "object" not in facade._reverse_ids
+
+
+@pytest.mark.asyncio
 async def test_transition_tries_the_full_plan_before_releasing_the_source(
     monkeypatch,
 ) -> None:
@@ -233,9 +326,10 @@ async def test_transition_tries_the_full_plan_before_releasing_the_source(
     source = Lease(ProviderName.HTTP)
 
     class Attempts:
-        async def acquire(self, session, resolved):
+        async def acquire(self, session, resolved, *, replacement_for=None):
             assert resolved.provider.slug is not None
             provider = resolved.provider.slug
+            assert replacement_for == source.attempt.attempt_id
             timeline.append(f"acquire:{provider.value}")
             return Lease(provider)
 
@@ -290,7 +384,7 @@ async def test_transition_tries_the_full_plan_before_releasing_the_source(
             ProviderCandidate(ProviderName.LIGHTPANDA, 10, 0),
             ProviderCandidate(ProviderName.CHROMIUM, 100, 1),
         ),
-        "cheapest_supported",
+        "cheapest_eligible",
         1,
         1,
     )

@@ -25,6 +25,7 @@ from backend.proxy.provider_transition import (
     ProviderTransitionSession,
 )
 from backend.proxy.routing import RoutingRepository
+from backend.proxy.runtime_compatibility import RuntimeCompatibilityRepository
 from backend.proxy.sessions import SessionAdmission, SessionLease
 from backend.proxy.settings import HarborSettingsResolver, harbor_settings_resolver
 from backend.proxy.transport import relay_cdp
@@ -44,6 +45,7 @@ class Gateway:
         resolver: HarborSettingsResolver = harbor_settings_resolver,
         transition_repository: ProviderTransitionRepository | None = None,
         routing: RoutingRepository | None = None,
+        runtime_compatibility: RuntimeCompatibilityRepository | None = None,
     ) -> None:
         self._sessions = sessions
         self._attempts = attempts
@@ -53,6 +55,7 @@ class Gateway:
         self._resolver = resolver
         self._transition_repository = transition_repository
         self._routing = routing
+        self._runtime_compatibility = runtime_compatibility
 
     async def connect(self, websocket: WebSocket) -> None:
         session: SessionLease | None = None
@@ -115,6 +118,7 @@ class Gateway:
                         observer,
                         self._settings,
                         self._routing,
+                        self._runtime_compatibility,
                     )
                 else:
                     preparation = asyncio.create_task(self._prepare(session, resolved))

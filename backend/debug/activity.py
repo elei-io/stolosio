@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import SessionEventRecord
 from backend.events import EventType, SessionEvent
+from backend.events.contracts import provider_from_storage
 from backend.messaging.jetstream import EVENT_STREAM, EVENT_SUBJECT
 from backend.proxy.contracts import ProviderName
 
@@ -216,7 +217,7 @@ class ActivityHistoryService:
             event_type=row.event_type,
             session_id=UUID(row.session_id),
             occurred_at=row.occurred_at,
-            provider=ProviderName(row.provider) if row.provider else None,
+            provider=provider_from_storage(row.provider),
             attempt_id=UUID(row.attempt_id) if row.attempt_id else None,
             payload=row.payload,
         )

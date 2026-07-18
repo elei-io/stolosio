@@ -175,7 +175,7 @@ Passthrough must preserve:
 An automatic session begins behind a bounded CDP facade without acquiring a provider.
 The facade supports the tested one-page Playwright bootstrap, performs `Page.navigate`
 through HTTP, and answers only the exact recognized `page.content()` protocol shape.
-Every other sequence is planned against the domain support matrix.
+Every other sequence is planned against domain health and runtime compatibility.
 
 Before the triggering command runs, Harbor replays acknowledged commands in original
 order when replay is safe, maps facade-owned identifiers to acquired-provider
@@ -187,20 +187,25 @@ process-local.
 See [Adaptive HTTP Execution](NO_BROWSER.md) and the implemented
 [Provider Transitions](roadmap/provider-transitions.md) milestone.
 
-### Domain provider support
+### Domain provider eligibility
 
 Automatic sessions remain providerless until `Page.navigate` reveals a domain. Harbor
-then orders current supported providers by cost and keeps the configured default as
-the final compatible candidate. With no known support, it uses the configured default.
+then orders providers that have current health evidence and are not runtime-suppressed.
+The configured default is used only to bootstrap a domain without health evidence.
 
-After eligible completed sessions, a separate worker checks every enabled provider
-against absolute navigation, HTTP, header, declared-method, and content-sanity rules.
-Method coverage comes from the versioned provider capability manifest; it is not
-presented as an exercised domain observation.
-PostgreSQL owns probe jobs, leases, versioned support evidence, plans, and cost
-projections. DEBUG/JetStream remains factual and contains no support decisions.
+A separate worker checks navigation, HTTP, and header health, rejects absolute content
+failures, and compares bounded primary-content facts within synchronized provider
+cohorts. Relative comparison requires at least two healthy full-browser participants
+before constructing an upper reference envelope; without them it remains inconclusive.
+Method compatibility is never inferred from probes or cumulative method names. Exact
+command shapes from real automatic sessions suppress incompatible providers
+immediately and restore them after one later compatible session.
 
-See [Domain Provider Support](ANALYTICS.md).
+PostgreSQL owns health probes, runtime state, sanitized session compatibility facts,
+cost projections, and plans. DEBUG/JetStream remains factual and contains no routing
+decisions.
+
+See [Domain Provider Eligibility](ANALYTICS.md).
 
 ### Translated execution
 

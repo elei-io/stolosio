@@ -9,9 +9,11 @@ own end-to-end examples. It should be updated as compatibility tests grow.
 
 Provider routing profiles assign operator-configurable cost units per session-second.
 These are relative policy values rather than universal pricing claims. Historical cost
-orders providers only after independent navigation, HTTP, header, method, and content
-checks mark them supported. The configured default is the final automatic candidate,
-not a behavioral baseline.
+orders providers only after navigation, HTTP, header, and content health checks pass
+and runtime compatibility is eligible. Content health includes absolute rejection plus
+relative primary-content completeness inside synchronized provider cohorts. The
+configured default only bootstraps domains without current health evidence; it is not
+a behavioral baseline.
 
 ## Summary matrix
 
