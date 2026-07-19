@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     jetstream_event_max_message_bytes: int = 256 * 1024
     jetstream_event_duplicate_window_seconds: int = 600
     jetstream_event_replicas: int = 1
+    jetstream_dead_letter_max_bytes: int = 256 * 1024 * 1024
     event_recorder_batch_size: int = 250
     event_recorder_fetch_timeout_seconds: float = 1
     event_recorder_ack_wait_seconds: int = 60

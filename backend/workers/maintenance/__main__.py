@@ -47,6 +47,7 @@ async def _ensure_dead_letters(jetstream) -> None:
         discard=api.DiscardPolicy.OLD,
         max_msgs=10_000,
         max_age=30 * 86_400,
+        max_bytes=settings.jetstream_dead_letter_max_bytes,
         num_replicas=settings.jetstream_event_replicas,
     )
     try:
