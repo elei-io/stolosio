@@ -63,3 +63,9 @@ class ProviderTimeout(ConnectionRejected):
     close_code = 4508
     reason = "provider_timeout"
     status_code = 504
+
+
+class DomainBlockingUnavailable(ConnectionRejected):
+    close_code = 4510
+    reason = "domain_blocking_unavailable"
+    status_code = 503

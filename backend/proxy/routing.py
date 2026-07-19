@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
+from math import exp2
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -10,6 +13,7 @@ from backend.db.models import (
     Domain,
     DomainProviderCostStat,
     DomainProviderHealth,
+    DomainRoutingPreference,
     ExternalProviderLimit,
     ProviderRoutingProfile,
     RoutingConfiguration,
@@ -22,6 +26,21 @@ _DEFAULT_COSTS = {
     ProviderName.BROWSERLESS: 100,
     ProviderName.BROWSERBASE: 300,
 }
+_PREFERENCE_HALF_LIFE_SECONDS = 7 * 24 * 60 * 60
+_PREFERENCE_SCORE_LIMIT = 6.0
+_BROWSERLESS_PROMOTION_SCORE = 4.0
+_HTTP_PROMOTION_SCORE = 0.0
+_HTTP_EXPLORATION_BASIS_POINTS = 1_000
+_EVIDENCE_WEIGHTS = {
+    "browser_required": 2.0,
+    "http_sufficient": -2.0,
+    "browser_compatible": -1.0,
+}
+RoutingEvidence = Literal[
+    "browser_required",
+    "http_sufficient",
+    "browser_compatible",
+]
 
 
 class NoSupportedProvider(RuntimeError):
@@ -93,9 +112,7 @@ class RoutingRepository:
                         provider_contract_version=1,
                         updated_at=now,
                     )
-                    .on_conflict_do_nothing(
-                        index_elements=[ProviderRoutingProfile.provider]
-                    )
+                    .on_conflict_do_nothing(index_elements=[ProviderRoutingProfile.provider])
                 )
 
     async def settings(self) -> RoutingSettings:
@@ -119,19 +136,17 @@ class RoutingRepository:
         required_health_confirmations: int | None = None,
     ) -> RoutingSettings:
         async with self._sessions.begin() as database:
-            row = await database.get(
-                RoutingConfiguration, "global", with_for_update=True
-            )
+            row = await database.get(RoutingConfiguration, "global", with_for_update=True)
             if row is None:
                 raise RuntimeError("Routing configuration is not initialized")
             if default_provider is not None:
-                profile = await database.get(
-                    ProviderRoutingProfile, default_provider.value
-                )
-                if profile is None or not profile.automatic_enabled:
+                if default_provider is ProviderName.BROWSERBASE:
                     raise ValueError(
-                        "Default provider must be enabled for automatic routing"
+                        "Browserbase is a paid fallback and cannot be the default provider"
                     )
+                profile = await database.get(ProviderRoutingProfile, default_provider.value)
+                if profile is None or not profile.automatic_enabled:
+                    raise ValueError("Default provider must be enabled for automatic routing")
                 row.default_provider = default_provider.value
             if existing_domain_probe_rate_basis_points is not None:
                 row.existing_domain_probe_rate_basis_points = (
@@ -162,14 +177,10 @@ class RoutingRepository:
         cost_units_per_second: int | None = None,
     ) -> ProviderRoutingProfile:
         async with self._sessions.begin() as database:
-            row = await database.get(
-                ProviderRoutingProfile, provider.value, with_for_update=True
-            )
+            row = await database.get(ProviderRoutingProfile, provider.value, with_for_update=True)
             if row is None:
                 raise ValueError("Unknown provider routing profile")
-            configuration = await database.get(
-                RoutingConfiguration, "global", with_for_update=True
-            )
+            configuration = await database.get(RoutingConfiguration, "global", with_for_update=True)
             if automatic_enabled is not None:
                 if (
                     not automatic_enabled
@@ -192,6 +203,8 @@ class RoutingRepository:
         *,
         required_commands: tuple[tuple[str, dict | None], ...] = (),
         exclude: frozenset[ProviderName] = frozenset(),
+        allow_paid_fallback: bool = False,
+        exploration_key: str | None = None,
     ) -> ProviderPlan:
         async with self._sessions() as database:
             configuration = await database.get(RoutingConfiguration, "global")
@@ -210,12 +223,8 @@ class RoutingRepository:
                     )
                 )
             )
-            profile_by_provider = {
-                ProviderName(profile.provider): profile for profile in profiles
-            }
-            domain_id = await database.scalar(
-                select(Domain.id).where(Domain.hostname == hostname)
-            )
+            profile_by_provider = {ProviderName(profile.provider): profile for profile in profiles}
+            domain_id = await database.scalar(select(Domain.id).where(Domain.hostname == hostname))
             health = (
                 list(
                     await database.scalars(
@@ -241,6 +250,11 @@ class RoutingRepository:
                     else []
                 )
             }
+            preference = (
+                await database.get(DomainRoutingPreference, domain_id)
+                if domain_id is not None
+                else None
+            )
             browserbase_capacity = await database.get(
                 ExternalProviderLimit,
                 ProviderName.BROWSERBASE.value,
@@ -263,8 +277,7 @@ class RoutingRepository:
                 or provider in exclude
                 or evidence.health_state != "healthy"
                 or evidence.health_policy_version != health_policy_version
-                or evidence.provider_contract_version
-                != profile.provider_contract_version
+                or evidence.provider_contract_version != profile.provider_contract_version
                 or not command_compatible(provider)
             ):
                 continue
@@ -276,13 +289,13 @@ class RoutingRepository:
             )
             eligible.append((provider, expected_cost))
 
-        # Browserbase is the terminal correctness provider. Harbor never probes it
-        # automatically: when enabled, it is eligible by assumption and remains the
-        # final fallback. Manual diagnostic results do not affect this rule.
+        # Browserbase is a paid, terminal fallback. It is never a primary automatic
+        # candidate, even when local health evidence is stale or unfavorable.
         browserbase_profile = profile_by_provider.get(ProviderName.BROWSERBASE)
         browserbase_candidate: tuple[ProviderName, int] | None = None
         if (
-            browserbase_profile is not None
+            allow_paid_fallback
+            and browserbase_profile is not None
             and ProviderName.BROWSERBASE not in exclude
             and command_compatible(ProviderName.BROWSERBASE)
             and browserbase_capacity is not None
@@ -297,16 +310,37 @@ class RoutingRepository:
             )
             browserbase_candidate = (ProviderName.BROWSERBASE, expected_cost)
 
-        if eligible and browserbase_candidate is not None:
-            eligible.append(browserbase_candidate)
-        eligible.sort(key=lambda item: (item[1], item[0].value))
+        preferred_provider = (
+            ProviderName(preference.preferred_provider) if preference is not None else None
+        )
+        explore_http = (
+            preferred_provider is ProviderName.BROWSERLESS
+            and exploration_key is not None
+            and self._exploration_bucket(hostname, exploration_key) < _HTTP_EXPLORATION_BASIS_POINTS
+        )
+        reason = "cheapest_eligible"
+        if preferred_provider is ProviderName.BROWSERLESS and not explore_http:
+            eligible.sort(
+                key=lambda item: (
+                    0 if item[0] is ProviderName.BROWSERLESS else 1,
+                    item[1],
+                    item[0].value,
+                )
+            )
+            reason = "adaptive_browser_required"
+        else:
+            eligible.sort(key=lambda item: (item[1], item[0].value))
+            if explore_http:
+                reason = "adaptive_http_exploration"
         if eligible:
+            if browserbase_candidate is not None:
+                eligible.append(browserbase_candidate)
             return ProviderPlan(
                 tuple(
                     ProviderCandidate(provider, cost, position)
                     for position, (provider, cost) in enumerate(eligible)
                 ),
-                "cheapest_eligible",
+                reason,
                 configuration_version,
                 health_policy_version,
             )
@@ -316,6 +350,8 @@ class RoutingRepository:
         has_current_health = any(
             row.health_policy_version == health_policy_version for row in health
         )
+        if default_provider is ProviderName.BROWSERBASE:
+            default_provider = ProviderName.BROWSERLESS
         default_profile = profile_by_provider.get(default_provider)
         if (
             not has_current_health
@@ -330,10 +366,7 @@ class RoutingRepository:
                     0,
                 )
             ]
-            if (
-                browserbase_candidate is not None
-                and default_provider is not ProviderName.BROWSERBASE
-            ):
+            if browserbase_candidate is not None:
                 bootstrap.append(
                     ProviderCandidate(
                         ProviderName.BROWSERBASE,
@@ -347,22 +380,38 @@ class RoutingRepository:
                 configuration_version,
                 health_policy_version,
             )
-        if browserbase_candidate is not None:
-            return ProviderPlan(
-                (
+        # Current health conclusions can prevent the normal local plan, but they
+        # must never route directly to a paid provider. Browserless gets one live,
+        # correctness-first attempt before an explicitly allowed paid fallback.
+        browserless_profile = profile_by_provider.get(ProviderName.BROWSERLESS)
+        if (
+            browserless_profile is not None
+            and ProviderName.BROWSERLESS not in exclude
+            and command_compatible(ProviderName.BROWSERLESS)
+        ):
+            fallback = [
+                ProviderCandidate(
+                    ProviderName.BROWSERLESS,
+                    browserless_profile.cost_units_per_second,
+                    0,
+                )
+            ]
+            if browserbase_candidate is not None:
+                fallback.append(
                     ProviderCandidate(
                         ProviderName.BROWSERBASE,
                         browserbase_candidate[1],
-                        0,
-                    ),
-                ),
-                "cheapest_eligible",
+                        1,
+                    )
+                )
+            return ProviderPlan(
+                tuple(fallback),
+                "local_correctness_fallback",
                 configuration_version,
                 health_policy_version,
             )
         raise NoSupportedProvider(
-            f"No healthy provider for {hostname} "
-            "can execute the required commands"
+            f"No healthy provider for {hostname} can execute the required commands"
         )
 
     async def record_selection(
@@ -390,9 +439,7 @@ class RoutingRepository:
                 )
                 .returning(Domain.id)
             )
-            row = await database.get(
-                AcquisitionAttempt, attempt_id, with_for_update=True
-            )
+            row = await database.get(AcquisitionAttempt, attempt_id, with_for_update=True)
             if row is None:
                 return
             row.domain_id = domain_id
@@ -401,3 +448,91 @@ class RoutingRepository:
             row.plan_position = candidate.position
             row.transition_trigger = transition_trigger
             row.estimated_cost_units = candidate.estimated_cost_units
+
+    async def record_routing_evidence(
+        self,
+        hostname: str,
+        evidence: RoutingEvidence,
+    ) -> None:
+        now = datetime.now(UTC)
+        async with self._sessions.begin() as database:
+            domain_id = await self._upsert_domain(database, hostname, now)
+            await database.execute(
+                insert(DomainRoutingPreference)
+                .values(
+                    domain_id=domain_id,
+                    preferred_provider=ProviderName.HTTP.value,
+                    preference_score=0.0,
+                    browser_required_count=0,
+                    http_sufficient_count=0,
+                    browser_compatible_count=0,
+                    last_evidence_at=now,
+                    updated_at=now,
+                )
+                .on_conflict_do_nothing(index_elements=[DomainRoutingPreference.domain_id])
+            )
+            row = await database.get(
+                DomainRoutingPreference,
+                domain_id,
+                with_for_update=True,
+            )
+            assert row is not None
+            age_seconds = max(0.0, (now - row.last_evidence_at).total_seconds())
+            decayed_score = (
+                row.preference_score
+                if age_seconds < 60
+                else row.preference_score * exp2(-age_seconds / _PREFERENCE_HALF_LIFE_SECONDS)
+            )
+            row.preference_score = max(
+                -_PREFERENCE_SCORE_LIMIT,
+                min(
+                    _PREFERENCE_SCORE_LIMIT,
+                    decayed_score + _EVIDENCE_WEIGHTS[evidence],
+                ),
+            )
+            if evidence == "browser_required":
+                row.browser_required_count += 1
+            elif evidence == "http_sufficient":
+                row.http_sufficient_count += 1
+            else:
+                row.browser_compatible_count += 1
+            if (
+                row.preferred_provider == ProviderName.HTTP.value
+                and row.preference_score >= _BROWSERLESS_PROMOTION_SCORE
+            ):
+                row.preferred_provider = ProviderName.BROWSERLESS.value
+            elif (
+                row.preferred_provider == ProviderName.BROWSERLESS.value
+                and row.preference_score <= _HTTP_PROMOTION_SCORE
+            ):
+                row.preferred_provider = ProviderName.HTTP.value
+            row.last_evidence_at = now
+            row.updated_at = now
+
+    @staticmethod
+    async def _upsert_domain(
+        database: AsyncSession,
+        hostname: str,
+        now: datetime,
+    ) -> int:
+        domain_id = await database.scalar(
+            insert(Domain)
+            .values(
+                hostname=hostname,
+                first_seen_at=now,
+                last_seen_at=now,
+                session_count=0,
+            )
+            .on_conflict_do_update(
+                index_elements=[Domain.hostname],
+                set_={"last_seen_at": now},
+            )
+            .returning(Domain.id)
+        )
+        assert domain_id is not None
+        return domain_id
+
+    @staticmethod
+    def _exploration_bucket(hostname: str, exploration_key: str) -> int:
+        digest = sha256(f"{hostname}:{exploration_key}".encode()).digest()
+        return int.from_bytes(digest[:4], "big") % 10_000

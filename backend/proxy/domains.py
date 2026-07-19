@@ -13,6 +13,7 @@ from backend.db.models import (
     DomainProviderCostStat,
     DomainProviderHealth,
     DomainProviderTransitionStat,
+    DomainRoutingPreference,
     ExternalProviderLimit,
     GatewaySession,
     HealthProbe,
@@ -102,6 +103,7 @@ def _expected_plan(
     costs: dict[str, DomainProviderCostStat],
     profiles: dict[str, ProviderRoutingProfile],
     configuration: RoutingConfiguration | None,
+    preference: DomainRoutingPreference | None,
     *,
     browserbase_available: bool,
 ) -> dict[str, object]:
@@ -126,59 +128,63 @@ def _expected_plan(
             else profile.cost_units_per_second
         )
         candidates.append({"provider": row.provider, "estimated_cost_units": expected_cost})
-    browserbase_profile = profiles.get("browserbase")
-    browserbase_candidate = (
-        {
-            "provider": "browserbase",
-            "estimated_cost_units": (
-                costs["browserbase"].total_cost_units // costs["browserbase"].observed_attempt_count
-                if "browserbase" in costs and costs["browserbase"].observed_attempt_count
-                else browserbase_profile.cost_units_per_second
-            ),
-        }
-        if browserbase_profile is not None
-        and browserbase_profile.automatic_enabled
-        and browserbase_available
-        else None
-    )
-    if candidates and browserbase_candidate is not None:
-        candidates.append(browserbase_candidate)
-    candidates.sort(
-        key=lambda candidate: (
-            int(candidate["estimated_cost_units"]),
-            str(candidate["provider"]),
+    if preference is not None and preference.preferred_provider == "browserless":
+        candidates.sort(
+            key=lambda candidate: (
+                0 if candidate["provider"] == "browserless" else 1,
+                int(candidate["estimated_cost_units"]),
+                str(candidate["provider"]),
+            )
         )
-    )
+        reason = "adaptive_browser_required"
+    else:
+        candidates.sort(
+            key=lambda candidate: (
+                int(candidate["estimated_cost_units"]),
+                str(candidate["provider"]),
+            )
+        )
+        reason = "cheapest_eligible"
     if candidates:
-        return {"reason": "cheapest_eligible", "candidates": candidates}
+        return {
+            "reason": reason,
+            "candidates": candidates,
+            "paid_fallback_available": browserbase_available,
+        }
 
     has_current_health = any(row.health_policy_version == policy_version for row in health)
     default_provider = configuration.default_provider if configuration else "browserless"
+    if default_provider == "browserbase":
+        default_provider = "browserless"
     default_profile = profiles.get(default_provider)
-    if (
-        not has_current_health
-        and default_profile is not None
-        and default_profile.automatic_enabled
-        and (default_provider != "browserbase" or browserbase_available)
-    ):
-        bootstrap = [
-            {
-                "provider": default_provider,
-                "estimated_cost_units": default_profile.cost_units_per_second,
-            }
-        ]
-        if browserbase_candidate is not None and default_provider != "browserbase":
-            bootstrap.append(browserbase_candidate)
+    if not has_current_health and default_profile is not None and default_profile.automatic_enabled:
         return {
             "reason": "configured_default_bootstrap",
-            "candidates": bootstrap,
+            "candidates": [
+                {
+                    "provider": default_provider,
+                    "estimated_cost_units": default_profile.cost_units_per_second,
+                }
+            ],
+            "paid_fallback_available": browserbase_available,
         }
-    if browserbase_candidate is not None:
+    browserless_profile = profiles.get("browserless")
+    if browserless_profile is not None and browserless_profile.automatic_enabled:
         return {
-            "reason": "cheapest_eligible",
-            "candidates": [browserbase_candidate],
+            "reason": "local_correctness_fallback",
+            "candidates": [
+                {
+                    "provider": "browserless",
+                    "estimated_cost_units": browserless_profile.cost_units_per_second,
+                }
+            ],
+            "paid_fallback_available": browserbase_available,
         }
-    return {"reason": "no_eligible_provider", "candidates": []}
+    return {
+        "reason": "no_eligible_provider",
+        "candidates": [],
+        "paid_fallback_available": browserbase_available,
+    }
 
 
 def _check(
@@ -325,6 +331,18 @@ class DomainQueryService:
                 if domain_ids
                 else []
             )
+            preferences = {
+                row.domain_id: row
+                for row in (
+                    await database.scalars(
+                        select(DomainRoutingPreference).where(
+                            DomainRoutingPreference.domain_id.in_(domain_ids)
+                        )
+                    )
+                    if domain_ids
+                    else []
+                )
+            }
             profiles = {
                 row.provider: row for row in await database.scalars(select(ProviderRoutingProfile))
             }
@@ -358,6 +376,7 @@ class DomainQueryService:
                     costs_by_domain.get(domain.id, {}),
                     profiles,
                     configuration,
+                    preferences.get(domain.id),
                     browserbase_available=(
                         browserbase_capacity is not None
                         and browserbase_capacity.enabled
@@ -399,6 +418,7 @@ class DomainQueryService:
                 ExternalProviderLimit,
                 "browserbase",
             )
+            preference = await database.get(DomainRoutingPreference, domain_id)
             costs = {
                 row.provider: row
                 for row in await database.scalars(
@@ -453,11 +473,13 @@ class DomainQueryService:
                     "health_state": row.health_state if row else "unknown",
                     "routing_eligible": (
                         profile.automatic_enabled
-                        and (
-                            browserbase_available
-                            if profile.provider == "browserbase"
-                            else health_current
-                        )
+                        and profile.provider != "browserbase"
+                        and health_current
+                    ),
+                    "paid_fallback_available": (
+                        profile.provider == "browserbase"
+                        and profile.automatic_enabled
+                        and browserbase_available
                     ),
                     "successful_probe_count": (row.successful_probe_count if row else 0),
                     "failed_probe_count": row.failed_probe_count if row else 0,
@@ -507,11 +529,24 @@ class DomainQueryService:
             "eligible_acquisition_count": domain.eligible_acquisition_count,
             "active_probe_count": len(active_providers),
             "transition_count": transition_count,
+            "routing_preference": (
+                {
+                    "preferred_provider": preference.preferred_provider,
+                    "preference_score": preference.preference_score,
+                    "browser_required_count": preference.browser_required_count,
+                    "http_sufficient_count": preference.http_sufficient_count,
+                    "browser_compatible_count": preference.browser_compatible_count,
+                    "last_evidence_at": _iso(preference.last_evidence_at),
+                }
+                if preference is not None
+                else None
+            ),
             "expected_plan": _expected_plan(
                 list(health.values()),
                 costs,
                 profiles,
                 configuration,
+                preference,
                 browserbase_available=browserbase_available,
             ),
             "providers": providers,
@@ -644,8 +679,7 @@ class DomainQueryService:
                         if attempt.transition_trigger is not None
                     ],
                     "modeled_cost_units": sum(
-                        attempt.modeled_cost_units or 0
-                        for attempt in session_attempts
+                        attempt.modeled_cost_units or 0 for attempt in session_attempts
                     ),
                     "created_at": _iso(row.created_at),
                     "closed_at": _iso(row.closed_at),

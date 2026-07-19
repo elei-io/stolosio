@@ -19,10 +19,12 @@ class SettingSource(StrEnum):
     EXPLICIT = "explicit"
     AUTO = "auto"
     DEFAULT = "default"
+    POLICY = "policy"
 
 
 class ProviderSettingSchema(BaseModel):
     slug: ProviderName | None = None
+    allow_paid_fallback: bool = False
 
 
 class SessionSettingSchema(BaseModel):
@@ -52,6 +54,8 @@ class ResolvedSessionSettings:
     provider: ProviderSettingSchema
     session: SessionSettingSchema
     sources: dict[str, SettingSource]
+    blocked_domain_patterns: tuple[str, ...] = ()
+    network_policy_version: int = 1
 
 
 @dataclass(frozen=True, slots=True)

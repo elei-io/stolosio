@@ -195,8 +195,7 @@ class FleetRepository:
                         endpoint=observation.endpoint,
                         state=observation.state.value,
                         capacity=(
-                            observation.session_capacity
-                            or fleet.session_capacity_per_instance
+                            observation.session_capacity or fleet.session_capacity_per_instance
                         ),
                         observed_at=now,
                         observation_expires_at=expires,
@@ -212,8 +211,7 @@ class FleetRepository:
                     ):
                         row.state = observation.state.value
                     row.capacity = (
-                        observation.session_capacity
-                        or fleet.session_capacity_per_instance
+                        observation.session_capacity or fleet.session_capacity_per_instance
                     )
                     row.observed_at = now
                     row.observation_expires_at = expires
@@ -318,6 +316,32 @@ class FleetRepository:
                 )
             )
             return [self._instance(row) for row in rows]
+
+    async def first_assignment_times(
+        self,
+        provider: ProviderName,
+        instance_ids: set[str],
+    ) -> dict[str, datetime]:
+        if not instance_ids:
+            return {}
+        async with self._sessions() as database:
+            rows = await database.execute(
+                select(
+                    AcquisitionAttempt.provider_instance_id,
+                    func.min(AcquisitionAttempt.acquiring_at),
+                )
+                .where(
+                    AcquisitionAttempt.provider == provider.value,
+                    AcquisitionAttempt.provider_instance_id.in_(instance_ids),
+                    AcquisitionAttempt.acquiring_at.is_not(None),
+                )
+                .group_by(AcquisitionAttempt.provider_instance_id)
+            )
+            return {
+                instance_id: assigned_at
+                for instance_id, assigned_at in rows
+                if instance_id is not None and assigned_at is not None
+            }
 
     async def snapshot(self, provider: ProviderName) -> FleetSnapshot | None:
         async with self._sessions() as database:

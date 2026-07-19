@@ -9,6 +9,7 @@ from backend.proxy.contracts import (
     ProviderName,
     ResolvedSessionSettings,
 )
+from backend.proxy.transport.domain_blocking import apply_domain_blocking
 
 
 class WebSocketProviderSession:
@@ -71,12 +72,15 @@ class DirectCdpAdapter:
         self,
         session: HarborSession,
         settings: ResolvedSessionSettings,
-    ) -> WebSocketProviderSession:
+    ):
         acquisition_started_at = datetime.now(UTC)
         websocket = await connect(self.endpoint, max_size=None, proxy=None)
-        return WebSocketProviderSession(
-            self.provider,
-            websocket,
-            timeout_started_at=acquisition_started_at,
-            session_timeout_seconds=self.session_timeout_seconds,
+        return apply_domain_blocking(
+            WebSocketProviderSession(
+                self.provider,
+                websocket,
+                timeout_started_at=acquisition_started_at,
+                session_timeout_seconds=self.session_timeout_seconds,
+            ),
+            settings.blocked_domain_patterns if settings is not None else (),
         )

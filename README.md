@@ -44,6 +44,15 @@ browser = await playwright.chromium.connect_over_cdp(
 )
 ```
 
+Browserbase is never used by automatic routing unless the session explicitly opts in:
+
+```text
+ws://localhost:8411/v1/connect?harbor.provider.allow_paid_fallback=true
+```
+
+Even with that opt-in, Harbor exhausts its local HTTP/Browserless plan before using
+the paid fallback.
+
 Run the examples and checks:
 
 ```bash
@@ -83,6 +92,7 @@ Release images are published as `ghcr.io/ekkuleivonen/harbor` and
 - [DEBUG stream](docs/DEBUG.md)
 - [No-browser execution](docs/NO_BROWSER.md)
 - [Deterministic domain routing](docs/ANALYTICS.md)
+- [Global domain blocking](docs/NETWORK_POLICY.md)
 - [Roadmap](docs/ROADMAP.md)
 - [CI and releases](docs/RELEASING.md)
 - [Contributor and agent guide](AGENTS.md)

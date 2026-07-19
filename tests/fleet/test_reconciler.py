@@ -26,6 +26,7 @@ class FakeRepository:
         self.scale_down_ready = True
         self.drained: list[str] = []
         self.cancelled_scale_down = 0
+        self.assignment_times: dict[str, datetime] = {}
 
     async def evaluate(self, provider):
         assert provider is self.provider
@@ -64,6 +65,14 @@ class FakeRepository:
     async def cancel_scale_down(self, provider):
         assert provider is self.provider
         self.cancelled_scale_down += 1
+
+    async def first_assignment_times(self, provider, instance_ids):
+        assert provider is self.provider
+        return {
+            instance_id: assigned_at
+            for instance_id, assigned_at in self.assignment_times.items()
+            if instance_id in instance_ids
+        }
 
 
 class FakeRuntime:
@@ -148,6 +157,53 @@ async def test_reconciler_scales_one_runtime_unit_toward_desired_state() -> None
 
     assert runtime.scaled == [("browserless-deployment", 2, 1)]
     assert result.scale_direction == "up"
+
+
+@pytest.mark.asyncio
+async def test_reconciler_reports_scale_request_to_ready_and_first_assignment() -> None:
+    repository = FakeRepository(ProviderName.BROWSERLESS, desired_instances=2)
+
+    class ScalingRuntime(FakeRuntime):
+        async def scale(self, deployment, replicas, *, session_capacity):
+            await super().scale(
+                deployment,
+                replicas,
+                session_capacity=session_capacity,
+            )
+            new_instance = RuntimeInstance(
+                "browserless-2",
+                "harbor-browserless-2",
+                datetime.now(UTC),
+                session_capacity=session_capacity,
+            )
+            self.instances.append(new_instance)
+            repository.assignment_times[new_instance.instance_id] = datetime.now(UTC)
+
+    runtime = ScalingRuntime(
+        [
+            RuntimeInstance(
+                "browserless-1",
+                "harbor-browserless-1",
+                datetime.now(UTC),
+                session_capacity=1,
+            )
+        ]
+    )
+    reconciler = FleetReconciler(
+        repository,  # type: ignore[arg-type]
+        runtime,
+        ManagedFleet(BROWSERLESS_FLEET, "browserless-deployment"),
+        observation_ttl_seconds=5,
+        startup_timeout_seconds=30,
+    )
+
+    result = await reconciler.reconcile()
+
+    assert len(result.ready_latencies_seconds) == 1
+    assert result.ready_latencies_seconds[0] >= 0
+    assert len(result.first_assignment_latencies_seconds) == 1
+    assert result.first_assignment_latencies_seconds[0] >= 0
+    assert result.unassigned_scale_requests == 0
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from contextlib import suppress
+from dataclasses import replace
 from uuid import UUID
 
 from fastapi import WebSocket
@@ -23,6 +24,7 @@ from backend.proxy.escalation import (
     EscalatingProviderSession,
     EscalationHistoryRepository,
 )
+from backend.proxy.network_policy import NetworkPolicyRepository
 from backend.proxy.routing import RoutingRepository
 from backend.proxy.sessions import SessionAdmission, SessionLease
 from backend.proxy.settings import HarborSettingsResolver, harbor_settings_resolver
@@ -42,6 +44,7 @@ class Gateway:
         resolver: HarborSettingsResolver = harbor_settings_resolver,
         transition_repository: EscalationHistoryRepository | None = None,
         routing: RoutingRepository | None = None,
+        network_policy: NetworkPolicyRepository | None = None,
     ) -> None:
         self._sessions = sessions
         self._attempts = attempts
@@ -50,6 +53,7 @@ class Gateway:
         self._resolver = resolver
         self._transition_repository = transition_repository
         self._routing = routing
+        self._network_policy = network_policy
 
     async def connect(self, websocket: WebSocket) -> None:
         session: SessionLease | None = None
@@ -64,6 +68,13 @@ class Gateway:
             requested, resolved = await self._resolver.resolve(
                 list(websocket.query_params.multi_items())
             )
+            if self._network_policy is not None:
+                network_policy = await self._network_policy.settings()
+                resolved = replace(
+                    resolved,
+                    blocked_domain_patterns=network_policy.blocked_domain_patterns,
+                    network_policy_version=network_policy.configuration_version,
+                )
             initial = await websocket.receive()
             if initial["type"] == "websocket.disconnect":
                 return
@@ -143,9 +154,9 @@ class Gateway:
                     disconnected.cancel()
                 await asyncio.gather(disconnected, return_exceptions=True)
 
+            await session.open()
             if attempt is not None:
                 await attempt.activate()
-            await session.open()
             await websocket.accept()
             accepted = True
 

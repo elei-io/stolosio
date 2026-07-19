@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ArrowDown,
+  Ban,
   Check,
   CircleAlert,
   CircleDollarSign,
@@ -34,6 +35,8 @@ import { extractApiError } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type {
   ActivityProvider,
+  NetworkPolicy,
+  NetworkPolicyUpdate,
   ProviderRoutingProfile,
   ProviderRoutingUpdate,
   RoutingConfiguration,
@@ -69,6 +72,10 @@ function fetchProviderProfiles() {
   return apiRequest<ProviderRoutingProfile[]>("/v1/admin/routing/providers")
 }
 
+function fetchNetworkPolicy() {
+  return apiRequest<NetworkPolicy>("/v1/admin/network")
+}
+
 function updateRoutingConfiguration(update: RoutingConfigurationUpdate) {
   return apiRequest<RoutingConfiguration>("/v1/admin/routing", {
     method: "PATCH",
@@ -89,6 +96,14 @@ function updateProviderProfile(
       body: JSON.stringify(update),
     }
   )
+}
+
+function updateNetworkPolicy(update: NetworkPolicyUpdate) {
+  return apiRequest<NetworkPolicy>("/v1/admin/network", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(update),
+  })
 }
 
 function formatPercentage(basisPoints: number) {
@@ -114,7 +129,7 @@ function policySummary(
     defaultCost === undefined ? "" : ` (${defaultCost} units/s)`
   }. HTTP and Browserless promotion requires ${confirmations} healthy ${
     confirmations === 1 ? "probe" : "probes"
-  }. Live HTTP failures escalate immediately. Browserbase is assumed healthy and is never probed automatically. ${probeRate}% of later eligible sessions are sampled for promotion evidence.`
+  }. Live outcomes adapt the preferred local provider in both directions. Browserbase is never primary and requires an explicit paid-fallback session opt-in. ${probeRate}% of later eligible sessions are sampled for promotion evidence.`
 }
 
 function LoadingState() {
@@ -210,7 +225,8 @@ function PolicySettings({
   }
 
   const enabledProfiles = profiles.filter(
-    (profile) => profile.automatic_enabled
+    (profile) =>
+      profile.automatic_enabled && profile.provider !== "browserbase"
   )
 
   return (
@@ -474,7 +490,15 @@ function ProviderRow({
         <span className="mb-1 block text-xs text-muted-foreground md:hidden">
           Effective order
         </span>
-        {enabled && rank ? (
+        {profile.provider === "browserbase" && enabled ? (
+          <span className="inline-flex items-center gap-1.5 text-sm">
+            <CircleDollarSign
+              className="size-3.5 text-muted-foreground"
+              aria-hidden
+            />
+            Paid fallback
+          </span>
+        ) : enabled && rank ? (
           <span className="inline-flex items-center gap-1.5 text-sm">
             <ArrowDown className="size-3.5 text-muted-foreground" aria-hidden />
             {rank === 1 ? "Cheapest" : `Rank ${rank}`}
@@ -514,7 +538,10 @@ function ProviderPolicy({
 }) {
   const ranks = useMemo(() => {
     const enabled = profiles
-      .filter((profile) => profile.automatic_enabled)
+      .filter(
+        (profile) =>
+          profile.automatic_enabled && profile.provider !== "browserbase"
+      )
       .toSorted(
         (left, right) =>
           left.cost_units_per_second - right.cost_units_per_second ||
@@ -542,7 +569,7 @@ function ProviderPolicy({
         <div>
           <h2 className="font-semibold">Provider policy</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Set automatic eligibility and relative acquisition cost.
+            Set local automatic eligibility and paid fallback availability.
           </p>
         </div>
         <span className="inline-flex items-center gap-2 self-start text-xs text-muted-foreground sm:self-auto">
@@ -573,14 +600,108 @@ function ProviderPolicy({
       <div className="flex gap-3 border-t bg-muted/15 px-4 py-3 text-xs leading-5 text-muted-foreground">
         <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
         <p>
-          Routing eligibility controls health checks and automatic selection. It
-          does not disable a managed fleet or prevent explicit{" "}
+          Local routing eligibility controls health checks and automatic selection.
+          Browserbase enablement only makes it available to sessions that explicitly
+          allow paid fallback. These settings do not disable capacity or prevent
+          explicit{" "}
           <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.6875rem] text-foreground">
             harbor.provider.slug
           </code>{" "}
           selection.
         </p>
       </div>
+    </Card>
+  )
+}
+
+function NetworkPolicySettings({ policy }: { policy: NetworkPolicy }) {
+  const queryClient = useQueryClient()
+  const [patternsText, setPatternsText] = useState(
+    policy.blocked_domain_patterns.join("\n")
+  )
+  const patterns = patternsText
+    .split("\n")
+    .map((pattern) => pattern.trim())
+    .filter(Boolean)
+  const dirty =
+    JSON.stringify(patterns) !==
+    JSON.stringify(policy.blocked_domain_patterns)
+  const valid = patterns.length <= 1_000
+
+  const mutation = useMutation({
+    mutationFn: updateNetworkPolicy,
+    onSuccess: (value) => {
+      queryClient.setQueryData(["network-policy"], value)
+      setPatternsText(value.blocked_domain_patterns.join("\n"))
+      toast.success("Network blocklist updated")
+    },
+    onError: (error) => toast.error(extractApiError(error)),
+  })
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    if (!dirty || !valid) return
+    mutation.mutate({ blocked_domain_patterns: patterns })
+  }
+
+  return (
+    <Card className="gap-0 rounded-lg">
+      <form onSubmit={submit}>
+        <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="font-semibold">Global domain blocklist</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Block matching requests in every Harbor session.
+            </p>
+          </div>
+          <Badge
+            variant="outline"
+            className="h-7 gap-2 self-start bg-muted/35 px-3 text-muted-foreground sm:self-auto"
+          >
+            <Ban className="size-3.5" aria-hidden />
+            Configuration v{policy.configuration_version}
+          </Badge>
+        </div>
+
+        <div className="p-4">
+          <Label htmlFor="network-blocked-domains">
+            Blocked domain patterns
+          </Label>
+          <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+            Enter one hostname per line. A leading wildcard, such as{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.6875rem] text-foreground">
+              *.doubleclick.net
+            </code>
+            , matches subdomains.
+          </span>
+          <textarea
+            id="network-blocked-domains"
+            className="border-input placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-4 min-h-40 w-full resize-y rounded-md border bg-transparent px-3 py-2 font-mono text-sm shadow-xs outline-none focus-visible:ring-[3px]"
+            value={patternsText}
+            onChange={(event) => setPatternsText(event.target.value)}
+            placeholder={"*.doubleclick.net\nads.example"}
+            spellCheck={false}
+          />
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">
+              {patterns.length} of 1,000 patterns configured. Changes apply to
+              newly acquired sessions.
+            </p>
+            <Button
+              type="submit"
+              className="gap-2 self-start sm:self-auto"
+              disabled={!dirty || !valid || mutation.isPending}
+            >
+              {mutation.isPending ? (
+                <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <Save className="size-4" aria-hidden />
+              )}
+              Save blocklist
+            </Button>
+          </div>
+        </div>
+      </form>
     </Card>
   )
 }
@@ -594,14 +715,24 @@ export function RoutingPage() {
     queryKey: ["routing-providers"],
     queryFn: fetchProviderProfiles,
   })
+  const networkPolicy = useQuery({
+    queryKey: ["network-policy"],
+    queryFn: fetchNetworkPolicy,
+  })
 
-  const loading = configuration.isPending || profiles.isPending
-  const error = configuration.error ?? profiles.error
+  const loading =
+    configuration.isPending || profiles.isPending || networkPolicy.isPending
+  const error =
+    configuration.error ?? profiles.error ?? networkPolicy.error
   const enabledProfiles =
     profiles.data?.filter((profile) => profile.automatic_enabled) ?? []
 
   const retry = () => {
-    void Promise.all([configuration.refetch(), profiles.refetch()])
+    void Promise.all([
+      configuration.refetch(),
+      profiles.refetch(),
+      networkPolicy.refetch(),
+    ])
   }
 
   return (
@@ -616,8 +747,8 @@ export function RoutingPage() {
             Routing
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Control automatic provider selection, health evidence, and relative
-            acquisition cost.
+            Control automatic provider selection, health evidence, relative
+            acquisition cost, and global request blocking.
           </p>
         </div>
         {configuration.data && (
@@ -634,7 +765,10 @@ export function RoutingPage() {
       <div className="py-5">
         {loading ? (
           <LoadingState />
-        ) : error || !configuration.data || !profiles.data ? (
+        ) : error ||
+          !configuration.data ||
+          !profiles.data ||
+          !networkPolicy.data ? (
           <ErrorState error={error} retry={retry} />
         ) : (
           <div className="space-y-4">
@@ -660,6 +794,11 @@ export function RoutingPage() {
               key={`${configuration.data.configuration_version}:${configuration.data.default_provider}:${configuration.data.existing_domain_probe_rate_basis_points}:${configuration.data.required_health_confirmations}`}
               configuration={configuration.data}
               profiles={profiles.data}
+            />
+
+            <NetworkPolicySettings
+              key={`${networkPolicy.data.configuration_version}:${networkPolicy.data.blocked_domain_patterns.join(",")}`}
+              policy={networkPolicy.data}
             />
 
             <ProviderPolicy

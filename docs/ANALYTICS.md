@@ -19,19 +19,42 @@ Probes never retain HTML or inspect historical CDP methods. Probe sessions remai
 visible in Activity but do not feed domain or cost projections. Health is
 versioned by the health policy and provider contract.
 
-Browserbase is not probed. When it is enabled and has non-zero administrative
-capacity, it remains the terminal correctness fallback.
+Browserbase is not probed. Enabled administrative capacity is only a global
+availability guardrail. Automatic sessions must also opt in with
+`harbor.provider.allow_paid_fallback=true`; without that per-session permission,
+Browserbase is absent from the plan.
 
 ## Runtime plan
 
-For a known domain, Harbor orders current healthy HTTP and Browserless candidates by
-observed average attempt cost, falling back to configured cost. Enabled Browserbase
-capacity is appended as the terminal fallback and participates in cost ordering when
-another eligible candidate exists.
+For a known domain, Harbor begins with current healthy HTTP and Browserless candidates.
+It normally orders them by observed average attempt cost, falling back to configured
+cost. A compact per-domain preference can put Browserless first when recent execution
+shows that HTTP is unlikely to be sufficient.
+
+Harbor stores the routing conclusion rather than raw command history:
+
+- a successful HTTP-to-Browserless transition is strong browser-required evidence;
+- a successful HTTP-only navigation is strong HTTP-sufficient evidence;
+- a successful Browserless session whose commands remained HTTP-compatible is weaker
+  downward evidence; and
+- failures, replay timeouts, and capacity errors do not change execution preference.
+
+The score decays with a seven-day half-life and uses hysteresis. Two strong
+browser-required outcomes promote Browserless. Compatible outcomes can later move
+the domain back to HTTP. While Browserless is preferred, a deterministic 10% of
+sessions are HTTP canaries so Harbor can discover that HTTP has become sufficient
+again without retaining individual CDP methods.
+
+Browserbase never participates in the local cost ordering and can never be automatic
+plan position zero. When both the global capacity guardrail and the session opt-in are
+present, it is appended after a local candidate. Even if current local health evidence
+is unfavorable, Harbor makes one live Browserless correctness attempt before the paid
+fallback.
 
 The configured `default_provider` is only the bootstrap route when the domain has no
-current health evidence. Explicit `harbor.provider.slug` selection remains an
-override, but it cannot bypass provider admission limits.
+current health evidence, and Browserbase cannot be configured as that default.
+Explicit `harbor.provider.slug` selection remains an override, but it cannot bypass
+provider admission limits.
 
 An automatic session may start on HTTP and escalate once to a browser. Harbor replays
 the bounded acknowledged bootstrap history, then forwards subsequent CDP traffic
@@ -90,6 +113,7 @@ PostgreSQL owns:
 - bounded `provider_command_cost_stats`;
 - attempt-level browser and billable time;
 - routing configuration and factual escalation statistics.
+- compact domain routing preferences and evidence counters.
 
 Operators can read the aggregate directly through:
 

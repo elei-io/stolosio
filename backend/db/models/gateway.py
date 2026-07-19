@@ -30,6 +30,27 @@ class GatewayState(Base):
     key: Mapped[str] = mapped_column(String(32), primary_key=True)
 
 
+class NetworkPolicyConfiguration(Base):
+    __tablename__ = "network_policy_configuration"
+    __table_args__ = (
+        CheckConstraint(
+            "jsonb_typeof(blocked_domain_patterns) = 'array'",
+            name="ck_network_policy_blocked_domains_array",
+        ),
+    )
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    blocked_domain_patterns: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    configuration_version: Mapped[int] = mapped_column(
+        nullable=False, default=1, server_default="1"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ProviderState(Base):
     __tablename__ = "gateway_provider_state"
 

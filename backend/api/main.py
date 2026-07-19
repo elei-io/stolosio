@@ -13,6 +13,7 @@ from backend.api.routes.admin_costs import router as admin_costs_router
 from backend.api.routes.admin_domains import router as admin_domains_router
 from backend.api.routes.admin_events import router as admin_events_router
 from backend.api.routes.admin_fleets import router as admin_fleets_router
+from backend.api.routes.admin_network import router as admin_network_router
 from backend.api.routes.admin_provider_capacity import router as admin_provider_capacity_router
 from backend.api.routes.admin_routing import router as admin_routing_router
 from backend.api.routes.admin_sessions import router as admin_sessions_router
@@ -39,6 +40,7 @@ from backend.proxy.domains import DomainQueryService
 from backend.proxy.external_capacity import ExternalCapacityRepository
 from backend.proxy.gateway import Gateway
 from backend.proxy.health import PromotionRepository
+from backend.proxy.network_policy import NetworkPolicyRepository
 from backend.proxy.postgres import (
     PostgresAttemptRepository,
     PostgresSessionRepository,
@@ -82,6 +84,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     attempt_repository = PostgresAttemptRepository(session_factory)
     routing = RoutingRepository(session_factory)
     await routing.ensure_defaults()
+    network_policy = NetworkPolicyRepository(session_factory)
+    await network_policy.ensure_defaults()
     nats_client = None
     try:
         async with asyncio.timeout(settings.nats_connect_timeout_seconds):
@@ -120,6 +124,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.fleet_admin = FleetService(fleet_repository)
     app.state.external_capacity = external_capacity
     app.state.routing = routing
+    app.state.network_policy = network_policy
     app.state.domains = DomainQueryService(session_factory)
     app.state.session_queries = SessionQueryService(session_factory)
     app.state.command_costs = CommandCostQueryService(session_factory)
@@ -153,6 +158,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         event_publisher if nats_client is not None else None,
         transition_repository=ProviderTransitionRepository(session_factory),
         routing=routing,
+        network_policy=network_policy,
     )
     try:
         yield
@@ -163,11 +169,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await engine.dispose()
 
 
-app = FastAPI(title=settings.app_name, version="0.1.9", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.1.10", lifespan=lifespan)
 app.include_router(admin_command_costs_router)
 app.include_router(admin_costs_router)
 app.include_router(admin_events_router)
 app.include_router(admin_fleets_router)
+app.include_router(admin_network_router)
 app.include_router(admin_provider_capacity_router)
 app.include_router(admin_domains_router)
 app.include_router(admin_routing_router)

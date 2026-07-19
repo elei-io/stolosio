@@ -35,6 +35,12 @@ policy adds instances when live demand exceeds the capacity actually provisioned
 An instance already requested but not yet observed is treated as an in-flight scaling
 operation so a slow image pull cannot cause runaway expansion.
 
+The fleet controller exposes bounded Prometheus telemetry for scaling actions,
+request-to-ready latency, request-to-first-assignment latency, and instances removed
+without ever serving an acquisition attempt. These observations are recorded from the
+controller's successful scale request, so they measure Harbor's operational path
+rather than approximating it from pod creation timestamps.
+
 On Kubernetes and k3s, Harbor owns a Browserless StatefulSet generated from a
 GitOps-managed workload template. Harbor writes its replica count directly; KEDA and
 HPA must not target that StatefulSet. Deterministic StatefulSet ordinals let Harbor
