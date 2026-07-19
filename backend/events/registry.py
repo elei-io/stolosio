@@ -93,6 +93,10 @@ class ProviderTransitionPayload(_Payload):
     trigger_method: str = Field(max_length=128)
 
 
+class ProviderDisconnectPayload(_Payload):
+    reason: str | None = Field(default=None, max_length=64)
+
+
 _LIFECYCLE = {
     EventType.SESSION_OPEN,
     EventType.SESSION_CLOSED,
@@ -115,6 +119,7 @@ _MODELS: dict[EventType, type[_Payload]] = {
     **dict.fromkeys(_ATTEMPTS, AttemptPayload),
     **dict.fromkeys(_COMMANDS, CommandPayload),
     **dict.fromkeys(_OBSERVATIONS, ObservationPayload),
+    EventType.PROVIDER_DISCONNECTED: ProviderDisconnectPayload,
     EventType.EXECUTION_TRANSITIONED: ProviderTransitionPayload,
     EventType.COMMAND_SUMMARY: CommandSummaryPayload,
 }

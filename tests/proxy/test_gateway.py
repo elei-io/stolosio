@@ -6,6 +6,7 @@ from fastapi import WebSocketDisconnect
 
 from backend.proxy.contracts import ProviderName
 from backend.proxy.errors import (
+    DomainBlockingUnavailable,
     InvalidCdpMessage,
     ProviderConnectionLost,
     ProviderTimeout,
@@ -101,6 +102,18 @@ async def test_classifies_provider_session_deadline_as_timeout() -> None:
     upstream.disconnect_reason = "provider_timeout"
 
     with pytest.raises(ProviderTimeout):
+        await _upstream_to_downstream(  # type: ignore[arg-type]
+            upstream,
+            FakeDownstream(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_preserves_domain_blocking_failure_reason() -> None:
+    upstream = FakeUpstream()
+    upstream.disconnect_reason = "domain_blocking_unavailable"
+
+    with pytest.raises(DomainBlockingUnavailable):
         await _upstream_to_downstream(  # type: ignore[arg-type]
             upstream,
             FakeDownstream(),

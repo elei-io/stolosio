@@ -89,6 +89,19 @@ async def test_unsupported_and_interrupted_commands_get_terminal_events() -> Non
 
 
 @pytest.mark.asyncio
+async def test_provider_disconnect_records_the_stable_reason() -> None:
+    publisher = CapturingPublisher()
+    observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.BROWSERLESS, publisher)
+
+    await observer.provider_disconnected("domain_blocking_unavailable")
+
+    assert publisher.events[-1].event_type == "provider.disconnected"
+    assert publisher.events[-1].payload == {
+        "reason": "domain_blocking_unavailable",
+    }
+
+
+@pytest.mark.asyncio
 async def test_malformed_provider_evidence_does_not_escape_the_observer() -> None:
     publisher = CapturingPublisher()
     observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.BROWSERLESS, publisher)

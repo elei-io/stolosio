@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
@@ -5,6 +6,7 @@ import pytest
 
 from backend.proxy.contracts import ProviderName
 from backend.proxy.errors import DomainBlockingUnavailable
+from backend.proxy.transport import domain_blocking
 from backend.proxy.transport.domain_blocking import DomainBlockingProviderSession
 
 
@@ -108,3 +110,38 @@ async def test_provider_rejection_is_an_explicit_domain_blocking_error() -> None
 
     with pytest.raises(DomainBlockingUnavailable):
         await anext(session.messages())
+
+    assert session.disconnect_reason == "domain_blocking_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_policy_bootstrap_timeout_is_an_explicit_domain_blocking_error(
+    monkeypatch,
+) -> None:
+    class StalledProviderSession(FakeProviderSession):
+        async def messages(self) -> AsyncIterator[str]:
+            yield json.dumps(
+                {
+                    "method": "Target.attachedToTarget",
+                    "params": {
+                        "sessionId": "target-session",
+                        "targetInfo": {"type": "page"},
+                    },
+                }
+            )
+            await asyncio.Future()
+
+    monkeypatch.setattr(
+        domain_blocking,
+        "_BOOTSTRAP_TIMEOUT_SECONDS",
+        0.01,
+    )
+    session = DomainBlockingProviderSession(
+        StalledProviderSession([]),
+        ("ads.example",),
+    )
+
+    with pytest.raises(DomainBlockingUnavailable):
+        await anext(session.messages())
+
+    assert session.disconnect_reason == "domain_blocking_unavailable"

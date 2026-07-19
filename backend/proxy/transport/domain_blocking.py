@@ -18,7 +18,7 @@ _BLOCKABLE_TARGET_TYPES = frozenset(
         "worker",
     }
 )
-_BOOTSTRAP_TIMEOUT_SECONDS = 5
+_BOOTSTRAP_TIMEOUT_SECONDS = 15
 
 
 class DomainBlockingProviderSession:
@@ -35,6 +35,7 @@ class DomainBlockingProviderSession:
         self._downstream_command_ids: set[tuple[str | None, int]] = set()
         self._internal_command_ids: set[tuple[str, int]] = set()
         self._command_id_condition = asyncio.Condition()
+        self._disconnect_reason: str | None = None
 
     @property
     def provider(self):
@@ -42,7 +43,7 @@ class DomainBlockingProviderSession:
 
     @property
     def disconnect_reason(self) -> str | None:
-        return self._upstream.disconnect_reason
+        return self._disconnect_reason or self._upstream.disconnect_reason
 
     def __getattr__(self, name: str):
         return getattr(self._upstream, name)
@@ -74,10 +75,14 @@ class DomainBlockingProviderSession:
             await self._complete_downstream_command(message)
             session_id = self._attached_page_session_id(message)
             if session_id is not None:
-                buffered = await self._configure_target(
-                    upstream_messages,
-                    session_id,
-                )
+                try:
+                    buffered = await self._configure_target(
+                        upstream_messages,
+                        session_id,
+                    )
+                except DomainBlockingUnavailable:
+                    self._disconnect_reason = DomainBlockingUnavailable.reason
+                    raise
                 pending.extend(buffered)
             yield message
 

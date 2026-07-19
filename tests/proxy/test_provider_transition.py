@@ -26,6 +26,7 @@ from backend.proxy.contracts import (
     SessionState,
     SettingSource,
 )
+from backend.proxy.errors import DomainBlockingUnavailable
 from backend.proxy.provider_transition.history import ProviderTransitionRepository
 from backend.proxy.provider_transition.session import (
     ProviderTransitionError,
@@ -261,7 +262,32 @@ async def test_transition_replays_every_acknowledged_command_in_order_with_id_ma
             },
             {"id": 2, "result": {"targetId": "actual-target"}},
             {"id": 3, "result": {"frameId": "actual-frame"}},
-            {"method": "Page.domContentEventFired", "params": {"timestamp": 1.0}},
+            {
+                "method": "Runtime.executionContextCreated",
+                "params": {
+                    "context": {
+                        "id": 7,
+                        "auxData": {
+                            "isDefault": True,
+                            "frameId": "actual-frame",
+                        },
+                    }
+                },
+                "sessionId": "actual-session",
+            },
+            {
+                "method": "Runtime.executionContextCreated",
+                "params": {
+                    "context": {
+                        "id": 8,
+                        "auxData": {
+                            "isDefault": False,
+                            "frameId": "actual-frame",
+                        },
+                    }
+                },
+                "sessionId": "actual-session",
+            },
         ]
     )
     facade = transition_session(upstream)
@@ -299,6 +325,32 @@ async def test_transition_replays_every_acknowledged_command_in_order_with_id_ma
                 "params": {"url": "https://example.com"},
             },
             response={"id": 3, "result": {"frameId": "synthetic-frame"}},
+            events=[
+                {
+                    "method": "Runtime.executionContextCreated",
+                    "params": {
+                        "context": {
+                            "id": 3,
+                            "auxData": {
+                                "isDefault": True,
+                                "frameId": "synthetic-frame",
+                            },
+                        }
+                    },
+                },
+                {
+                    "method": "Runtime.executionContextCreated",
+                    "params": {
+                        "context": {
+                            "id": 4,
+                            "auxData": {
+                                "isDefault": False,
+                                "frameId": "synthetic-frame",
+                            },
+                        }
+                    },
+                },
+            ],
         ),
     ]
 
@@ -343,6 +395,87 @@ async def test_transition_stops_waiting_when_replayed_navigation_returns_an_erro
         match="Replay failed for Page.navigate: provider command error",
     ):
         await facade._replay_history()
+
+
+def test_navigation_replay_ignores_unrelated_execution_contexts() -> None:
+    response = {"id": 1, "result": {"frameId": "expected-frame"}}
+    expected_events = [
+        {
+            "method": "Runtime.executionContextCreated",
+            "params": {
+                "context": {
+                    "id": 3,
+                    "auxData": {
+                        "isDefault": True,
+                        "frameId": "synthetic-frame",
+                    },
+                }
+            },
+        },
+        {
+            "method": "Runtime.executionContextCreated",
+            "params": {
+                "context": {
+                    "id": 4,
+                    "auxData": {
+                        "isDefault": False,
+                        "frameId": "synthetic-frame",
+                    },
+                }
+            },
+        },
+    ]
+
+    assert not ProviderTransitionSession._replay_boundary_reached(
+        "Page.navigate",
+        response,
+        [
+            {
+                "method": "Runtime.executionContextCreated",
+                "params": {
+                    "context": {
+                        "id": 7,
+                        "auxData": {
+                            "isDefault": False,
+                            "frameId": "expected-frame",
+                        },
+                    }
+                },
+            },
+            {
+                "method": "Runtime.executionContextCreated",
+                "params": {
+                    "context": {
+                        "id": 8,
+                        "auxData": {
+                            "isDefault": True,
+                            "frameId": "other-frame",
+                        },
+                    }
+                },
+            },
+        ],
+        expected_events,
+    )
+    assert not ProviderTransitionSession._replay_boundary_reached(
+        "Page.navigate",
+        {"id": 1, "result": {}},
+        [
+            {
+                "method": "Runtime.executionContextCreated",
+                "params": {
+                    "context": {
+                        "id": 9,
+                        "auxData": {
+                            "isDefault": True,
+                            "frameId": "other-frame",
+                        },
+                    }
+                },
+            }
+        ],
+        expected_events,
+    )
 
 
 @pytest.mark.asyncio
@@ -407,6 +540,23 @@ async def test_transition_preserves_provider_timeout_reason() -> None:
     assert "execution" not in facade._reverse_ids
     assert "object" not in facade._forward_ids
     assert "object" not in facade._reverse_ids
+
+
+@pytest.mark.asyncio
+async def test_transition_preserves_domain_blocking_failure_reason() -> None:
+    class BlockedProviderSession(FakeProviderSession):
+        disconnect_reason = "domain_blocking_unavailable"
+
+        async def messages(self) -> AsyncIterator[str]:
+            raise DomainBlockingUnavailable
+            yield  # pragma: no cover
+
+    upstream = BlockedProviderSession([])
+    facade = transition_session(upstream)
+
+    await facade._pump_upstream()
+
+    assert facade.disconnect_reason == "domain_blocking_unavailable"
 
 
 @pytest.mark.asyncio
