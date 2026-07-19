@@ -30,7 +30,10 @@ exists and never overwrites a saved value. The fleet controller applies the stor
 session capacity to Browserless workers and reports observed concurrency back to
 PostgreSQL. A changed value is applied once the fleet has no live demand so existing
 browser sessions are not interrupted; admission continues to use observed worker
-capacity until reconfiguration completes.
+capacity until reconfiguration completes. During a mixed-capacity transition, fleet
+policy adds instances when live demand exceeds the capacity actually provisioned.
+An instance already requested but not yet observed is treated as an in-flight scaling
+operation so a slow image pull cannot cause runaway expansion.
 
 On Kubernetes and k3s, Harbor owns a Browserless StatefulSet generated from a
 GitOps-managed workload template. Harbor writes its replica count directly; KEDA and
