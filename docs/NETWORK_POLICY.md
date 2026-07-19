@@ -42,9 +42,12 @@ For native browser providers, Harbor converts the domain patterns to CDP URL
 patterns and applies `Network.setBlockedURLs` to each attached page, iframe, worker,
 and service-worker target before exposing that attachment to the downstream client.
 The Harbor-owned command response is consumed internally; downstream command IDs,
-session IDs, and event order remain unchanged. If the provider rejects or times out
-while applying the policy, Harbor closes the connection with
-`domain_blocking_unavailable` rather than continuing without the requested policy.
+session IDs, and target-local event order remain unchanged. Harbor configures attached
+targets concurrently and holds only traffic for a target whose policy is not yet
+confirmed, so an attaching worker cannot delay traffic for an already-configured page.
+If the provider rejects or times out while applying the policy, Harbor closes the
+connection with `domain_blocking_unavailable` rather than continuing without the
+requested policy.
 
 The HTTP provider does not fetch page subresources. It applies the same policy to
 top-level `Page.navigate` requests and returns an explicit protocol error for a

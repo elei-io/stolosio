@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import time
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -132,6 +132,17 @@ class ProviderTransitionSession:
         self._current_entry: ReplayEntry | None = None
         self._forward_ids: dict[str, dict[object, object]] = defaultdict(dict)
         self._reverse_ids: dict[str, dict[object, object]] = defaultdict(dict)
+        self._replay_expected_contexts: list[
+            tuple[dict[str, object], dict[str, Any]]
+        ] = []
+        self._replay_observed_contexts: list[
+            tuple[dict[str, object], dict[str, Any]]
+        ] = []
+        self._replay_expected_contexts_by_id: dict[object, dict[str, object]] = {}
+        self._replay_observed_context_descriptors: deque[dict[str, object]] = deque(
+            maxlen=32
+        )
+        self._replay_context_registration_complete = False
 
         self._context_id = uuid4().hex.upper()
         self._target_id = uuid4().hex.upper()
@@ -653,6 +664,7 @@ class ProviderTransitionSession:
                         selected,
                         transition_trigger=trigger if from_provider is not None else None,
                     )
+                await self._wait_for_replay_contexts(pending)
                 await self._forward(pending)
                 self._observer.bind_attempt(target, UUID(target_attempt.attempt.attempt_id))
                 self._attempt = target_attempt
@@ -754,19 +766,21 @@ class ProviderTransitionSession:
     async def _replay_history(self) -> None:
         assert self._upstream is not None
         assert self._upstream_messages is not None
+        self._reset_replay_context_tracking()
         for entry in self._replay:
+            await self._wait_for_replay_contexts(entry.command)
+            self._register_expected_replay_contexts(entry.events)
             translated = self._rewrite(entry.command, self._forward_ids)
             await self._upstream.send(json.dumps(translated, separators=(",", ":")))
             response, events = await self._replay_response(
                 entry.command,
+                expected_response=entry.response,
                 expected_events=entry.events,
             )
             if "error" in response:
                 raise ProviderTransitionError(
                     f"Replay failed for {entry.command['method']}: provider command error"
                 )
-            if entry.response is not None:
-                self._pair_identifiers(entry.response, response)
             actual_by_method: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for event in events:
                 method = event.get("method")
@@ -775,18 +789,23 @@ class ProviderTransitionSession:
             synthetic_offsets: Counter[str] = Counter()
             for synthetic in entry.events:
                 method = synthetic.get("method")
-                if not isinstance(method, str):
+                if not isinstance(method, str) or method in {
+                    "Runtime.executionContextCreated",
+                    "Runtime.executionContextsCleared",
+                }:
                     continue
                 offset = synthetic_offsets[method]
                 candidates = actual_by_method[method]
                 if offset < len(candidates):
                     self._pair_identifiers(synthetic, candidates[offset])
                     synthetic_offsets[method] += 1
+        self._replay_context_registration_complete = True
 
     async def _replay_response(
         self,
         command: dict[str, Any],
         *,
+        expected_response: dict[str, Any] | None,
         expected_events: list[dict[str, Any]],
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         assert self._upstream_messages is not None
@@ -800,8 +819,11 @@ class ProviderTransitionSession:
                     value = json.loads(raw)
                     if value.get("id") == command["id"]:
                         response = value
+                        if expected_response is not None:
+                            self._pair_identifiers(expected_response, response)
                     elif isinstance(value.get("method"), str):
                         events.append(value)
+                        self._observe_replay_context(value)
                     if response is not None and (
                         "error" in response
                         or self._replay_boundary_reached(
@@ -812,7 +834,10 @@ class ProviderTransitionSession:
                         )
                     ):
                         return response, events
-        except TimeoutError as error:
+        except (StopAsyncIteration, TimeoutError) as error:
+            if method == "Page.navigate":
+                expected_ids = self._default_context_ids(expected_events)
+                self._log_replay_context_timeout(method, expected_ids)
             raise ProviderTransitionError(f"Replay timed out for {method}") from error
 
     @staticmethod
@@ -832,19 +857,17 @@ class ProviderTransitionSession:
             frame_id = result.get("frameId") if isinstance(result, dict) else None
             if not isinstance(frame_id, str):
                 return False
-            expected_contexts: Counter[bool] = Counter()
+            expects_default_context = False
             for event in expected_events:
                 if event.get("method") != "Runtime.executionContextCreated":
                     continue
                 params = event.get("params")
                 context = params.get("context") if isinstance(params, dict) else None
                 aux_data = context.get("auxData") if isinstance(context, dict) else None
-                if isinstance(aux_data, dict) and isinstance(
-                    aux_data.get("isDefault"),
-                    bool,
-                ):
-                    expected_contexts[aux_data["isDefault"]] += 1
-            if not expected_contexts:
+                if isinstance(aux_data, dict) and aux_data.get("isDefault") is True:
+                    expects_default_context = True
+                    break
+            if not expects_default_context:
                 return bool(
                     {
                         "Page.domContentEventFired",
@@ -852,23 +875,213 @@ class ProviderTransitionSession:
                     }
                     & event_methods
                 )
-            actual_contexts: Counter[bool] = Counter()
+            actual_default_contexts = 0
             for event in events:
                 if event.get("method") != "Runtime.executionContextCreated":
                     continue
                 params = event.get("params")
                 context = params.get("context") if isinstance(params, dict) else None
                 aux_data = context.get("auxData") if isinstance(context, dict) else None
-                is_default = aux_data.get("isDefault") if isinstance(aux_data, dict) else None
-                if not isinstance(is_default, bool):
-                    continue
-                if aux_data.get("frameId") == frame_id:
-                    actual_contexts[is_default] += 1
-            return all(
-                actual_contexts[is_default] >= count
-                for is_default, count in expected_contexts.items()
-            )
+                if (
+                    isinstance(aux_data, dict)
+                    and aux_data.get("isDefault") is True
+                    and aux_data.get("frameId") == frame_id
+                ):
+                    actual_default_contexts += 1
+            return actual_default_contexts >= 1
         return True
+
+    def _reset_replay_context_tracking(self) -> None:
+        self._replay_expected_contexts.clear()
+        self._replay_observed_contexts.clear()
+        self._replay_expected_contexts_by_id.clear()
+        self._replay_observed_context_descriptors.clear()
+        self._replay_context_registration_complete = False
+
+    def _register_expected_replay_contexts(
+        self,
+        events: list[dict[str, Any]],
+    ) -> None:
+        for event in events:
+            method = event.get("method")
+            if method == "Runtime.executionContextsCleared":
+                self._replay_expected_contexts.clear()
+                self._replay_observed_contexts.clear()
+                self._replay_expected_contexts_by_id.clear()
+                self._replay_observed_context_descriptors.clear()
+                self._clear_execution_context_mappings()
+                continue
+            if method != "Runtime.executionContextCreated":
+                continue
+            descriptor = self._execution_context_descriptor(event)
+            if descriptor is None:
+                continue
+            context_id = descriptor.get("id")
+            if isinstance(context_id, str | int):
+                self._replay_expected_contexts_by_id[context_id] = descriptor
+            self._replay_expected_contexts.append((descriptor, event))
+            self._match_replay_contexts()
+
+    def _observe_replay_context(self, event: dict[str, Any]) -> None:
+        method = event.get("method")
+        if method == "Runtime.executionContextsCleared":
+            if self._replay_context_registration_complete:
+                self._replay_expected_contexts.clear()
+                self._replay_expected_contexts_by_id.clear()
+            self._replay_observed_contexts.clear()
+            self._replay_observed_context_descriptors.clear()
+            self._clear_execution_context_mappings()
+            return
+        if method != "Runtime.executionContextCreated":
+            return
+        descriptor = self._execution_context_descriptor(event)
+        if descriptor is None:
+            return
+        self._replay_observed_context_descriptors.append(descriptor)
+        self._replay_observed_contexts.append((descriptor, event))
+        matched = self._match_replay_contexts()
+        if not matched and self._replay_context_registration_complete:
+            self._replay_observed_contexts.pop()
+
+    def _match_replay_contexts(self) -> bool:
+        for expected_index, (expected, synthetic) in enumerate(
+            self._replay_expected_contexts
+        ):
+            for observed_index, (observed, actual) in enumerate(
+                self._replay_observed_contexts
+            ):
+                if not self._context_descriptors_match(expected, observed):
+                    continue
+                self._pair_identifiers(synthetic, actual)
+                self._replay_expected_contexts.pop(expected_index)
+                self._replay_observed_contexts.pop(observed_index)
+                return True
+        return False
+
+    def _context_descriptors_match(
+        self,
+        expected: dict[str, object],
+        observed: dict[str, object],
+    ) -> bool:
+        identifier_fields = {
+            "sessionId": "session",
+            "frameId": "frame",
+        }
+        for descriptor_field, kind in identifier_fields.items():
+            left = expected.get(descriptor_field)
+            right = observed.get(descriptor_field)
+            if left is None or right is None:
+                continue
+            translated = self._forward_ids.get(kind, {}).get(left, left)
+            if translated != right:
+                return False
+        for descriptor_field in ("isDefault", "type", "name"):
+            left = expected.get(descriptor_field)
+            right = observed.get(descriptor_field)
+            if left is not None and right is not None and left != right:
+                return False
+        return True
+
+    @staticmethod
+    def _execution_context_descriptor(
+        event: dict[str, Any],
+    ) -> dict[str, object] | None:
+        params = event.get("params")
+        context = params.get("context") if isinstance(params, dict) else None
+        if not isinstance(context, dict):
+            return None
+        aux_data = context.get("auxData")
+        typed_aux_data = aux_data if isinstance(aux_data, dict) else {}
+        descriptor: dict[str, object] = {}
+        values = {
+            "id": context.get("id"),
+            "sessionId": event.get("sessionId"),
+            "frameId": typed_aux_data.get("frameId"),
+            "isDefault": typed_aux_data.get("isDefault"),
+            "type": typed_aux_data.get("type"),
+            "name": context.get("name"),
+        }
+        for key, value in values.items():
+            if isinstance(value, str | int | bool):
+                descriptor[key] = value
+        return descriptor
+
+    @classmethod
+    def _execution_context_references(cls, value: Any) -> set[object]:
+        references: set[object] = set()
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if (
+                    cls._identifier_kind(key, None) == "execution"
+                    and isinstance(item, str | int)
+                ):
+                    references.add(item)
+                else:
+                    references.update(cls._execution_context_references(item))
+        elif isinstance(value, list):
+            for item in value:
+                references.update(cls._execution_context_references(item))
+        return references
+
+    async def _wait_for_replay_contexts(self, command: dict[str, Any]) -> None:
+        assert self._upstream_messages is not None
+        references = self._execution_context_references(command)
+        missing = {
+            context_id
+            for context_id in references
+            if context_id not in self._forward_ids.get("execution", {})
+        }
+        if not missing:
+            return
+        method = str(command.get("method", "unknown"))
+        try:
+            async with asyncio.timeout(
+                self._settings.provider_transition_replay_timeout_seconds
+            ):
+                while missing:
+                    raw = await anext(self._upstream_messages)
+                    value = json.loads(raw)
+                    if isinstance(value.get("method"), str):
+                        self._observe_replay_context(value)
+                    missing = {
+                        context_id
+                        for context_id in missing
+                        if context_id not in self._forward_ids.get("execution", {})
+                    }
+        except (StopAsyncIteration, TimeoutError) as error:
+            self._log_replay_context_timeout(method, missing)
+            raise ProviderTransitionError(f"Replay timed out for {method}") from error
+
+    @staticmethod
+    def _default_context_ids(events: list[dict[str, Any]]) -> set[object]:
+        context_ids: set[object] = set()
+        for event in events:
+            descriptor = ProviderTransitionSession._execution_context_descriptor(event)
+            if descriptor is None or descriptor.get("isDefault") is not True:
+                continue
+            context_id = descriptor.get("id")
+            if isinstance(context_id, str | int):
+                context_ids.add(context_id)
+        return context_ids
+
+    def _log_replay_context_timeout(
+        self,
+        method: str,
+        expected_ids: set[object],
+    ) -> None:
+        expected = [
+            self._replay_expected_contexts_by_id.get(
+                context_id,
+                {"id": context_id},
+            )
+            for context_id in sorted(expected_ids, key=str)
+        ]
+        logger.warning(
+            "Replay context wait timed out for %s: expected=%s observed=%s",
+            method,
+            expected,
+            list(self._replay_observed_context_descriptors),
+        )
 
     async def _forward(self, command: dict[str, Any]) -> None:
         assert self._upstream is not None
@@ -881,8 +1094,7 @@ class ProviderTransitionSession:
         try:
             async for raw in self._upstream_messages:
                 value = json.loads(raw)
-                if value.get("method") == "Runtime.executionContextsCleared":
-                    self._clear_execution_context_mappings()
+                self._observe_replay_context(value)
                 rewritten = self._rewrite(value, self._reverse_ids)
                 await self._put(rewritten)
         except Exception as error:
