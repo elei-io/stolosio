@@ -16,7 +16,15 @@
       "required": ["existingSecret", "urlSecretKey"],
       "properties": {
         "existingSecret": {"type": "string", "minLength": 1},
-        "urlSecretKey": {"type": "string", "minLength": 1}
+        "urlSecretKey": {"type": "string", "minLength": 1},
+        "seedSecretKey": {"type": "string"}
+      }
+    },
+    "migration": {
+      "type": "object",
+      "required": ["ttlSecondsAfterFinished"],
+      "properties": {
+        "ttlSecondsAfterFinished": {"type": "integer", "minimum": 0}
       }
     }
   }

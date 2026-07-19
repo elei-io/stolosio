@@ -81,7 +81,7 @@ and fleet controller. Browserless remains the upstream
 images.
 
 Pushes to `main` publish `main` and immutable `sha-<short-commit>` image tags. A
-semantic Git tag such as `v0.1.0` publishes matching versioned images and the OCI Helm
+semantic Git tag such as `v0.1.1` publishes matching versioned images and the OCI Helm
 chart. Use the versioned release for normal GitOps; use a `sha-*` tag only when testing
 an unreleased application build with the chart checked out from Git.
 
@@ -98,7 +98,8 @@ metadata:
 type: Opaque
 stringData:
   database-url: postgresql+asyncpg://harbor:password@postgres.example:5432/harbor
-  nats-url: nats://nats.example:4222
+  nats-url: tls://nats.example:4222
+  nats-seed: SU...
 ```
 
 Install Harbor:
@@ -106,11 +107,12 @@ Install Harbor:
 ```bash
 helm upgrade --install harbor \
   oci://ghcr.io/ekkuleivonen/charts/harbor \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace harbor \
   --create-namespace \
   --set database.existingSecret=harbor-connections \
-  --set nats.existingSecret=harbor-connections
+  --set nats.existingSecret=harbor-connections \
+  --set nats.seedSecretKey=nats-seed
 ```
 
 The release chart defaults to matching Harbor and web image versions and a pinned

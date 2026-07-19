@@ -53,6 +53,13 @@ app.kubernetes.io/instance: {{ .Release.Name }}
     secretKeyRef:
       name: {{ required "nats.existingSecret is required" .Values.nats.existingSecret }}
       key: {{ .Values.nats.urlSecretKey }}
+{{- with .Values.nats.seedSecretKey }}
+- name: NATS_SEED
+  valueFrom:
+    secretKeyRef:
+      name: {{ $.Values.nats.existingSecret }}
+      key: {{ . }}
+{{- end }}
 {{- end }}
 
 {{- define "harbor.browserbaseEnv" -}}

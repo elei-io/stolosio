@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     app_name: str = "Harbor"
     database_url: str = "postgresql+asyncpg://harbor:harbor@localhost:5433/harbor"
     nats_url: AnyUrl = AnyUrl("nats://localhost:4223")
+    nats_seed: str = ""
     nats_connect_timeout_seconds: float = 1
     jetstream_event_max_age_seconds: int = 86_400
     jetstream_event_max_bytes: int = 10 * 1024 * 1024 * 1024

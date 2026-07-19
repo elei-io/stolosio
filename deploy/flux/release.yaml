@@ -15,5 +15,6 @@ spec:
     nats:
       existingSecret: harbor-connections
       urlSecretKey: nats-url
+      seedSecretKey: nats-seed
     imagePullSecrets:
       - name: ghcr-auth
