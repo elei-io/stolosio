@@ -2,7 +2,7 @@ server {
     listen 8080;
     server_name _;
 
-    location = /v1/connect {
+    location ^~ /v1/connect {
         return 404;
     }
 

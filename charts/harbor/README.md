@@ -61,8 +61,8 @@ come from PostgreSQL.
 The chart creates no Ingress. API and UI Services default to `LoadBalancer`, and can
 be changed to `ClusterIP` when the platform supplies its own exposure layer. Keep all
 image tags pinned when overriding the chart defaults. The web service proxies the
-dashboard's HTTP API requests, but intentionally returns `404` for `/v1/connect`;
-CDP clients must use the API service.
+dashboard's HTTP API requests, but intentionally returns `404` for the
+`/v1/connect` route family; CDP clients must use the API service.
 
 See [the Kubernetes deployment guide](../../docs/KUBERNETES.md) for ownership,
 networking, scaling, and installation details.
