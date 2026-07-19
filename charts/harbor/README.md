@@ -28,17 +28,20 @@ database:
 nats:
   existingSecret: harbor-connections
   urlSecretKey: nats-url
+  seedSecretKey: nats-seed
 ```
 
 The Secret must already exist in the release namespace.
+`nats.seedSecretKey` is optional for password or token authenticated NATS
+deployments. Set it for an NKey seed stored in the same Secret.
 
 Fleet limits and Browserless session capacity are administered through Harbor and
 stored in PostgreSQL. They are not Helm values.
 
 The PostgreSQL identity must be able to apply Harbor's schema migrations. The NATS
 identity must be able to manage Harbor's own JetStream resources. The chart runs
-migrations as a pre-install and pre-upgrade Helm Job; it never provisions PostgreSQL
-or NATS.
+migrations as a pre-install and pre-upgrade Helm Job and retains a successful Job for
+`migration.ttlSecondsAfterFinished`; it never provisions PostgreSQL or NATS.
 
 Optional Browserbase credentials are also read from an existing Secret:
 

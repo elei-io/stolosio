@@ -25,7 +25,7 @@ from backend.db.session import engine, session_factory
 from backend.debug import ActivityHistoryService, ActivityStreamService, DebugStreamService
 from backend.fleet import FleetRepository, FleetService
 from backend.fleet.bootstrap import ensure_managed_fleets
-from backend.messaging import NatsCapacityNotifier, PollingNotifier
+from backend.messaging import NatsCapacityNotifier, PollingNotifier, nats_auth_options
 from backend.messaging.jetstream import (
     EventStreamSettings,
     JetStreamEventPublisher,
@@ -89,6 +89,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 str(settings.nats_url),
                 connect_timeout=settings.nats_connect_timeout_seconds,
                 max_reconnect_attempts=-1,
+                **nats_auth_options(settings.nats_seed),
             )
         notifier = await NatsCapacityNotifier.start(nats_client)
         event_publisher = InstrumentedEventPublisher(
@@ -162,7 +163,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await engine.dispose()
 
 
-app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.1.1", lifespan=lifespan)
 app.include_router(admin_command_costs_router)
 app.include_router(admin_costs_router)
 app.include_router(admin_events_router)

@@ -1,11 +1,11 @@
 image:
   repository: ghcr.io/ekkuleivonen/harbor
-  tag: "0.1.0"
+  tag: "0.1.1"
   pullPolicy: IfNotPresent
 
 webImage:
   repository: ghcr.io/ekkuleivonen/harbor-web
-  tag: "0.1.0"
+  tag: "0.1.1"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -17,6 +17,10 @@ database:
 nats:
   existingSecret: ""
   urlSecretKey: nats-url
+  seedSecretKey: ""
+
+migration:
+  ttlSecondsAfterFinished: 86400
 
 browserbase:
   apiUrl: https://api.browserbase.com/v1

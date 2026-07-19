@@ -5,6 +5,7 @@ from typing import Protocol
 import nats
 from nats.aio.client import Client as NatsClient
 
+from backend.messaging.connection import nats_auth_options
 from backend.proxy.contracts import ProviderName
 
 _CAPACITY_SUBJECT = "harbor.v1.capacity"
@@ -50,12 +51,19 @@ class NatsCapacityNotifier:
         return notifier
 
     @classmethod
-    async def connect(cls, url: str, *, connect_timeout_seconds: float) -> "NatsCapacityNotifier":
+    async def connect(
+        cls,
+        url: str,
+        *,
+        connect_timeout_seconds: float,
+        seed: str = "",
+    ) -> "NatsCapacityNotifier":
         async with asyncio.timeout(connect_timeout_seconds):
             client = await nats.connect(
                 servers=[url],
                 connect_timeout=connect_timeout_seconds,
                 max_reconnect_attempts=-1,
+                **nats_auth_options(seed),
             )
         notifier = await cls.start(client, owns_client=True)
         await client.flush(timeout=connect_timeout_seconds)

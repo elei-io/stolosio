@@ -2,8 +2,8 @@ apiVersion: v2
 name: harbor
 description: CDP-compatible browser acquisition gateway
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.1.1
+appVersion: "0.1.1"
 home: https://github.com/ekkuleivonen/harbor
 sources:
   - https://github.com/ekkuleivonen/harbor

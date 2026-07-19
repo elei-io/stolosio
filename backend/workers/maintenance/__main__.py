@@ -12,6 +12,7 @@ from prometheus_client import start_http_server
 
 from backend.db.session import engine, session_factory
 from backend.events import LifecycleOutboxPublisher, SessionEvent
+from backend.messaging.connection import nats_auth_options
 from backend.messaging.jetstream import (
     EVENT_STREAM,
     EVENT_SUBJECT,
@@ -200,7 +201,11 @@ async def _retention_loop(retention: RetentionJob) -> None:
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     start_http_server(settings.maintenance_metrics_port, registry=REGISTRY)
-    client = await nats.connect(str(settings.nats_url), max_reconnect_attempts=-1)
+    client = await nats.connect(
+        str(settings.nats_url),
+        max_reconnect_attempts=-1,
+        **nats_auth_options(settings.nats_seed),
+    )
     publisher = InstrumentedEventPublisher(
         await JetStreamEventPublisher.start(
             client,
