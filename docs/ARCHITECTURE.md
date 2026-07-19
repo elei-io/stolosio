@@ -63,7 +63,9 @@ be drained safely. Helm and GitOps own a static workload template rather than th
 replica count. See [Kubernetes and k3s](KUBERNETES.md).
 
 Browserbase is external capacity. Harbor applies an administrator-configured active
-session and queue limit before calling the Browserbase Sessions API. This limit can
+session and queue limit before calling the Browserbase Sessions API. Automatic use
+also requires an explicit per-session paid-fallback opt-in, and Browserbase is never
+the first automatic candidate. This limit can
 track the subscription ceiling or enforce a stricter cost budget.
 
 ## Lifecycle and observations
@@ -87,6 +89,15 @@ aggregate, with browser-connected time capped at the attempt total and residual 
 assigned to session overhead. It does not retain individual command executions.
 DEBUG events contain normalized, redacted observations rather than arbitrary
 parameters, page data, credentials, or diagnoses.
+
+## Network policy
+
+PostgreSQL stores Harbor's operator-managed global domain blocklist. Each provider
+attempt snapshots the current policy version. Browser attempts apply the list to
+newly attached network-capable CDP targets before exposing them downstream; the HTTP
+facade applies it to top-level navigation. Clients cannot override administrative
+network policy through `harbor.*` query parameters. See
+[Network policy](NETWORK_POLICY.md).
 
 ## Process boundaries
 

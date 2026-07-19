@@ -98,6 +98,38 @@ def transition_session(upstream: FakeProviderSession) -> ProviderTransitionSessi
 
 
 @pytest.mark.asyncio
+async def test_http_navigation_honors_the_global_domain_blocklist() -> None:
+    facade = transition_session(FakeProviderSession([]))
+    facade._upstream = None
+    facade._upstream_messages = None
+    facade._resolved = ResolvedSessionSettings(
+        provider=facade._resolved.provider,
+        session=facade._resolved.session,
+        sources=facade._resolved.sources,
+        blocked_domain_patterns=("*.doubleclick.net",),
+        network_policy_version=2,
+    )
+
+    await facade.send(
+        json.dumps(
+            {
+                "id": 1,
+                "method": "Page.navigate",
+                "params": {"url": "https://ads.doubleclick.net/pixel"},
+            }
+        )
+    )
+
+    assert json.loads(await anext(facade.messages())) == {
+        "id": 1,
+        "error": {
+            "code": -32000,
+            "message": "Navigation blocked by Harbor network policy",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_disabling_javascript_remains_lazy_and_is_recorded_for_replay() -> None:
     facade = transition_session(FakeProviderSession([]))
     facade._upstream = None

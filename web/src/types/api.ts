@@ -244,6 +244,15 @@ export type RoutingConfigurationUpdate = {
   required_health_confirmations?: number
 }
 
+export type NetworkPolicy = {
+  blocked_domain_patterns: string[]
+  configuration_version: number
+}
+
+export type NetworkPolicyUpdate = {
+  blocked_domain_patterns: string[]
+}
+
 export type ProviderRoutingProfile = {
   provider: ActivityProvider
   automatic_enabled: boolean
@@ -267,9 +276,13 @@ export type DomainPlanCandidate = {
 export type DomainPlan = {
   reason:
     | "cheapest_eligible"
+    | "adaptive_browser_required"
+    | "adaptive_http_exploration"
     | "configured_default_bootstrap"
+    | "local_correctness_fallback"
     | "no_eligible_provider"
   candidates: DomainPlanCandidate[]
+  paid_fallback_available: boolean
 }
 
 export type DomainSummary = {
@@ -311,6 +324,7 @@ export type DomainProviderEvidence = {
   automatic_enabled: boolean
   health_state: DomainHealthState
   routing_eligible: boolean
+  paid_fallback_available: boolean
   successful_probe_count: number
   failed_probe_count: number
   inconclusive_probe_count: number
@@ -349,6 +363,14 @@ export type DomainDetail = {
   eligible_acquisition_count: number
   active_probe_count: number
   transition_count: number
+  routing_preference: {
+    preferred_provider: "http" | "browserless"
+    preference_score: number
+    browser_required_count: number
+    http_sufficient_count: number
+    browser_compatible_count: number
+    last_evidence_at: string
+  } | null
   expected_plan: DomainPlan
   providers: DomainProviderEvidence[]
 }

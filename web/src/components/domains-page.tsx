@@ -122,10 +122,24 @@ function PlanDescription({ plan }: { plan: DomainPlan }) {
   if (plan.reason === "configured_default_bootstrap") {
     return <span>Configured bootstrap provider</span>
   }
+  if (plan.reason === "adaptive_browser_required") {
+    return <span>Browser evidence currently favors Browserless</span>
+  }
+  if (plan.reason === "adaptive_http_exploration") {
+    return <span>Bounded HTTP canary for adaptive routing</span>
+  }
+  if (plan.reason === "local_correctness_fallback") {
+    return <span>Local correctness attempt required before paid fallback</span>
+  }
   if (plan.reason === "no_eligible_provider") {
     return <span className="text-destructive">No eligible path</span>
   }
-  return <span>Cheapest eligible first</span>
+  return (
+    <span>
+      Cheapest eligible first
+      {plan.paid_fallback_available ? " · paid fallback opt-in available" : ""}
+    </span>
+  )
 }
 
 function LoadingState({ label }: { label: string }) {
@@ -522,6 +536,8 @@ function CheckCell({ check }: { check: DomainHealthCheck }) {
 function RoutingBadge({ evidence }: { evidence: DomainProviderEvidence }) {
   const label = evidence.routing_eligible
     ? "Eligible"
+    : evidence.paid_fallback_available
+      ? "Paid fallback"
     : evidence.health_state === "healthy"
       ? "Disabled"
       : evidence.health_state.replaceAll("_", " ")

@@ -8,6 +8,7 @@ from websockets.asyncio.client import connect
 
 from backend.proxy.adapters.cdp import WebSocketProviderSession
 from backend.proxy.contracts import HarborSession, ProviderName, ResolvedSessionSettings
+from backend.proxy.transport.domain_blocking import apply_domain_blocking
 
 
 def _timestamp(value: object) -> datetime | None:
@@ -122,7 +123,7 @@ class BrowserbaseAdapter:
         self,
         session: HarborSession,
         settings: ResolvedSessionSettings,
-    ) -> BrowserbaseProviderSession:
+    ):
         if not self.api_key:
             raise RuntimeError("Browserbase is not configured")
         payload: dict[str, object] = {
@@ -163,11 +164,14 @@ class BrowserbaseAdapter:
                     provider_session_id=provider_session_id,
                 )
             raise
-        return BrowserbaseProviderSession(
-            websocket,
-            api_url=self.api_url,
-            api_key=self.api_key,
-            provider_session_id=provider_session_id,
-            provider_started_at=_timestamp(value.get("startedAt")),
-            session_timeout_seconds=self.timeout_seconds,
+        return apply_domain_blocking(
+            BrowserbaseProviderSession(
+                websocket,
+                api_url=self.api_url,
+                api_key=self.api_key,
+                provider_session_id=provider_session_id,
+                provider_started_at=_timestamp(value.get("startedAt")),
+                session_timeout_seconds=self.timeout_seconds,
+            ),
+            settings.blocked_domain_patterns,
         )

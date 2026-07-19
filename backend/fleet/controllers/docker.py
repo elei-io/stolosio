@@ -4,11 +4,21 @@ import logging
 import time
 from pathlib import Path
 
-from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, start_http_server
+from prometheus_client import start_http_server
 
 from backend.db.session import engine, session_factory
 from backend.fleet import FleetRepository
 from backend.fleet.bootstrap import ensure_managed_fleets
+from backend.fleet.controller_metrics import (
+    CONTROLLER_REGISTRY,
+    LAST_SUCCESSFUL_RECONCILE,
+    RECONCILE_DURATION,
+    RECONCILE_ERRORS,
+    SCALE_REQUEST_TO_FIRST_ASSIGNMENT,
+    SCALE_REQUEST_TO_READY,
+    SCALE_REQUEST_UNASSIGNED,
+    SCALING_ACTIONS,
+)
 from backend.fleet.providers import MANAGED_FLEETS
 from backend.fleet.reconciler import (
     FleetReconciler,
@@ -19,32 +29,6 @@ from backend.fleet.runtimes import DockerComposeRuntime
 from backend.settings import settings
 
 logger = logging.getLogger(__name__)
-
-CONTROLLER_REGISTRY = CollectorRegistry(auto_describe=True)
-SCALING_ACTIONS = Counter(
-    "harbor_provider_scaling_actions",
-    "Fleet scaling actions by direction and stable outcome.",
-    ("provider", "direction", "outcome"),
-    registry=CONTROLLER_REGISTRY,
-)
-RECONCILE_ERRORS = Counter(
-    "harbor_provider_reconcile_errors",
-    "Fleet reconciliation errors by stable reason.",
-    ("provider", "reason"),
-    registry=CONTROLLER_REGISTRY,
-)
-LAST_SUCCESSFUL_RECONCILE = Gauge(
-    "harbor_provider_last_successful_reconcile_timestamp",
-    "Unix timestamp of the last successful fleet reconciliation.",
-    ("provider",),
-    registry=CONTROLLER_REGISTRY,
-)
-RECONCILE_DURATION = Histogram(
-    "harbor_provider_reconcile_duration_seconds",
-    "Fleet reconciliation duration by provider.",
-    ("provider",),
-    registry=CONTROLLER_REGISTRY,
-)
 
 
 def _reconcilers(repository: FleetRepository) -> list[FleetReconciler]:
@@ -104,6 +88,14 @@ async def run(*, once: bool) -> None:
                     if result.replaced_instances:
                         SCALING_ACTIONS.labels(provider, "replace", "succeeded").inc(
                             result.replaced_instances
+                        )
+                    for latency in result.ready_latencies_seconds:
+                        SCALE_REQUEST_TO_READY.labels(provider).observe(latency)
+                    for latency in result.first_assignment_latencies_seconds:
+                        SCALE_REQUEST_TO_FIRST_ASSIGNMENT.labels(provider).observe(latency)
+                    if result.unassigned_scale_requests:
+                        SCALE_REQUEST_UNASSIGNED.labels(provider).inc(
+                            result.unassigned_scale_requests
                         )
                     LAST_SUCCESSFUL_RECONCILE.labels(provider).set_to_current_time()
                 finally:

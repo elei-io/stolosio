@@ -32,7 +32,9 @@ closes remain `provider_connection_lost`.
 
 Browserbase capacity is an administrator-controlled concurrent-session limit. It can
 mirror a subscription allowance or be set lower as a cost guardrail. Harbor applies
-the limit transactionally before creating a Browserbase session.
+the limit transactionally before creating a Browserbase session. For automatic
+routing, capacity alone is not permission to spend: the session must also include
+`harbor.provider.allow_paid_fallback=true`.
 
 ## Promotion and escalation
 
@@ -44,12 +46,29 @@ justifies its cost. A generic "probe all" action remains limited to HTTP and
 Browserless.
 
 Automatic sessions may begin on HTTP. An unsupported command or failed HTTP transport,
-status, header, response-size, or content check causes immediate live escalation to
-Browserless or Browserbase. Once a browser has been acquired, Harbor forwards all CDP
-commands to it and does not escalate again.
+status, header, response-size, or content check causes immediate live escalation.
+Successful transitions contribute compact domain-level evidence, allowing Browserless
+to become the preferred starting provider after a small number of browser-required
+sessions and later move back toward HTTP when compatible evidence accumulates.
+
+Browserbase is never selected as the primary automatic provider. It is attempted only
+after local candidates are exhausted, global Browserbase capacity is enabled, and the
+session explicitly permits paid fallback. Direct
+`harbor.provider.slug=browserbase` selection remains available and is still subject to
+admission limits. Once a browser has been acquired, Harbor forwards all CDP commands
+to it and does not escalate again.
 
 Explicit HTTP sessions return a protocol error for unsupported commands. Browser
 providers return their own CDP success or error without Harbor claiming support.
+
+## Global request blocking
+
+Browserless and Browserbase attempts receive the same operator-managed domain
+blocklist through a Harbor-owned CDP target bootstrap. Policy injection is required:
+if a provider cannot apply it, Harbor reports `domain_blocking_unavailable` instead
+of silently running unblocked. The HTTP provider enforces the list on its top-level
+navigation and has no subresource requests to filter. See
+[Network policy](NETWORK_POLICY.md).
 
 ## Time and cost observations
 

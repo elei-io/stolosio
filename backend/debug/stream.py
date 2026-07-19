@@ -15,6 +15,7 @@ from backend.db.models import GatewaySession
 from backend.debug.timeline import HistoricalDebugTimeline
 from backend.events import EventType, SessionEvent
 from backend.messaging.jetstream import EVENT_STREAM
+from backend.proxy.contracts import SessionState
 
 
 class DebugSessionNotFound(Exception):
@@ -99,7 +100,15 @@ class DebugStreamService:
             async with self._sessions() as database:
                 session_id = await database.scalar(
                     select(GatewaySession.id).where(
-                        GatewaySession.client_reference == str(reference)
+                        GatewaySession.client_reference == str(reference),
+                        GatewaySession.state.in_(
+                            (
+                                SessionState.OPEN.value,
+                                SessionState.CLOSING.value,
+                                SessionState.CLOSED.value,
+                                SessionState.FAILED.value,
+                            )
+                        ),
                     )
                 )
             if session_id is not None:

@@ -177,8 +177,8 @@ async def test_domain_queries_expose_health_and_ordered_plan(
         "reason": "cheapest_eligible",
         "candidates": [
             {"provider": "browserless", "estimated_cost_units": 3},
-            {"provider": "browserbase", "estimated_cost_units": 100},
         ],
+        "paid_fallback_available": True,
     }
     assert detail is not None
     assert detail["transition_count"] == 2
@@ -191,7 +191,8 @@ async def test_domain_queries_expose_health_and_ordered_plan(
         provider for provider in detail["providers"] if provider["provider"] == "browserbase"
     )
     assert browserbase["health_state"] == "unknown"
-    assert browserbase["routing_eligible"] is True
+    assert browserbase["routing_eligible"] is False
+    assert browserbase["paid_fallback_available"] is True
     assert set(browserless["checks"]) == {
         "navigation",
         "status",

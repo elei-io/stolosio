@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Identity,
     Index,
@@ -57,6 +58,49 @@ class DomainProviderTransitionStat(Base):
     last_trigger_method: Mapped[str] = mapped_column(String(128))
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DomainRoutingPreference(Base):
+    __tablename__ = "domain_routing_preferences"
+    __table_args__ = (
+        CheckConstraint(
+            "preferred_provider IN ('http', 'browserless')",
+            name="ck_domain_routing_preference_provider",
+        ),
+        CheckConstraint(
+            "browser_required_count >= 0",
+            name="ck_domain_routing_browser_required_nonnegative",
+        ),
+        CheckConstraint(
+            "http_sufficient_count >= 0",
+            name="ck_domain_routing_http_sufficient_nonnegative",
+        ),
+        CheckConstraint(
+            "browser_compatible_count >= 0",
+            name="ck_domain_routing_browser_compatible_nonnegative",
+        ),
+    )
+
+    domain_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("domains.id", ondelete="CASCADE"), primary_key=True
+    )
+    preferred_provider: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="http", server_default="http"
+    )
+    preference_score: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0"
+    )
+    browser_required_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    http_sufficient_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    browser_compatible_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    last_evidence_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ProviderCommandCostStat(Base):

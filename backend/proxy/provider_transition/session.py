@@ -15,6 +15,7 @@ import httpx
 from backend.events.cdp import CdpEventObserver
 from backend.proxy.adapters import get_provider_adapter
 from backend.proxy.attempts import AttemptAdmission, AttemptLease
+from backend.proxy.capabilities import capability_registry
 from backend.proxy.capabilities.http import is_content_call, is_utility_evaluation
 from backend.proxy.content_sanity import inspect_content, inspect_headers
 from backend.proxy.contracts import (
@@ -25,6 +26,8 @@ from backend.proxy.contracts import (
     ResolvedSessionSettings,
     SettingSource,
 )
+from backend.proxy.errors import DomainBlockingUnavailable
+from backend.proxy.network_policy import domain_matches_pattern
 from backend.proxy.provider_transition.history import ProviderTransitionRepository
 from backend.proxy.routing import (
     NoSupportedProvider,
@@ -145,6 +148,9 @@ class ProviderTransitionSession:
         self._html = ""
         self._domain: str | None = None
         self._attempted_providers: set[ProviderName] = set()
+        self._navigation_seen = False
+        self._http_incompatible_seen = False
+        self._adaptive_evidence_recorded = False
 
     @property
     def disconnect_reason(self) -> str | None:
@@ -245,6 +251,7 @@ class ProviderTransitionSession:
             with suppress(Exception):
                 await self._upstream.close()
         if self._attempt is not None:
+            await self._record_final_routing_evidence()
             command_summary = (
                 self._observer.command_summary(UUID(self._attempt.attempt.attempt_id))
                 if self._observer is not None
@@ -279,12 +286,18 @@ class ProviderTransitionSession:
         params = command.get("params")
         typed_params = params if isinstance(params, dict) else None
         if method == "Page.navigate" and isinstance(typed_params, dict):
+            self._navigation_seen = True
             url = typed_params.get("url")
             parsed = urlsplit(url) if isinstance(url, str) else None
             if parsed is not None and parsed.hostname is not None:
                 hostname = parsed.hostname.rstrip(".").encode("idna").decode("ascii").lower()
                 self._domain = hostname
-                return
+        if not capability_registry.supports(
+            ProviderName.HTTP,
+            method,
+            typed_params,
+        ):
+            self._http_incompatible_seen = True
 
     async def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
         method = command["method"]
@@ -406,6 +419,11 @@ class ProviderTransitionSession:
         if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
             raise _Transition("Page.navigate")
         self._domain = parsed.hostname.rstrip(".").encode("idna").decode("ascii").lower()
+        if any(
+            domain_matches_pattern(self._domain, pattern)
+            for pattern in self._resolved.blocked_domain_patterns
+        ):
+            raise ValueError("Navigation blocked by Harbor network policy")
 
         if self._attempt is None and self._automatic:
             if self._routing is None:
@@ -413,6 +431,8 @@ class ProviderTransitionSession:
             plan = await self._routing.plan(
                 self._domain,
                 required_commands=self._required_commands(),
+                allow_paid_fallback=self._resolved.provider.allow_paid_fallback,
+                exploration_key=self._session.session_id,
             )
             candidate = plan.first
             if candidate.provider is not ProviderName.HTTP:
@@ -562,6 +582,8 @@ class ProviderTransitionSession:
                     self._domain,
                     required_commands=self._required_commands(pending),
                     exclude=frozenset(self._attempted_providers),
+                    allow_paid_fallback=self._resolved.provider.allow_paid_fallback,
+                    exploration_key=self._session.session_id,
                 )
             elif self._routing is not None:
                 settings = await self._routing.settings()
@@ -642,9 +664,7 @@ class ProviderTransitionSession:
                         await source_upstream.close()
                 if source_attempt is not None:
                     command_summary = (
-                        self._observer.command_summary(
-                            UUID(source_attempt.attempt.attempt_id)
-                        )
+                        self._observer.command_summary(UUID(source_attempt.attempt.attempt_id))
                         if self._observer is not None
                         else None
                     )
@@ -675,6 +695,18 @@ class ProviderTransitionSession:
                             target,
                             trigger,
                         )
+                if (
+                    from_provider is ProviderName.HTTP
+                    and target is ProviderName.BROWSERLESS
+                    and self._routing is not None
+                    and self._domain is not None
+                ):
+                    with suppress(Exception):
+                        await self._routing.record_routing_evidence(
+                            self._domain,
+                            "browser_required",
+                        )
+                        self._adaptive_evidence_recorded = True
                 return
             except Exception as error:
                 last_error = error
@@ -705,6 +737,8 @@ class ProviderTransitionSession:
                 self._upstream_pump = source_pump
                 self._forward_ids = defaultdict(dict, source_forward_ids)
                 self._reverse_ids = defaultdict(dict, source_reverse_ids)
+        if isinstance(last_error, DomainBlockingUnavailable):
+            raise last_error
         raise ProviderTransitionError("Supported provider plan exhausted") from last_error
 
     def _required_commands(
@@ -755,9 +789,7 @@ class ProviderTransitionSession:
         events: list[dict[str, Any]] = []
         method = command["method"]
         try:
-            async with asyncio.timeout(
-                self._settings.provider_transition_replay_timeout_seconds
-            ):
+            async with asyncio.timeout(self._settings.provider_transition_replay_timeout_seconds):
                 while True:
                     raw = await anext(self._upstream_messages)
                     value = json.loads(raw)
@@ -766,8 +798,7 @@ class ProviderTransitionSession:
                     elif isinstance(value.get("method"), str):
                         events.append(value)
                     if response is not None and (
-                        "error" in response
-                        or self._replay_boundary_reached(method, events)
+                        "error" in response or self._replay_boundary_reached(method, events)
                     ):
                         return response, events
         except TimeoutError as error:
@@ -808,8 +839,7 @@ class ProviderTransitionSession:
             if not self._closed:
                 self._failed = True
                 self._failure_reason = (
-                    getattr(self._upstream, "disconnect_reason", None)
-                    or "provider_connection_lost"
+                    getattr(self._upstream, "disconnect_reason", None) or "provider_connection_lost"
                 )
                 await self._messages.put(_CLOSED)
 
@@ -990,6 +1020,30 @@ class ProviderTransitionSession:
             trigger_method=trigger_method,
         )
 
+    async def _record_final_routing_evidence(self) -> None:
+        if (
+            self._failed
+            or self._adaptive_evidence_recorded
+            or not self._navigation_seen
+            or self._routing is None
+            or self._domain is None
+            or self._attempt is None
+        ):
+            return
+        provider = self._attempt.attempt.provider
+        evidence = None
+        if provider is ProviderName.HTTP and not self._http_incompatible_seen:
+            evidence = "http_sufficient"
+        elif provider is ProviderName.BROWSERLESS:
+            evidence = "browser_required" if self._http_incompatible_seen else "browser_compatible"
+        if evidence is not None:
+            with suppress(Exception):
+                await self._routing.record_routing_evidence(
+                    self._domain,
+                    evidence,
+                )
+                self._adaptive_evidence_recorded = True
+
     async def _put(self, message: dict[str, Any]) -> None:
         await self._messages.put(json.dumps(message, separators=(",", ":")))
 
@@ -1018,9 +1072,14 @@ class ProviderTransitionSession:
         sources = dict(self._resolved.sources)
         sources["harbor.provider.slug"] = source
         return ResolvedSessionSettings(
-            provider=ProviderSettingSchema(slug=provider),
+            provider=ProviderSettingSchema(
+                slug=provider,
+                allow_paid_fallback=self._resolved.provider.allow_paid_fallback,
+            ),
             session=self._resolved.session,
             sources=sources,
+            blocked_domain_patterns=self._resolved.blocked_domain_patterns,
+            network_policy_version=self._resolved.network_policy_version,
         )
 
     def _would_exceed_replay_budget(self, message: str) -> bool:

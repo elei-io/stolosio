@@ -10,6 +10,7 @@ from backend.proxy.contracts import (
     HarborSession,
     ProviderAttempt,
     ResolvedSessionSettings,
+    SettingSource,
 )
 from backend.proxy.errors import ProviderQueueFull, ProviderQueueTimeout
 from backend.proxy.postgres import (
@@ -153,11 +154,30 @@ class AttemptAdmission:
                 session,
                 attempt.attempt_id,
                 provider,
-                resolved_settings={"harbor.provider.slug": provider.value},
+                resolved_settings={
+                    "harbor.provider.slug": provider.value,
+                    "harbor.provider.allow_paid_fallback": (
+                        resolved.provider.allow_paid_fallback
+                    ),
+                    "policy.network.blocked_domain_patterns": list(
+                        resolved.blocked_domain_patterns
+                    ),
+                    "policy.network.configuration_version": (
+                        resolved.network_policy_version
+                    ),
+                },
                 setting_sources={
-                    field: source.value
-                    for field, source in resolved.sources.items()
-                    if field != "harbor.session.reference"
+                    **{
+                        field: source.value
+                        for field, source in resolved.sources.items()
+                        if field != "harbor.session.reference"
+                    },
+                    "policy.network.blocked_domain_patterns": (
+                        SettingSource.POLICY.value
+                    ),
+                    "policy.network.configuration_version": (
+                        SettingSource.POLICY.value
+                    ),
                 },
                 replacement_for=replacement_for,
             )

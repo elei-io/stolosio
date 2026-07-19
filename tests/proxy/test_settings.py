@@ -48,8 +48,25 @@ async def test_explicit_auto_uses_the_planner() -> None:
 
 def test_registry_exposes_the_canonical_query_contract() -> None:
     assert harbor_settings_registry.queries == frozenset(
-        {"harbor.provider.slug", "harbor.session.reference"}
+        {
+            "harbor.provider.slug",
+            "harbor.provider.allow_paid_fallback",
+            "harbor.session.reference",
+        }
     )
+
+
+@pytest.mark.asyncio
+async def test_paid_fallback_requires_an_explicit_session_opt_in() -> None:
+    _, defaulted = await harbor_settings_resolver.resolve([])
+    requested, allowed = await harbor_settings_resolver.resolve(
+        [("harbor.provider.allow_paid_fallback", "true")]
+    )
+
+    assert defaulted.provider.allow_paid_fallback is False
+    assert requested.overrides["harbor.provider.allow_paid_fallback"] is True
+    assert allowed.provider.allow_paid_fallback is True
+    assert allowed.sources["harbor.provider.allow_paid_fallback"] is SettingSource.EXPLICIT
 
 
 @pytest.mark.asyncio
