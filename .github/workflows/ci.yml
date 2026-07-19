@@ -50,6 +50,27 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --dev
 
+      - name: Start NATS with JetStream
+        run: |
+          docker run --detach \
+            --name harbor-ci-nats \
+            --publish 4223:4222 \
+            nats:2.11-alpine \
+            -js
+
+          for _ in {1..30}; do
+            if (echo > /dev/tcp/127.0.0.1/4223) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs harbor-ci-nats
+          exit 1
+
+      - name: Apply database migrations
+        run: uv run alembic upgrade head
+
       - name: Lint
         run: uv run ruff check .
 

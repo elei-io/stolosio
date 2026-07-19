@@ -2,9 +2,9 @@
 
 GitHub Actions provides two paths:
 
-- `CI` runs backend lint and tests against PostgreSQL, frontend lint/type-check/build,
-  both container builds, and Helm/Kubernetes manifest validation on pull requests and
-  pushes to `main`.
+- `CI` applies migrations to PostgreSQL, runs backend lint and tests with
+  JetStream-enabled NATS, runs frontend lint/type-check/build, builds both containers,
+  and validates the Helm/Kubernetes manifests on pull requests and pushes to `main`.
 - `Publish` builds multi-architecture `linux/amd64` and `linux/arm64` images and pushes
   them to GHCR on `main`, semantic version tags, and manual runs.
 
