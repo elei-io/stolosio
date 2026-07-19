@@ -10,11 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.db.models import (
     AcquisitionAttempt,
     Domain,
-    DomainCommandStat,
     DomainProviderCostStat,
     DomainProviderHealth,
-    DomainProviderRuntimeState,
     DomainProviderTransitionStat,
+    ExternalProviderLimit,
     GatewaySession,
     HealthProbe,
     ProviderRoutingProfile,
@@ -27,7 +26,6 @@ class DomainEligibilityState(StrEnum):
     UNKNOWN = "unknown"
     CHECKING = "checking"
     ELIGIBLE = "eligible"
-    SUPPRESSED = "suppressed"
     UNHEALTHY = "unhealthy"
     INCONCLUSIVE = "inconclusive"
 
@@ -76,9 +74,7 @@ def _encode_cursor(kind: str, occurred_at: datetime, identifier: str | int) -> s
 def _decode_cursor(cursor: str, kind: str) -> tuple[datetime, str]:
     try:
         padding = "=" * (-len(cursor) % 4)
-        version, occurred_at, identifier = json.loads(
-            base64.urlsafe_b64decode(cursor + padding)
-        )
+        version, occurred_at, identifier = json.loads(base64.urlsafe_b64decode(cursor + padding))
         value = datetime.fromisoformat(occurred_at)
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError(f"invalid {kind} cursor") from error
@@ -90,6 +86,7 @@ def _decode_cursor(cursor: str, kind: str) -> tuple[datetime, str]:
 def _health_counts(rows: list[DomainProviderHealth]) -> dict[str, int]:
     counts = {
         "unknown": 0,
+        # In-flight checks are reported separately through active_probe_count.
         "checking": 0,
         "healthy": 0,
         "unhealthy": 0,
@@ -102,28 +99,24 @@ def _health_counts(rows: list[DomainProviderHealth]) -> dict[str, int]:
 
 def _expected_plan(
     health: list[DomainProviderHealth],
-    runtime: dict[str, DomainProviderRuntimeState],
     costs: dict[str, DomainProviderCostStat],
     profiles: dict[str, ProviderRoutingProfile],
     configuration: RoutingConfiguration | None,
+    *,
+    browserbase_available: bool,
 ) -> dict[str, object]:
     policy_version = configuration.health_policy_version if configuration else 1
     candidates: list[dict[str, object]] = []
     for row in health:
+        if row.provider == "browserbase":
+            continue
         profile = profiles.get(row.provider)
-        runtime_state = runtime.get(row.provider)
         if (
             profile is None
             or not profile.automatic_enabled
             or row.health_state != "healthy"
             or row.health_policy_version != policy_version
             or row.provider_contract_version != profile.provider_contract_version
-            or (
-                runtime_state is not None
-                and runtime_state.state == "suppressed"
-                and runtime_state.provider_contract_version
-                == profile.provider_contract_version
-            )
         ):
             continue
         cost = costs.get(row.provider)
@@ -132,9 +125,24 @@ def _expected_plan(
             if cost is not None and cost.observed_attempt_count
             else profile.cost_units_per_second
         )
-        candidates.append(
-            {"provider": row.provider, "estimated_cost_units": expected_cost}
-        )
+        candidates.append({"provider": row.provider, "estimated_cost_units": expected_cost})
+    browserbase_profile = profiles.get("browserbase")
+    browserbase_candidate = (
+        {
+            "provider": "browserbase",
+            "estimated_cost_units": (
+                costs["browserbase"].total_cost_units // costs["browserbase"].observed_attempt_count
+                if "browserbase" in costs and costs["browserbase"].observed_attempt_count
+                else browserbase_profile.cost_units_per_second
+            ),
+        }
+        if browserbase_profile is not None
+        and browserbase_profile.automatic_enabled
+        and browserbase_available
+        else None
+    )
+    if candidates and browserbase_candidate is not None:
+        candidates.append(browserbase_candidate)
     candidates.sort(
         key=lambda candidate: (
             int(candidate["estimated_cost_units"]),
@@ -144,26 +152,31 @@ def _expected_plan(
     if candidates:
         return {"reason": "cheapest_eligible", "candidates": candidates}
 
-    has_current_health = any(
-        row.health_state == "healthy"
-        and row.health_policy_version == policy_version
-        for row in health
-    )
-    default_provider = configuration.default_provider if configuration else "camoufox"
+    has_current_health = any(row.health_policy_version == policy_version for row in health)
+    default_provider = configuration.default_provider if configuration else "browserless"
     default_profile = profiles.get(default_provider)
     if (
         not has_current_health
         and default_profile is not None
         and default_profile.automatic_enabled
+        and (default_provider != "browserbase" or browserbase_available)
     ):
+        bootstrap = [
+            {
+                "provider": default_provider,
+                "estimated_cost_units": default_profile.cost_units_per_second,
+            }
+        ]
+        if browserbase_candidate is not None and default_provider != "browserbase":
+            bootstrap.append(browserbase_candidate)
         return {
             "reason": "configured_default_bootstrap",
-            "candidates": [
-                {
-                    "provider": default_provider,
-                    "estimated_cost_units": default_profile.cost_units_per_second,
-                }
-            ],
+            "candidates": bootstrap,
+        }
+    if browserbase_candidate is not None:
+        return {
+            "reason": "cheapest_eligible",
+            "candidates": [browserbase_candidate],
         }
     return {"reason": "no_eligible_provider", "candidates": []}
 
@@ -175,13 +188,7 @@ def _check(
     checking: bool,
 ) -> dict[str, object]:
     return {
-        "state": (
-            "checking"
-            if checking
-            else "not_checked"
-            if state == "unknown"
-            else state
-        ),
+        "state": ("checking" if checking else "not_checked" if state == "unknown" else state),
         "checked_at": _iso(checked_at),
     }
 
@@ -199,9 +206,7 @@ class DomainQueryService:
     ) -> DomainPage:
         query = select(Domain)
         if filters.search:
-            query = query.where(
-                Domain.hostname.ilike(f"%{filters.search.strip()}%")
-            )
+            query = query.where(Domain.hostname.ilike(f"%{filters.search.strip()}%"))
         if filters.eligibility_state is not None:
             state = filters.eligibility_state
             if state is DomainEligibilityState.ELIGIBLE:
@@ -213,20 +218,20 @@ class DomainQueryService:
                         )
                     )
                 )
-            elif state is DomainEligibilityState.SUPPRESSED:
-                query = query.where(
-                    exists(
-                        select(DomainProviderRuntimeState.domain_id).where(
-                            DomainProviderRuntimeState.domain_id == Domain.id,
-                            DomainProviderRuntimeState.state == "suppressed",
-                        )
-                    )
-                )
             elif state is DomainEligibilityState.UNKNOWN:
                 query = query.where(
                     ~exists(
                         select(DomainProviderHealth.domain_id).where(
                             DomainProviderHealth.domain_id == Domain.id
+                        )
+                    )
+                )
+            elif state is DomainEligibilityState.CHECKING:
+                query = query.where(
+                    exists(
+                        select(HealthProbe.domain_id).where(
+                            HealthProbe.domain_id == Domain.id,
+                            HealthProbe.state.in_(("queued", "running")),
                         )
                     )
                 )
@@ -246,18 +251,14 @@ class DomainQueryService:
                     HealthProbe.state.in_(("queued", "running")),
                 )
             )
-            query = query.where(
-                active if filters.has_active_probes else ~active
-            )
+            query = query.where(active if filters.has_active_probes else ~active)
         if filters.has_transitions is not None:
             transitioned = exists(
                 select(DomainProviderTransitionStat.domain_id).where(
                     DomainProviderTransitionStat.domain_id == Domain.id
                 )
             )
-            query = query.where(
-                transitioned if filters.has_transitions else ~transitioned
-            )
+            query = query.where(transitioned if filters.has_transitions else ~transitioned)
         if before is not None:
             occurred_at, identifier = _decode_cursor(before, "domain-v3")
             try:
@@ -266,14 +267,9 @@ class DomainQueryService:
                 raise ValueError("invalid domain cursor") from error
             query = query.where(
                 (Domain.last_seen_at < occurred_at)
-                | (
-                    (Domain.last_seen_at == occurred_at)
-                    & (Domain.id < domain_id)
-                )
+                | ((Domain.last_seen_at == occurred_at) & (Domain.id < domain_id))
             )
-        query = query.order_by(
-            Domain.last_seen_at.desc(), Domain.id.desc()
-        ).limit(limit + 1)
+        query = query.order_by(Domain.last_seen_at.desc(), Domain.id.desc()).limit(limit + 1)
         async with self._sessions() as database:
             rows = list(await database.scalars(query))
             has_more = len(rows) > limit
@@ -284,17 +280,6 @@ class DomainQueryService:
                     await database.scalars(
                         select(DomainProviderHealth).where(
                             DomainProviderHealth.domain_id.in_(domain_ids)
-                        )
-                    )
-                )
-                if domain_ids
-                else []
-            )
-            runtime = (
-                list(
-                    await database.scalars(
-                        select(DomainProviderRuntimeState).where(
-                            DomainProviderRuntimeState.domain_id.in_(domain_ids)
                         )
                     )
                 )
@@ -331,15 +316,9 @@ class DomainQueryService:
                     await database.execute(
                         select(
                             DomainProviderTransitionStat.domain_id,
-                            func.sum(
-                                DomainProviderTransitionStat.transition_count
-                            ),
+                            func.sum(DomainProviderTransitionStat.transition_count),
                         )
-                        .where(
-                            DomainProviderTransitionStat.domain_id.in_(
-                                domain_ids
-                            )
-                        )
+                        .where(DomainProviderTransitionStat.domain_id.in_(domain_ids))
                         .group_by(DomainProviderTransitionStat.domain_id)
                     )
                 )
@@ -347,28 +326,22 @@ class DomainQueryService:
                 else []
             )
             profiles = {
-                row.provider: row
-                for row in await database.scalars(
-                    select(ProviderRoutingProfile)
-                )
+                row.provider: row for row in await database.scalars(select(ProviderRoutingProfile))
             }
             configuration = await database.get(RoutingConfiguration, "global")
+            browserbase_capacity = await database.get(
+                ExternalProviderLimit,
+                "browserbase",
+            )
             summary = await self._summary(database)
         health_by_domain: dict[int, list[DomainProviderHealth]] = {}
-        runtime_by_domain: dict[
-            int, dict[str, DomainProviderRuntimeState]
-        ] = {}
         costs_by_domain: dict[int, dict[str, DomainProviderCostStat]] = {}
         for row in health:
             health_by_domain.setdefault(row.domain_id, []).append(row)
-        for row in runtime:
-            runtime_by_domain.setdefault(row.domain_id, {})[row.provider] = row
         for row in costs:
             costs_by_domain.setdefault(row.domain_id, {})[row.provider] = row
         active = {domain_id: int(count) for domain_id, count in active_rows}
-        transitions = {
-            domain_id: int(count or 0) for domain_id, count in transition_rows
-        }
+        transitions = {domain_id: int(count or 0) for domain_id, count in transition_rows}
         result = [
             {
                 "id": domain.id,
@@ -379,19 +352,17 @@ class DomainQueryService:
                 "eligible_acquisition_count": domain.eligible_acquisition_count,
                 "active_probe_count": active.get(domain.id, 0),
                 "transition_count": transitions.get(domain.id, 0),
-                "health_counts": _health_counts(
-                    health_by_domain.get(domain.id, [])
-                ),
-                "suppressed_provider_count": sum(
-                    row.state == "suppressed"
-                    for row in runtime_by_domain.get(domain.id, {}).values()
-                ),
+                "health_counts": _health_counts(health_by_domain.get(domain.id, [])),
                 "expected_plan": _expected_plan(
                     health_by_domain.get(domain.id, []),
-                    runtime_by_domain.get(domain.id, {}),
                     costs_by_domain.get(domain.id, {}),
                     profiles,
                     configuration,
+                    browserbase_available=(
+                        browserbase_capacity is not None
+                        and browserbase_capacity.enabled
+                        and browserbase_capacity.max_active_sessions > 0
+                    ),
                 ),
             }
             for domain in rows
@@ -421,19 +392,13 @@ class DomainQueryService:
             health = {
                 row.provider: row
                 for row in await database.scalars(
-                    select(DomainProviderHealth).where(
-                        DomainProviderHealth.domain_id == domain_id
-                    )
+                    select(DomainProviderHealth).where(DomainProviderHealth.domain_id == domain_id)
                 )
             }
-            runtime = {
-                row.provider: row
-                for row in await database.scalars(
-                    select(DomainProviderRuntimeState).where(
-                        DomainProviderRuntimeState.domain_id == domain_id
-                    )
-                )
-            }
+            browserbase_capacity = await database.get(
+                ExternalProviderLimit,
+                "browserbase",
+            )
             costs = {
                 row.provider: row
                 for row in await database.scalars(
@@ -442,17 +407,6 @@ class DomainQueryService:
                     )
                 )
             }
-            commands = list(
-                await database.scalars(
-                    select(DomainCommandStat)
-                    .where(DomainCommandStat.domain_id == domain_id)
-                    .order_by(
-                        DomainCommandStat.command_count.desc(),
-                        DomainCommandStat.method,
-                    )
-                    .limit(50)
-                )
-            )
             active_providers = set(
                 await database.scalars(
                     select(HealthProbe.candidate_provider).where(
@@ -465,118 +419,61 @@ class DomainQueryService:
                 await database.scalar(
                     select(
                         func.coalesce(
-                            func.sum(
-                                DomainProviderTransitionStat.transition_count
-                            ),
+                            func.sum(DomainProviderTransitionStat.transition_count),
                             0,
                         )
-                    ).where(
-                        DomainProviderTransitionStat.domain_id == domain_id
-                    )
+                    ).where(DomainProviderTransitionStat.domain_id == domain_id)
                 )
                 or 0
             )
+        browserbase_available = (
+            browserbase_capacity is not None
+            and browserbase_capacity.enabled
+            and browserbase_capacity.max_active_sessions > 0
+        )
         providers = []
         for profile in profile_rows:
             row = health.get(profile.provider)
-            runtime_row = runtime.get(profile.provider)
             cost = costs.get(profile.provider)
             checking = profile.provider in active_providers
             checked_at = row.last_checked_at if row else None
             observed = cost.observed_attempt_count if cost else 0
             total_cost = cost.total_cost_units if cost else 0
-            runtime_state = (
-                runtime_row.state
-                if runtime_row is not None
-                and runtime_row.provider_contract_version
-                == profile.provider_contract_version
-                else "eligible"
-            )
             health_current = (
                 row is not None
                 and row.health_state == "healthy"
                 and row.health_policy_version
-                == (
-                    configuration.health_policy_version
-                    if configuration
-                    else 1
-                )
-                and row.provider_contract_version
-                == profile.provider_contract_version
+                == (configuration.health_policy_version if configuration else 1)
+                and row.provider_contract_version == profile.provider_contract_version
             )
             providers.append(
                 {
                     "provider": profile.provider,
                     "automatic_enabled": profile.automatic_enabled,
                     "health_state": row.health_state if row else "unknown",
-                    "runtime_state": runtime_state,
                     "routing_eligible": (
                         profile.automatic_enabled
-                        and health_current
-                        and runtime_state == "eligible"
+                        and (
+                            browserbase_available
+                            if profile.provider == "browserbase"
+                            else health_current
+                        )
                     ),
-                    "successful_probe_count": (
-                        row.successful_probe_count if row else 0
-                    ),
+                    "successful_probe_count": (row.successful_probe_count if row else 0),
                     "failed_probe_count": row.failed_probe_count if row else 0,
-                    "inconclusive_probe_count": (
-                        row.inconclusive_probe_count if row else 0
-                    ),
+                    "inconclusive_probe_count": (row.inconclusive_probe_count if row else 0),
                     "observed_attempt_count": observed,
                     "total_cost_units": total_cost,
                     "average_cost_units": (
-                        total_cost // observed
-                        if observed
-                        else profile.cost_units_per_second
+                        total_cost // observed if observed else profile.cost_units_per_second
                     ),
                     "cost_is_estimate": observed == 0,
                     "last_status_code": row.last_status_code if row else None,
                     "last_checked_at": _iso(checked_at),
-                    "last_healthy_at": (
-                        _iso(row.last_healthy_at) if row else None
-                    ),
-                    "failure_reason_code": (
-                        row.failure_reason_code if row else None
-                    ),
-                    "health_policy_version": (
-                        row.health_policy_version if row else None
-                    ),
-                    "provider_contract_version": (
-                        profile.provider_contract_version
-                    ),
-                    "runtime": {
-                        "state": runtime_state,
-                        "suppressed_at": (
-                            _iso(runtime_row.suppressed_at)
-                            if runtime_row
-                            else None
-                        ),
-                        "suppressed_session_id": (
-                            runtime_row.suppressed_session_id
-                            if runtime_row
-                            else None
-                        ),
-                        "incompatible_method": (
-                            runtime_row.incompatible_method
-                            if runtime_row
-                            else None
-                        ),
-                        "restored_at": (
-                            _iso(runtime_row.restored_at)
-                            if runtime_row
-                            else None
-                        ),
-                        "restored_session_id": (
-                            runtime_row.restored_session_id
-                            if runtime_row
-                            else None
-                        ),
-                        "last_evidence_at": (
-                            _iso(runtime_row.last_evidence_at)
-                            if runtime_row
-                            else None
-                        ),
-                    },
+                    "last_healthy_at": (_iso(row.last_healthy_at) if row else None),
+                    "failure_reason_code": (row.failure_reason_code if row else None),
+                    "health_policy_version": (row.health_policy_version if row else None),
+                    "provider_contract_version": (profile.provider_contract_version),
                     "checks": {
                         "navigation": _check(
                             row.navigation_state if row else "unknown",
@@ -612,22 +509,12 @@ class DomainQueryService:
             "transition_count": transition_count,
             "expected_plan": _expected_plan(
                 list(health.values()),
-                runtime,
                 costs,
                 profiles,
                 configuration,
+                browserbase_available=browserbase_available,
             ),
             "providers": providers,
-            "commands": [
-                {
-                    "method": row.method,
-                    "command_count": row.command_count,
-                    "session_count": row.session_count,
-                    "first_seen_at": _iso(row.first_seen_at),
-                    "last_seen_at": _iso(row.last_seen_at),
-                }
-                for row in commands
-            ],
         }
 
     async def probes(
@@ -639,19 +526,14 @@ class DomainQueryService:
     ) -> DomainProbePage | None:
         query = select(HealthProbe).where(HealthProbe.domain_id == domain_id)
         if before is not None:
-            occurred_at, identifier = _decode_cursor(
-                before, "health-probe-v1"
-            )
+            occurred_at, identifier = _decode_cursor(before, "health-probe-v1")
             query = query.where(
                 (HealthProbe.created_at < occurred_at)
-                | (
-                    (HealthProbe.created_at == occurred_at)
-                    & (HealthProbe.id < identifier)
-                )
+                | ((HealthProbe.created_at == occurred_at) & (HealthProbe.id < identifier))
             )
-        query = query.order_by(
-            HealthProbe.created_at.desc(), HealthProbe.id.desc()
-        ).limit(limit + 1)
+        query = query.order_by(HealthProbe.created_at.desc(), HealthProbe.id.desc()).limit(
+            limit + 1
+        )
         async with self._sessions() as database:
             if await database.get(Domain, domain_id) is None:
                 return None
@@ -682,9 +564,7 @@ class DomainQueryService:
             for row in rows
         ]
         next_cursor = (
-            _encode_cursor(
-                "health-probe-v1", rows[-1].created_at, rows[-1].id
-            )
+            _encode_cursor("health-probe-v1", rows[-1].created_at, rows[-1].id)
             if has_more and rows
             else None
         )
@@ -699,25 +579,18 @@ class DomainQueryService:
     ) -> DomainSessionPage | None:
         query = (
             select(GatewaySession)
-            .join(
-                SessionDomain, SessionDomain.session_id == GatewaySession.id
-            )
+            .join(SessionDomain, SessionDomain.session_id == GatewaySession.id)
             .where(SessionDomain.domain_id == domain_id)
         )
         if before is not None:
-            occurred_at, identifier = _decode_cursor(
-                before, "domain-session-v1"
-            )
+            occurred_at, identifier = _decode_cursor(before, "domain-session-v1")
             query = query.where(
                 (GatewaySession.created_at < occurred_at)
-                | (
-                    (GatewaySession.created_at == occurred_at)
-                    & (GatewaySession.id < identifier)
-                )
+                | ((GatewaySession.created_at == occurred_at) & (GatewaySession.id < identifier))
             )
-        query = query.order_by(
-            GatewaySession.created_at.desc(), GatewaySession.id.desc()
-        ).limit(limit + 1)
+        query = query.order_by(GatewaySession.created_at.desc(), GatewaySession.id.desc()).limit(
+            limit + 1
+        )
         async with self._sessions() as database:
             if await database.get(Domain, domain_id) is None:
                 return None
@@ -729,9 +602,7 @@ class DomainQueryService:
                 list(
                     await database.scalars(
                         select(AcquisitionAttempt)
-                        .where(
-                            AcquisitionAttempt.session_id.in_(session_ids)
-                        )
+                        .where(AcquisitionAttempt.session_id.in_(session_ids))
                         .order_by(
                             AcquisitionAttempt.session_id,
                             AcquisitionAttempt.ordinal,
@@ -743,9 +614,7 @@ class DomainQueryService:
             )
         attempts_by_session: dict[str, list[AcquisitionAttempt]] = {}
         for attempt in attempts:
-            attempts_by_session.setdefault(attempt.session_id, []).append(
-                attempt
-            )
+            attempts_by_session.setdefault(attempt.session_id, []).append(attempt)
         sessions = []
         for row in rows:
             session_attempts = attempts_by_session.get(row.id, [])
@@ -757,15 +626,10 @@ class DomainQueryService:
                     "selection_mode": (
                         "explicit"
                         if "harbor.provider.slug" in row.requested_settings
-                        and row.requested_settings[
-                            "harbor.provider.slug"
-                        ]
-                        != "auto"
+                        and row.requested_settings["harbor.provider.slug"] != "auto"
                         else "automatic"
                     ),
-                    "providers": [
-                        attempt.provider for attempt in session_attempts
-                    ],
+                    "providers": [attempt.provider for attempt in session_attempts],
                     "selection_reason": next(
                         (
                             attempt.selection_reason
@@ -779,8 +643,8 @@ class DomainQueryService:
                         for attempt in session_attempts
                         if attempt.transition_trigger is not None
                     ],
-                    "actual_cost_units": sum(
-                        attempt.actual_cost_units or 0
+                    "modeled_cost_units": sum(
+                        attempt.modeled_cost_units or 0
                         for attempt in session_attempts
                     ),
                     "created_at": _iso(row.created_at),
@@ -789,9 +653,7 @@ class DomainQueryService:
                 }
             )
         next_cursor = (
-            _encode_cursor(
-                "domain-session-v1", rows[-1].created_at, rows[-1].id
-            )
+            _encode_cursor("domain-session-v1", rows[-1].created_at, rows[-1].id)
             if has_more and rows
             else None
         )
@@ -799,64 +661,43 @@ class DomainQueryService:
 
     @staticmethod
     async def _summary(database: AsyncSession) -> dict[str, int]:
-        known = int(
-            await database.scalar(select(func.count()).select_from(Domain)) or 0
-        )
+        known = int(await database.scalar(select(func.count()).select_from(Domain)) or 0)
         healthy = int(
             await database.scalar(
-                select(
-                    func.count(func.distinct(DomainProviderHealth.domain_id))
-                ).where(DomainProviderHealth.health_state == "healthy")
+                select(func.count(func.distinct(DomainProviderHealth.domain_id))).where(
+                    DomainProviderHealth.health_state == "healthy"
+                )
             )
             or 0
         )
         checking = int(
             await database.scalar(
-                select(
-                    func.count(func.distinct(DomainProviderHealth.domain_id))
-                ).where(DomainProviderHealth.health_state == "checking")
+                select(func.count(func.distinct(HealthProbe.domain_id))).where(
+                    HealthProbe.state.in_(("queued", "running"))
+                )
             )
             or 0
         )
         unhealthy = int(
             await database.scalar(
-                select(
-                    func.count(func.distinct(DomainProviderHealth.domain_id))
-                ).where(DomainProviderHealth.health_state == "unhealthy")
-            )
-            or 0
-        )
-        suppressed = int(
-            await database.scalar(
-                select(
-                    func.count(
-                        func.distinct(DomainProviderRuntimeState.domain_id)
-                    )
-                ).where(DomainProviderRuntimeState.state == "suppressed")
+                select(func.count(func.distinct(DomainProviderHealth.domain_id))).where(
+                    DomainProviderHealth.health_state == "unhealthy"
+                )
             )
             or 0
         )
         transitioned = int(
             await database.scalar(
-                select(
-                    func.count(
-                        func.distinct(DomainProviderTransitionStat.domain_id)
-                    )
-                )
+                select(func.count(func.distinct(DomainProviderTransitionStat.domain_id)))
             )
             or 0
         )
-        observed = set(
-            await database.scalars(
-                select(DomainProviderHealth.domain_id).distinct()
-            )
-        )
+        observed = set(await database.scalars(select(DomainProviderHealth.domain_id).distinct()))
         return {
             "known_domains": known,
             "healthy_domains": healthy,
             "checking_domains": checking,
             "unhealthy_domains": unhealthy,
-            "suppressed_domains": suppressed,
             "no_evidence_domains": max(0, known - len(observed)),
             "transitioned_domains": transitioned,
         }

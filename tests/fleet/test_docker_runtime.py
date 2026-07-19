@@ -18,21 +18,23 @@ async def test_docker_runtime_lists_compose_service_as_runtime_instances(tmp_pat
         return json.dumps(
             [
                 {
-                    "Name": "/harbor-lightpanda-1",
+                    "Name": "/harbor-browserless-1",
                     "State": {"Running": True, "StartedAt": started_at},
+                    "Config": {"Env": ["CONCURRENT=17"]},
                 }
             ]
         )
 
     runtime._run = run  # type: ignore[method-assign]
 
-    instances = await runtime.list_instances("lightpanda")
+    instances = await runtime.list_instances("browserbase")
 
     assert instances == [
         RuntimeInstance(
             instance_id="container-id",
-            address="harbor-lightpanda-1",
+            address="harbor-browserless-1",
             started_at=datetime.fromisoformat(started_at.replace("Z", "+00:00")),
+            session_capacity=17,
         )
     ]
 

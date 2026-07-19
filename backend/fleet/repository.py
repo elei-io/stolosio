@@ -12,6 +12,7 @@ from backend.db.models import (
     GatewaySession,
     ProviderFleet,
     ProviderInstance,
+    ProviderState,
 )
 from backend.fleet.contracts import (
     FleetConfiguration,
@@ -35,6 +36,7 @@ _CONFIGURATION_FIELDS = (
     "maximum_instances",
     "session_capacity_per_instance",
     "scale_down_cooldown_seconds",
+    "max_queued_attempts",
     "enabled",
 )
 
@@ -51,12 +53,14 @@ class FleetRepository:
         maximum_instances: int,
         session_capacity_per_instance: int,
         scale_down_cooldown_seconds: int,
+        max_queued_attempts: int = 100,
     ) -> FleetConfiguration:
         self._validate(
             minimum_instances=minimum_instances,
             maximum_instances=maximum_instances,
             session_capacity_per_instance=session_capacity_per_instance,
             scale_down_cooldown_seconds=scale_down_cooldown_seconds,
+            max_queued_attempts=max_queued_attempts,
         )
         async with self._sessions.begin() as database:
             await database.execute(
@@ -67,6 +71,7 @@ class FleetRepository:
                     maximum_instances=maximum_instances,
                     session_capacity_per_instance=session_capacity_per_instance,
                     scale_down_cooldown_seconds=scale_down_cooldown_seconds,
+                    max_queued_attempts=max_queued_attempts,
                     desired_instances=minimum_instances,
                     configuration_version=1,
                     enabled=True,
@@ -169,7 +174,10 @@ class FleetRepository:
                         platform=platform,
                         endpoint=observation.endpoint,
                         state=observation.state.value,
-                        capacity=fleet.session_capacity_per_instance,
+                        capacity=(
+                            observation.session_capacity
+                            or fleet.session_capacity_per_instance
+                        ),
                         observed_at=now,
                         observation_expires_at=expires,
                         started_at=observation.started_at or now,
@@ -178,8 +186,15 @@ class FleetRepository:
                 else:
                     row.platform = platform
                     row.endpoint = observation.endpoint
-                    row.state = observation.state.value
-                    row.capacity = fleet.session_capacity_per_instance
+                    if not (
+                        row.state == FleetInstanceState.DRAINING.value
+                        and observation.state is FleetInstanceState.READY
+                    ):
+                        row.state = observation.state.value
+                    row.capacity = (
+                        observation.session_capacity
+                        or fleet.session_capacity_per_instance
+                    )
                     row.observed_at = now
                     row.observation_expires_at = expires
                     row.stopped_at = None
@@ -208,6 +223,55 @@ class FleetRepository:
                     row.state = FleetInstanceState.STOPPED.value
                     row.stopped_at = now
                     row.observation_expires_at = now
+
+    async def prepare_scale_down(
+        self,
+        provider: ProviderName,
+        instance_id: str,
+    ) -> bool:
+        """Drain one instance and atomically verify it has no live assignments."""
+        async with self._sessions.begin() as database:
+            await self._lock_provider(database, provider.value)
+            instance = await database.get(
+                ProviderInstance,
+                instance_id,
+                with_for_update=True,
+            )
+            if instance is None or instance.provider != provider.value:
+                return False
+            now = await self._now(database)
+            instance.state = FleetInstanceState.DRAINING.value
+            instance.draining_at = instance.draining_at or now
+            active = await database.scalar(
+                select(func.count())
+                .select_from(AcquisitionAttempt)
+                .join(GatewaySession, GatewaySession.id == AcquisitionAttempt.session_id)
+                .where(
+                    AcquisitionAttempt.provider_instance_id == instance_id,
+                    AcquisitionAttempt.state.in_(_ACTIVE_ATTEMPT_STATES),
+                    GatewaySession.state.in_(_LIVE_SESSION_STATES),
+                    GatewaySession.lease_expires_at > now,
+                )
+            )
+            return int(active or 0) == 0
+
+    async def cancel_scale_down(self, provider: ProviderName) -> None:
+        """Make previously draining instances require a fresh ready observation."""
+        async with self._sessions.begin() as database:
+            await self._lock_provider(database, provider.value)
+            rows = list(
+                await database.scalars(
+                    select(ProviderInstance)
+                    .where(
+                        ProviderInstance.provider == provider.value,
+                        ProviderInstance.state == FleetInstanceState.DRAINING.value,
+                    )
+                    .with_for_update()
+                )
+            )
+            for row in rows:
+                row.state = FleetInstanceState.STARTING.value
+                row.draining_at = None
 
     async def record_reconciliation(
         self,
@@ -307,6 +371,17 @@ class FleetRepository:
         return value
 
     @staticmethod
+    async def _lock_provider(database: AsyncSession, provider: str) -> None:
+        await database.execute(
+            insert(ProviderState)
+            .values(provider=provider)
+            .on_conflict_do_nothing(index_elements=[ProviderState.provider])
+        )
+        await database.scalar(
+            select(ProviderState).where(ProviderState.provider == provider).with_for_update()
+        )
+
+    @staticmethod
     def _configuration(row: ProviderFleet) -> FleetConfiguration:
         return FleetConfiguration(
             provider=ProviderName(row.provider),
@@ -314,6 +389,7 @@ class FleetRepository:
             maximum_instances=row.maximum_instances,
             session_capacity_per_instance=row.session_capacity_per_instance,
             scale_down_cooldown_seconds=row.scale_down_cooldown_seconds,
+            max_queued_attempts=row.max_queued_attempts,
             desired_instances=row.desired_instances,
             configuration_version=row.configuration_version,
             enabled=row.enabled,
@@ -346,6 +422,7 @@ class FleetRepository:
         maximum_instances: int,
         session_capacity_per_instance: int,
         scale_down_cooldown_seconds: int,
+        max_queued_attempts: int,
         enabled: bool = True,
     ) -> None:
         if minimum_instances < 0 or maximum_instances < minimum_instances:
@@ -356,3 +433,5 @@ class FleetRepository:
             raise ValueError("Fleet session capacity must be positive")
         if scale_down_cooldown_seconds < 1:
             raise ValueError("Fleet scale-down cooldown must be positive")
+        if max_queued_attempts < 0:
+            raise ValueError("Fleet queue limit must be non-negative")

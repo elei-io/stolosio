@@ -12,16 +12,19 @@ from backend.metrics.definitions import (
     SESSION_ACQUISITIONS,
     SESSIONS_COMPLETED,
 )
-from backend.proxy.capabilities.manifests import PROVIDER_METHODS
+from backend.proxy.contracts import ProviderName
 
 logger = logging.getLogger(__name__)
 
-_KNOWN_METHODS = frozenset().union(*PROVIDER_METHODS.values())
+_KNOWN_METHOD_DOMAINS = frozenset(
+    {"Browser", "DOM", "Emulation", "Input", "Network", "Page", "Runtime", "Target"}
+)
 _KNOWN_REASONS = frozenset(
     {
         "client_disconnected",
         "provider_acquisition_timeout",
         "provider_connection_lost",
+        "provider_timeout",
         "provider_unavailable",
         "provider_queue_full",
         "provider_queue_timeout",
@@ -36,7 +39,10 @@ _KNOWN_REASONS = frozenset(
 
 
 def metric_method(method: object) -> str:
-    return method if isinstance(method, str) and method in _KNOWN_METHODS else "other"
+    if not isinstance(method, str):
+        return "other"
+    domain, separator, _ = method.partition(".")
+    return domain if separator and domain in _KNOWN_METHOD_DOMAINS else "other"
 
 
 def metric_reason(reason: object) -> str:
@@ -48,9 +54,20 @@ def transition_trigger(trigger: object) -> str:
         return "replay_budget"
     if trigger in {"http_transport_failure", "http_response_too_large"}:
         return "http_safety"
-    if isinstance(trigger, str) and trigger in _KNOWN_METHODS:
+    if isinstance(trigger, str) and "." in trigger:
         return "new_requirement"
     return "other"
+
+
+def observe_command(
+    provider: ProviderName,
+    method: str,
+    outcome: str,
+    duration_ms: int,
+) -> None:
+    metric = metric_method(method)
+    COMMANDS.labels(provider.value, metric, outcome).inc()
+    COMMAND_DURATION.labels(provider.value, metric, outcome).observe(duration_ms / 1000)
 
 
 def observe_published_event(event: SessionEvent) -> None:
@@ -81,16 +98,6 @@ def observe_published_event(event: SessionEvent) -> None:
         PROVIDER_FAILURES.labels(provider, metric_reason(event.payload.get("reason"))).inc()
         if isinstance(duration, int):
             SESSION_ACQUISITION_DURATION.labels(provider).observe(duration / 1000)
-    elif event_type in {
-        EventType.COMMAND_SUCCEEDED,
-        EventType.COMMAND_FAILED,
-        EventType.COMMAND_INTERRUPTED,
-    }:
-        outcome = event_type.value.removeprefix("command.")
-        method = metric_method(event.payload.get("method"))
-        COMMANDS.labels(provider, method, outcome).inc()
-        if isinstance(duration, int):
-            COMMAND_DURATION.labels(provider, method, outcome).observe(duration / 1000)
 
 
 class InstrumentedEventPublisher:

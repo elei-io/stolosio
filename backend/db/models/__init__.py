@@ -2,6 +2,8 @@
 
 from backend.db.models.gateway import (
     AcquisitionAttempt,
+    ExternalProviderLimit,
+    ExternalProviderLimitEvent,
     FleetConfigurationEvent,
     GatewaySession,
     GatewayState,
@@ -12,26 +14,23 @@ from backend.db.models.gateway import (
 )
 from backend.db.models.observability import (
     Domain,
-    DomainCommandStat,
     DomainProviderCostStat,
     DomainProviderHealth,
-    DomainProviderRuntimeState,
     DomainProviderTransitionStat,
     HealthProbe,
+    ProviderCommandCostStat,
     ProviderRoutingProfile,
     RoutingConfiguration,
     SessionDomain,
-    SessionDomainCommand,
-    SessionDomainProviderCompatibility,
 )
 
 __all__ = [
     "AcquisitionAttempt",
+    "ExternalProviderLimit",
+    "ExternalProviderLimitEvent",
     "Domain",
-    "DomainCommandStat",
     "DomainProviderCostStat",
     "DomainProviderHealth",
-    "DomainProviderRuntimeState",
     "DomainProviderTransitionStat",
     "FleetConfigurationEvent",
     "GatewaySession",
@@ -39,11 +38,10 @@ __all__ = [
     "ProviderState",
     "ProviderFleet",
     "ProviderInstance",
+    "ProviderCommandCostStat",
     "ProviderRoutingProfile",
     "HealthProbe",
     "RoutingConfiguration",
     "SessionDomain",
-    "SessionDomainCommand",
-    "SessionDomainProviderCompatibility",
     "SessionEventRecord",
 ]

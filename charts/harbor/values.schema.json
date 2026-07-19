@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["database", "nats"],
+  "properties": {
+    "database": {
+      "type": "object",
+      "required": ["existingSecret", "urlSecretKey"],
+      "properties": {
+        "existingSecret": {"type": "string", "minLength": 1},
+        "urlSecretKey": {"type": "string", "minLength": 1}
+      }
+    },
+    "nats": {
+      "type": "object",
+      "required": ["existingSecret", "urlSecretKey"],
+      "properties": {
+        "existingSecret": {"type": "string", "minLength": 1},
+        "urlSecretKey": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

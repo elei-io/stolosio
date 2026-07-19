@@ -6,11 +6,12 @@ from backend.proxy.contracts import ProviderName
 
 def configuration(**changes) -> FleetConfiguration:
     values = {
-        "provider": ProviderName.CHROMIUM,
+        "provider": ProviderName.BROWSERLESS,
         "minimum_instances": 1,
         "maximum_instances": 4,
         "session_capacity_per_instance": 2,
         "scale_down_cooldown_seconds": 30,
+        "max_queued_attempts": 100,
         "desired_instances": 1,
         "configuration_version": 1,
         "enabled": True,

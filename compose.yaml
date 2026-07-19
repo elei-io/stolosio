@@ -13,9 +13,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://harbor:harbor@postgres:5432/harbor
       NATS_URL: nats://nats:4222
       BROWSERLESS_URL: ws://browserless:3000
-      CAMOUFOX_URL: ws://camoufox:1234/harbor
-      CHROMIUM_URL: ws://chromium:9222
-      LIGHTPANDA_URL: ws://lightpanda:9222
+      BROWSERLESS_SESSION_TIMEOUT_SECONDS: "600"
     ports:
       - "${HARBOR_API_PORT:-8411}:8000"
     volumes:
@@ -41,6 +39,7 @@ services:
   web:
     build:
       context: web
+      target: development
     environment:
       HARBOR_API_PROXY_TARGET: http://api:8000
     ports:
@@ -131,31 +130,11 @@ services:
   browserless:
     image: ghcr.io/browserless/chromium:latest
     environment:
-      CONCURRENT: "5"
+      CONCURRENT: "${HARBOR_BROWSERLESS_CONCURRENT:-5}"
       QUEUED: "10"
-      TIMEOUT: "60000"
+      TIMEOUT: "600000"
     expose:
       - "3000"
-
-  chromium:
-    image: chromedp/headless-shell:latest
-    shm_size: 2gb
-    expose:
-      - "9222"
-
-  camoufox:
-    build:
-      context: docker/camoufox
-    shm_size: 2gb
-    expose:
-      - "1234"
-
-  lightpanda:
-    image: lightpanda/browser:nightly
-    environment:
-      LIGHTPANDA_DISABLE_TELEMETRY: "true"
-    expose:
-      - "9222"
 
 volumes:
   postgres_data:

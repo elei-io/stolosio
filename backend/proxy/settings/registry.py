@@ -67,9 +67,10 @@ class HarborSettingsRegistry:
                 auto_fields.add(query)
                 continue
             try:
-                overrides[query] = field.adapter.validate_python(raw_value)
+                value = field.adapter.validate_python(raw_value)
             except ValidationError as error:
                 raise InvalidHarborSettings from error
+            overrides[query] = value
 
         return RequestedSessionSettings(
             overrides=overrides,

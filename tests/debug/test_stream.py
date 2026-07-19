@@ -101,14 +101,14 @@ async def test_debug_stream_replays_jetstream_events_in_order_until_session_clos
             )
         )
     requested = SessionEvent.create(
-        EventType.SESSION_REQUESTED,
+        EventType.SESSION_OPEN,
         session_id,
-        provider=ProviderName.CHROMIUM,
+        provider=ProviderName.BROWSERLESS,
     )
     closed = SessionEvent.create(
         EventType.SESSION_CLOSED,
         session_id,
-        provider=ProviderName.CHROMIUM,
+        provider=ProviderName.BROWSERLESS,
         payload={"reason": "client_disconnected"},
     )
     try:
@@ -125,7 +125,7 @@ async def test_debug_stream_replays_jetstream_events_in_order_until_session_clos
 
         assert await asyncio.wait_for(service.stream(websocket, reference), timeout=2)
         assert [event["event_type"] for event in websocket.events] == [
-            "session.requested",
+            "session.open",
             "session.closed",
         ]
     finally:

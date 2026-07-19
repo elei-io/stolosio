@@ -9,28 +9,26 @@ from backend.db.models import (
     Domain,
     DomainProviderCostStat,
     DomainProviderHealth,
-    DomainProviderRuntimeState,
     GatewaySession,
     HealthProbe,
     SessionDomain,
-    SessionDomainProviderCompatibility,
     SessionEventRecord,
 )
 from backend.events import EventType
-from backend.proxy.contracts import ProviderName
-from backend.proxy.health import HealthProbeResult, HealthRepository
-from backend.proxy.routing import RoutingRepository
-from backend.proxy.runtime_compatibility import (
-    DomainCommands,
-    RuntimeCompatibilityRepository,
+from backend.proxy.contracts import PROMOTION_PROVIDERS, ProviderName
+from backend.proxy.external_capacity import ExternalCapacityRepository
+from backend.proxy.health import (
+    HealthProbeResult,
+    PromotionRepository,
 )
+from backend.proxy.routing import RoutingRepository
 
 
 async def _domain(
     sessions: async_sessionmaker[AsyncSession],
     hostname: str,
     *,
-    providers: tuple[str, ...] = ("http", "lightpanda"),
+    providers: tuple[str, ...] = ("http", "browserless"),
 ) -> int:
     now = datetime.now(UTC)
     async with sessions.begin() as database:
@@ -87,11 +85,18 @@ async def _session(
 async def test_plan_bootstraps_unknown_then_orders_only_healthy_eligible_providers(
     database_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
+    await ExternalCapacityRepository(database_sessions).ensure(
+        ProviderName.BROWSERBASE,
+        enabled=True,
+        max_active_sessions=5,
+        max_queued_attempts=100,
+    )
     routing = RoutingRepository(database_sessions)
     await routing.ensure_defaults()
     unknown = await routing.plan("unknown.test")
     assert unknown.reason == "configured_default_bootstrap"
-    assert unknown.first.provider is ProviderName.CAMOUFOX
+    assert unknown.first.provider is ProviderName.BROWSERLESS
+    assert unknown.candidates[-1].provider is ProviderName.BROWSERBASE
 
     domain_id = await _domain(database_sessions, "known.test")
     async with database_sessions.begin() as database:
@@ -108,149 +113,61 @@ async def test_plan_bootstraps_unknown_then_orders_only_healthy_eligible_provide
     assert plan.reason == "cheapest_eligible"
     assert [candidate.provider for candidate in plan.candidates] == [
         ProviderName.HTTP,
-        ProviderName.LIGHTPANDA,
+        ProviderName.BROWSERLESS,
+        ProviderName.BROWSERBASE,
     ]
     assert plan.first.estimated_cost_units == 2
 
 
 @pytest.mark.asyncio
-async def test_atlas_sequence_suppresses_then_restores_http_without_a_probe(
+async def test_browserbase_is_assumed_good_when_promotable_paths_are_unhealthy(
     database_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
+    await ExternalCapacityRepository(database_sessions).ensure(
+        ProviderName.BROWSERBASE,
+        enabled=True,
+        max_active_sessions=5,
+        max_queued_attempts=100,
+    )
     routing = RoutingRepository(database_sessions)
     await routing.ensure_defaults()
-    domain_id = await _domain(database_sessions, "atlas.test")
-    compatibility = RuntimeCompatibilityRepository(database_sessions)
-
-    assert (await routing.plan("atlas.test")).first.provider is ProviderName.HTTP
-
-    first_session = await _session(database_sessions)
-    await compatibility.suppress(
-        session_id=first_session,
-        hostname="atlas.test",
-        provider=ProviderName.HTTP,
-        method="Runtime.callFunctionOn",
-    )
-    assert (
-        await routing.plan("atlas.test")
-    ).first.provider is ProviderName.LIGHTPANDA
-
-    second_session = await _session(database_sessions)
-    await compatibility.record_session(
-        second_session,
-        {
-            "atlas.test": DomainCommands(
-                first_seen_at=datetime.now(UTC) + timedelta(milliseconds=1),
-                commands=[
-                    ("Browser.getVersion", None),
-                    ("Page.navigate", {"url": "https://atlas.test/"}),
-                ],
-            )
-        },
-    )
-    assert (await routing.plan("atlas.test")).first.provider is ProviderName.HTTP
-    assert (await routing.plan("atlas.test")).first.provider is ProviderName.HTTP
-
-    async with database_sessions() as database:
-        state = await database.get(
-            DomainProviderRuntimeState, (domain_id, ProviderName.HTTP.value)
-        )
-    assert state is not None
-    assert state.state == "eligible"
-    assert state.restored_session_id == second_session
-
-
-@pytest.mark.asyncio
-async def test_same_or_older_session_cannot_restore_a_suppression(
-    database_sessions: async_sessionmaker[AsyncSession],
-) -> None:
-    routing = RoutingRepository(database_sessions)
-    await routing.ensure_defaults()
-    await _domain(database_sessions, "concurrent.test")
-    compatibility = RuntimeCompatibilityRepository(database_sessions)
-    old_first_seen = datetime.now(UTC) - timedelta(minutes=1)
-    old_session = await _session(database_sessions, created_at=old_first_seen)
-
-    await compatibility.suppress(
-        session_id=old_session,
-        hostname="concurrent.test",
-        provider=ProviderName.HTTP,
-        method="Runtime.callFunctionOn",
-    )
-    await compatibility.record_session(
-        old_session,
-        {
-            "concurrent.test": DomainCommands(
-                first_seen_at=old_first_seen,
-                commands=[("Browser.getVersion", None)],
-            )
-        },
-    )
-
-    assert (
-        await routing.plan("concurrent.test")
-    ).first.provider is ProviderName.LIGHTPANDA
-
-
-@pytest.mark.asyncio
-async def test_session_compatibility_is_idempotent_and_domain_scoped(
-    database_sessions: async_sessionmaker[AsyncSession],
-) -> None:
-    routing = RoutingRepository(database_sessions)
-    await routing.ensure_defaults()
-    first_domain_id = await _domain(database_sessions, "first.test")
-    second_domain_id = await _domain(database_sessions, "second.test")
-    compatibility = RuntimeCompatibilityRepository(database_sessions)
-    suppressing_session = await _session(database_sessions)
-    for hostname in ("first.test", "second.test"):
-        await compatibility.suppress(
-            session_id=suppressing_session,
-            hostname=hostname,
-            provider=ProviderName.HTTP,
-            method="Runtime.callFunctionOn",
-        )
-
-    later_session = await _session(database_sessions)
-    observed_at = datetime.now(UTC) + timedelta(milliseconds=1)
-    observations = {
-        "first.test": DomainCommands(
-            first_seen_at=observed_at,
-            commands=[("Browser.getVersion", None)],
-        ),
-        "second.test": DomainCommands(
-            first_seen_at=observed_at,
-            commands=[
-                (
-                    "Runtime.evaluate",
-                    {"expression": "document.body.textContent"},
-                )
-            ],
-        ),
-    }
-    await compatibility.record_session(later_session, observations)
-    await compatibility.record_session(later_session, observations)
-
-    async with database_sessions() as database:
-        first = await database.get(
-            DomainProviderRuntimeState,
-            (first_domain_id, ProviderName.HTTP.value),
-        )
-        second = await database.get(
-            DomainProviderRuntimeState,
-            (second_domain_id, ProviderName.HTTP.value),
-        )
-        evidence = list(
+    domain_id = await _domain(database_sessions, "difficult.test")
+    async with database_sessions.begin() as database:
+        rows = list(
             await database.scalars(
-                select(SessionDomainProviderCompatibility).where(
-                    SessionDomainProviderCompatibility.session_id
-                    == later_session,
-                    SessionDomainProviderCompatibility.provider == "http",
+                select(DomainProviderHealth).where(
+                    DomainProviderHealth.domain_id == domain_id
                 )
             )
         )
-    assert first is not None and first.state == "eligible"
-    assert second is not None and second.state == "suppressed"
-    assert len(evidence) == 2
+        for row in rows:
+            row.health_state = "unhealthy"
+
+    plan = await routing.plan("difficult.test")
+
+    assert [candidate.provider for candidate in plan.candidates] == [
+        ProviderName.BROWSERBASE
+    ]
+
+
+@pytest.mark.asyncio
+async def test_disabled_browserbase_is_not_offered_by_automatic_routing(
+    database_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await ExternalCapacityRepository(database_sessions).ensure(
+        ProviderName.BROWSERBASE,
+        enabled=False,
+        max_active_sessions=5,
+        max_queued_attempts=100,
+    )
+    routing = RoutingRepository(database_sessions)
+    await routing.ensure_defaults()
+
+    plan = await routing.plan("unknown.test")
+
+    assert [candidate.provider for candidate in plan.candidates] == [
+        ProviderName.BROWSERLESS
+    ]
 
 
 async def _add_probe_source(
@@ -274,7 +191,7 @@ async def _add_probe_source(
                 SessionEventRecord(
                     session_id=session_id,
                     event_type=EventType.NAVIGATION_REQUESTED,
-                    provider="camoufox",
+                    provider="browserbase",
                     occurred_at=now,
                     payload={
                         "url": f"https://{hostname}/",
@@ -284,7 +201,7 @@ async def _add_probe_source(
                 SessionEventRecord(
                     session_id=session_id,
                     event_type=EventType.NAVIGATION_RESPONSE,
-                    provider="camoufox",
+                    provider="browserbase",
                     occurred_at=now,
                     payload={"url": f"https://{hostname}/", "status": 200},
                 ),
@@ -303,10 +220,11 @@ async def test_health_probes_do_not_depend_on_historical_methods(
     source = await _add_probe_source(
         database_sessions, domain_id, "probe.test"
     )
-    health = HealthRepository(database_sessions)
+    health = PromotionRepository(database_sessions)
     jobs = await health.schedule(delay_seconds=0)
 
-    assert {job.provider for job in jobs} == set(ProviderName)
+    assert {job.provider for job in jobs} == set(PROMOTION_PROVIDERS)
+    assert ProviderName.BROWSERBASE not in {job.provider for job in jobs}
     async with database_sessions() as database:
         probes = list(
             await database.scalars(
@@ -337,6 +255,41 @@ async def test_health_probes_do_not_depend_on_historical_methods(
 
 
 @pytest.mark.asyncio
+async def test_refresh_probe_preserves_existing_routing_eligibility(
+    database_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    routing = RoutingRepository(database_sessions)
+    await routing.ensure_defaults()
+    await routing.update_settings(
+        existing_domain_probe_rate_basis_points=10_000
+    )
+    domain_id = await _domain(database_sessions, "refresh.test")
+    async with database_sessions.begin() as database:
+        domain = await database.get(Domain, domain_id)
+        assert domain is not None
+        domain.eligible_acquisition_count = 1
+    await _add_probe_source(database_sessions, domain_id, "refresh.test")
+
+    health = PromotionRepository(database_sessions)
+    jobs = await health.schedule(delay_seconds=0)
+
+    assert {job.provider for job in jobs} == set(PROMOTION_PROVIDERS)
+    async with database_sessions() as database:
+        rows = list(
+            await database.scalars(
+                select(DomainProviderHealth).where(
+                    DomainProviderHealth.domain_id == domain_id
+                )
+            )
+        )
+    assert {row.health_state for row in rows} == {"healthy"}
+    assert [
+        candidate.provider
+        for candidate in (await routing.plan("refresh.test")).candidates
+    ][:2] == [ProviderName.HTTP, ProviderName.BROWSERLESS]
+
+
+@pytest.mark.asyncio
 async def test_probe_execution_failure_replaces_stale_healthy_evidence(
     database_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -344,7 +297,7 @@ async def test_probe_execution_failure_replaces_stale_healthy_evidence(
     await routing.ensure_defaults()
     domain_id = await _domain(database_sessions, "crash.test")
     await _add_probe_source(database_sessions, domain_id, "crash.test")
-    health = HealthRepository(database_sessions)
+    health = PromotionRepository(database_sessions)
     await health.schedule(delay_seconds=0)
 
     owner = "worker"
@@ -385,12 +338,12 @@ async def test_probe_cohort_suppresses_materially_incomplete_http_content(
     source = await _add_probe_source(
         database_sessions, domain_id, "relative.test"
     )
-    health = HealthRepository(database_sessions)
+    health = PromotionRepository(database_sessions)
     await health.schedule(delay_seconds=0)
 
     owner = "cohort-worker"
     jobs = await health.claim_cohort(owner, lease_seconds=60)
-    assert {job.provider for job in jobs} == set(ProviderName)
+    assert {job.provider for job in jobs} == set(PROMOTION_PROVIDERS)
     async with database_sessions() as database:
         probes = list(
             await database.scalars(
@@ -460,3 +413,28 @@ async def test_probe_cohort_suppresses_materially_incomplete_http_content(
     assert http_health.failure_reason_code == "materially_incomplete"
     assert browserless_probe is not None
     assert browserless_probe.comparison_state == "comparable"
+
+
+@pytest.mark.asyncio
+async def test_browserbase_requires_an_explicit_manual_probe(
+    database_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    routing = RoutingRepository(database_sessions)
+    await routing.ensure_defaults()
+    domain_id = await _domain(database_sessions, "terminal.test", providers=())
+    await _add_probe_source(database_sessions, domain_id, "terminal.test")
+    promotion = PromotionRepository(database_sessions)
+
+    manual = await promotion.schedule_manual(
+        domain_id,
+        (ProviderName.BROWSERBASE,),
+    )
+    assert [job.provider for job in manual.scheduled] == [
+        ProviderName.BROWSERBASE
+    ]
+
+    claimed = await promotion.claim_cohort("manual-worker", lease_seconds=60)
+    assert [job.provider for job in claimed] == [ProviderName.BROWSERBASE]
+
+    jobs = await promotion.schedule(delay_seconds=0)
+    assert ProviderName.BROWSERBASE not in {job.provider for job in jobs}

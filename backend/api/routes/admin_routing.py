@@ -69,8 +69,6 @@ async def update_routing(
     update: RoutingUpdate,
     request: Request,
 ) -> RoutingResponse:
-    if request.app.state.environment != "development":
-        raise HTTPException(status_code=404, detail="not found")
     try:
         value = await request.app.state.routing.update_settings(
             **update.model_dump(exclude_unset=True)
@@ -100,8 +98,6 @@ async def update_provider_routing(
     update: ProviderRoutingUpdate,
     request: Request,
 ) -> ProviderRoutingResponse:
-    if request.app.state.environment != "development":
-        raise HTTPException(status_code=404, detail="not found")
     try:
         row = await request.app.state.routing.update_provider(
             provider,

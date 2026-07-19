@@ -5,7 +5,7 @@ from backend.api.routes.fleet import router as fleet_router
 from backend.api.routes.metrics import router as metrics_router
 from backend.metrics import GatewayFleetSnapshot, ProviderFleetSnapshot
 from backend.metrics.instrumentation import metric_method, metric_reason, transition_trigger
-from backend.proxy.contracts import ProviderName
+from backend.proxy.contracts import ACTIVE_PROVIDERS, ProviderName
 
 
 class FakeFleet:
@@ -16,10 +16,12 @@ class FakeFleet:
         return [
             ProviderFleetSnapshot(
                 provider=provider,
-                active_attempts=1 if provider is ProviderName.CHROMIUM else 0,
-                queued_attempts=2 if provider is ProviderName.CHROMIUM else 0,
+                active_attempts=1 if provider is ProviderName.BROWSERLESS else 0,
+                queued_attempts=2 if provider is ProviderName.BROWSERLESS else 0,
                 capacity=3,
-                oldest_queued_attempt_seconds=(4.5 if provider is ProviderName.CHROMIUM else 0),
+                oldest_queued_attempt_seconds=(
+                    4.5 if provider is ProviderName.BROWSERLESS else 0
+                ),
                 desired_instances=2,
                 observed_instances=2,
                 ready_instances=1,
@@ -27,7 +29,7 @@ class FakeFleet:
                 total_slots=3,
                 available_slots=2,
             )
-            for provider in ProviderName
+            for provider in ACTIVE_PROVIDERS
         ]
 
 
@@ -42,12 +44,12 @@ def test_json_and_prometheus_views_share_the_fleet_snapshot() -> None:
         metrics = client.get("/metrics")
 
     assert response.status_code == 200
-    assert len(response.json()) == 5
-    chromium = next(
-        snapshot for snapshot in response.json() if snapshot["provider"] == "chromium"
+    assert len(response.json()) == 3
+    browserless = next(
+        snapshot for snapshot in response.json() if snapshot["provider"] == "browserless"
     )
-    assert chromium == {
-        "provider": "chromium",
+    assert browserless == {
+        "provider": "browserless",
         "active_attempts": 1,
         "queued_attempts": 2,
         "capacity": 3,
@@ -63,17 +65,17 @@ def test_json_and_prometheus_views_share_the_fleet_snapshot() -> None:
     assert metrics.status_code == 200
     assert "harbor_gateway_active_sessions 2.0" in metrics.text
     assert "harbor_gateway_capacity 100.0" in metrics.text
-    assert 'harbor_provider_active_attempts{provider="chromium"} 1.0' in metrics.text
-    assert 'harbor_provider_queued_attempts{provider="chromium"} 2.0' in metrics.text
-    assert 'harbor_provider_desired_instances{provider="chromium"} 2.0' in metrics.text
-    assert 'harbor_provider_ready_instances{provider="chromium"} 1.0' in metrics.text
-    assert 'harbor_provider_unhealthy_instances{provider="chromium"} 1.0' in metrics.text
-    assert 'harbor_provider_available_slots{provider="chromium"} 2.0' in metrics.text
+    assert 'harbor_provider_active_attempts{provider="browserless"} 1.0' in metrics.text
+    assert 'harbor_provider_queued_attempts{provider="browserless"} 2.0' in metrics.text
+    assert 'harbor_provider_desired_instances{provider="browserless"} 2.0' in metrics.text
+    assert 'harbor_provider_ready_instances{provider="browserless"} 1.0' in metrics.text
+    assert 'harbor_provider_unhealthy_instances{provider="browserless"} 1.0' in metrics.text
+    assert 'harbor_provider_available_slots{provider="browserless"} 2.0' in metrics.text
     assert "session_id" not in metrics.text
 
 
 def test_metric_labels_map_unregistered_values_to_other() -> None:
-    assert metric_method("Page.navigate") == "Page.navigate"
+    assert metric_method("Page.navigate") == "Page"
     assert metric_method("Secret.customCommand") == "other"
     assert metric_reason("provider_unavailable") == "provider_unavailable"
     assert metric_reason("private exception details") == "other"

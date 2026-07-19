@@ -44,7 +44,7 @@ async def main() -> None:
         await browser.close()
 
     events = await asyncio.wait_for(debug, timeout=10)
-    assert events[0]["event_type"] == "session.requested"
+    assert events[0]["event_type"] == "session.open"
     assert events[-1]["event_type"] == "session.closed"
 
 

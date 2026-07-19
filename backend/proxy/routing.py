@@ -10,7 +10,7 @@ from backend.db.models import (
     Domain,
     DomainProviderCostStat,
     DomainProviderHealth,
-    DomainProviderRuntimeState,
+    ExternalProviderLimit,
     ProviderRoutingProfile,
     RoutingConfiguration,
 )
@@ -19,15 +19,13 @@ from backend.proxy.contracts import ProviderName
 
 _DEFAULT_COSTS = {
     ProviderName.HTTP: 1,
-    ProviderName.LIGHTPANDA: 10,
-    ProviderName.CHROMIUM: 100,
     ProviderName.BROWSERLESS: 100,
-    ProviderName.CAMOUFOX: 120,
+    ProviderName.BROWSERBASE: 300,
 }
 
 
 class NoSupportedProvider(RuntimeError):
-    """No healthy, runtime-eligible provider can execute the journey."""
+    """No enabled provider can satisfy the current acquisition plan."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +74,7 @@ class RoutingRepository:
                 insert(RoutingConfiguration)
                 .values(
                     key="global",
-                    default_provider=ProviderName.CAMOUFOX.value,
+                    default_provider=ProviderName.BROWSERLESS.value,
                     existing_domain_probe_rate_basis_points=100,
                     required_health_confirmations=1,
                     health_policy_version=1,
@@ -104,7 +102,7 @@ class RoutingRepository:
         async with self._sessions() as database:
             row = await database.get(RoutingConfiguration, "global")
         if row is None:
-            return RoutingSettings(ProviderName.CAMOUFOX, 100, 1, 1, 1)
+            return RoutingSettings(ProviderName.BROWSERLESS, 100, 1, 1, 1)
         return RoutingSettings(
             ProviderName(row.default_provider),
             row.existing_domain_probe_rate_basis_points,
@@ -200,7 +198,7 @@ class RoutingRepository:
             if configuration is None:
                 configuration_version = 1
                 health_policy_version = 1
-                default_provider = ProviderName.CAMOUFOX
+                default_provider = ProviderName.BROWSERLESS
             else:
                 configuration_version = configuration.configuration_version
                 health_policy_version = configuration.health_policy_version
@@ -229,20 +227,6 @@ class RoutingRepository:
                 if domain_id is not None
                 else []
             )
-            runtime = {
-                ProviderName(row.provider): row
-                for row in (
-                    list(
-                        await database.scalars(
-                            select(DomainProviderRuntimeState).where(
-                                DomainProviderRuntimeState.domain_id == domain_id
-                            )
-                        )
-                    )
-                    if domain_id is not None
-                    else []
-                )
-            }
             costs = {
                 ProviderName(row.provider): row
                 for row in (
@@ -257,6 +241,10 @@ class RoutingRepository:
                     else []
                 )
             }
+            browserbase_capacity = await database.get(
+                ExternalProviderLimit,
+                ProviderName.BROWSERBASE.value,
+            )
 
         def command_compatible(provider: ProviderName) -> bool:
             return all(
@@ -267,14 +255,9 @@ class RoutingRepository:
         eligible: list[tuple[ProviderName, int]] = []
         for evidence in health:
             provider = ProviderName(evidence.provider)
+            if provider is ProviderName.BROWSERBASE:
+                continue
             profile = profile_by_provider.get(provider)
-            runtime_state = runtime.get(provider)
-            suppressed = (
-                runtime_state is not None
-                and runtime_state.provider_contract_version
-                == profile.provider_contract_version
-                and runtime_state.state == "suppressed"
-            ) if profile is not None else False
             if (
                 profile is None
                 or provider in exclude
@@ -282,7 +265,6 @@ class RoutingRepository:
                 or evidence.health_policy_version != health_policy_version
                 or evidence.provider_contract_version
                 != profile.provider_contract_version
-                or suppressed
                 or not command_compatible(provider)
             ):
                 continue
@@ -294,6 +276,29 @@ class RoutingRepository:
             )
             eligible.append((provider, expected_cost))
 
+        # Browserbase is the terminal correctness provider. Harbor never probes it
+        # automatically: when enabled, it is eligible by assumption and remains the
+        # final fallback. Manual diagnostic results do not affect this rule.
+        browserbase_profile = profile_by_provider.get(ProviderName.BROWSERBASE)
+        browserbase_candidate: tuple[ProviderName, int] | None = None
+        if (
+            browserbase_profile is not None
+            and ProviderName.BROWSERBASE not in exclude
+            and command_compatible(ProviderName.BROWSERBASE)
+            and browserbase_capacity is not None
+            and browserbase_capacity.enabled
+            and browserbase_capacity.max_active_sessions > 0
+        ):
+            cost = costs.get(ProviderName.BROWSERBASE)
+            expected_cost = (
+                cost.total_cost_units // cost.observed_attempt_count
+                if cost is not None and cost.observed_attempt_count
+                else browserbase_profile.cost_units_per_second
+            )
+            browserbase_candidate = (ProviderName.BROWSERBASE, expected_cost)
+
+        if eligible and browserbase_candidate is not None:
+            eligible.append(browserbase_candidate)
         eligible.sort(key=lambda item: (item[1], item[0].value))
         if eligible:
             return ProviderPlan(
@@ -307,11 +312,9 @@ class RoutingRepository:
             )
 
         # The configured default is a bootstrap path only. Once Harbor has current
-        # healthy evidence, runtime suppression and health conclusions are binding.
+        # health evidence, health conclusions are binding.
         has_current_health = any(
-            row.health_state == "healthy"
-            and row.health_policy_version == health_policy_version
-            for row in health
+            row.health_policy_version == health_policy_version for row in health
         )
         default_profile = profile_by_provider.get(default_provider)
         if (
@@ -320,20 +323,45 @@ class RoutingRepository:
             and default_provider not in exclude
             and command_compatible(default_provider)
         ):
-            return ProviderPlan(
-                (
+            bootstrap = [
+                ProviderCandidate(
+                    default_provider,
+                    default_profile.cost_units_per_second,
+                    0,
+                )
+            ]
+            if (
+                browserbase_candidate is not None
+                and default_provider is not ProviderName.BROWSERBASE
+            ):
+                bootstrap.append(
                     ProviderCandidate(
-                        default_provider,
-                        default_profile.cost_units_per_second,
-                        0,
-                    ),
-                ),
+                        ProviderName.BROWSERBASE,
+                        browserbase_candidate[1],
+                        1,
+                    )
+                )
+            return ProviderPlan(
+                tuple(bootstrap),
                 "configured_default_bootstrap",
                 configuration_version,
                 health_policy_version,
             )
+        if browserbase_candidate is not None:
+            return ProviderPlan(
+                (
+                    ProviderCandidate(
+                        ProviderName.BROWSERBASE,
+                        browserbase_candidate[1],
+                        0,
+                    ),
+                ),
+                "cheapest_eligible",
+                configuration_version,
+                health_policy_version,
+            )
         raise NoSupportedProvider(
-            f"No healthy, runtime-eligible provider for {hostname} "
+            f"No healthy provider for {hostname} "
             "can execute the required commands"
         )
 

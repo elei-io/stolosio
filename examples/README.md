@@ -4,11 +4,11 @@ These programs represent clients using Harbor through Playwright's existing CDP 
 They are executable examples now and end-to-end acceptance targets for Harbor as the
 proxy is implemented.
 
-Set `HARBOR_CDP_URL` to the Harbor WebSocket endpoint. It defaults to the planned local
-Chromium route:
+Set `HARBOR_CDP_URL` to the Harbor WebSocket endpoint. For an explicit local browser
+route:
 
 ```bash
-export HARBOR_CDP_URL='ws://localhost:8411/v1/connect?harbor.provider.slug=chromium'
+export HARBOR_CDP_URL='ws://localhost:8411/v1/connect?harbor.provider.slug=browserless'
 ```
 
 Run each example from the repository root:

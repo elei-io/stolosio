@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import (
@@ -12,8 +12,8 @@ from backend.db.models import (
     Domain,
     GatewaySession,
     SessionDomain,
-    SessionDomainCommand,
 )
+from backend.proxy.contracts import ProviderName
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,9 +46,7 @@ def _encode_cursor(created_at: datetime, session_id: str) -> str:
 def _decode_cursor(cursor: str) -> tuple[datetime, str]:
     try:
         padding = "=" * (-len(cursor) % 4)
-        version, created_at, session_id = json.loads(
-            base64.urlsafe_b64decode(cursor + padding)
-        )
+        version, created_at, session_id = json.loads(base64.urlsafe_b64decode(cursor + padding))
         value = datetime.fromisoformat(created_at)
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("invalid sessions cursor") from error
@@ -100,15 +98,12 @@ class SessionQueryService:
             query = query.where(
                 or_(
                     GatewaySession.created_at < created_at,
-                    (
-                        (GatewaySession.created_at == created_at)
-                        & (GatewaySession.id < session_id)
-                    ),
+                    ((GatewaySession.created_at == created_at) & (GatewaySession.id < session_id)),
                 )
             )
-        query = query.order_by(
-            GatewaySession.created_at.desc(), GatewaySession.id.desc()
-        ).limit(limit + 1)
+        query = query.order_by(GatewaySession.created_at.desc(), GatewaySession.id.desc()).limit(
+            limit + 1
+        )
 
         async with self._sessions() as database:
             rows = list(await database.scalars(query))
@@ -145,9 +140,7 @@ class SessionQueryService:
             ]
 
         next_cursor = (
-            _encode_cursor(rows[-1].created_at, rows[-1].id)
-            if has_more and rows
-            else None
+            _encode_cursor(rows[-1].created_at, rows[-1].id) if has_more and rows else None
         )
         return SessionPage(result, next_cursor)
 
@@ -173,14 +166,6 @@ class SessionQueryService:
                 )
             ]
             summary = self._summary(session, attempts, domains)
-            command_count = int(
-                await database.scalar(
-                    select(func.count())
-                    .select_from(SessionDomainCommand)
-                    .where(SessionDomainCommand.session_id == session_id)
-                )
-                or 0
-            )
         return {
             **summary,
             "requested_setting_keys": sorted(session.requested_settings),
@@ -188,20 +173,25 @@ class SessionQueryService:
             "opened_at": _iso(session.opened_at),
             "closing_at": _iso(session.closing_at),
             "lease_expires_at": _iso(session.lease_expires_at),
-            "command_count": command_count,
             "attempts": [
                 {
                     "id": attempt.id,
                     "ordinal": attempt.ordinal,
                     "provider": attempt.provider,
                     "provider_instance_id": attempt.provider_instance_id,
+                    "provider_session_id": attempt.provider_session_id,
                     "state": attempt.state,
                     "selection_reason": attempt.selection_reason,
                     "transition_trigger": attempt.transition_trigger,
                     "plan_version": attempt.plan_version,
                     "plan_position": attempt.plan_position,
                     "estimated_cost_units": attempt.estimated_cost_units,
-                    "actual_cost_units": attempt.actual_cost_units,
+                    "modeled_cost_units": attempt.modeled_cost_units,
+                    "chargeable_time_ms": attempt.chargeable_time_ms,
+                    "cost_basis": attempt.cost_basis,
+                    "cost_rate_units_per_second": (
+                        attempt.cost_rate_units_per_second
+                    ),
                     "resolved_setting_keys": sorted(attempt.resolved_settings),
                     "setting_sources": attempt.setting_sources,
                     "created_at": _iso(attempt.created_at),
@@ -209,6 +199,12 @@ class SessionQueryService:
                     "acquiring_at": _iso(attempt.acquiring_at),
                     "active_at": _iso(attempt.active_at),
                     "finished_at": _iso(attempt.finished_at),
+                    "provider_started_at": _iso(attempt.provider_started_at),
+                    "provider_ended_at": _iso(attempt.provider_ended_at),
+                    "capacity_occupied_ms": attempt.capacity_occupied_ms,
+                    "browser_connected_ms": attempt.browser_connected_ms,
+                    "provider_reported_ms": attempt.provider_reported_ms,
+                    "estimated_billable_ms": attempt.estimated_billable_ms,
                     "terminal_reason": attempt.terminal_reason,
                 }
                 for attempt in attempts
@@ -240,23 +236,29 @@ class SessionQueryService:
                 else "automatic"
             ),
             "selection_reason": next(
-                (
-                    attempt.selection_reason
-                    for attempt in attempts
-                    if attempt.selection_reason
-                ),
+                (attempt.selection_reason for attempt in attempts if attempt.selection_reason),
                 None,
             ),
             "transition_triggers": [
-                attempt.transition_trigger
-                for attempt in attempts
-                if attempt.transition_trigger
+                attempt.transition_trigger for attempt in attempts if attempt.transition_trigger
             ],
-            "actual_cost_units": sum(
-                attempt.actual_cost_units or 0 for attempt in attempts
+            "modeled_cost_units": sum(
+                attempt.modeled_cost_units or 0 for attempt in attempts
             ),
-            "domains": [
-                {"id": domain_id, "hostname": hostname}
-                for domain_id, hostname in domains
-            ],
+            "total_browser_time_ms": sum(
+                attempt.provider_reported_ms
+                if attempt.provider_reported_ms is not None
+                else attempt.browser_connected_ms or 0
+                for attempt in attempts
+                if attempt.provider != ProviderName.HTTP.value
+            ),
+            "total_capacity_occupied_ms": sum(
+                attempt.capacity_occupied_ms or 0
+                for attempt in attempts
+                if attempt.provider != ProviderName.HTTP.value
+            ),
+            "estimated_billable_ms": sum(
+                attempt.estimated_billable_ms or 0 for attempt in attempts
+            ),
+            "domains": [{"id": domain_id, "hostname": hostname} for domain_id, hostname in domains],
         }

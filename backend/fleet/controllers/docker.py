@@ -73,7 +73,7 @@ def _reconcilers(repository: FleetRepository) -> list[FleetReconciler]:
 
 async def run(*, once: bool) -> None:
     repository = FleetRepository(session_factory)
-    await ensure_managed_fleets(repository, settings)
+    await ensure_managed_fleets(repository)
     reconcilers = _reconcilers(repository)
     try:
         while True:

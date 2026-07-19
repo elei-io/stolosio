@@ -42,18 +42,14 @@ import type {
 
 const providerLabels: Record<ActivityProvider, string> = {
   http: "HTTP",
-  chromium: "Chromium",
+  browserbase: "Browserbase",
   browserless: "Browserless",
-  lightpanda: "Lightpanda",
-  camoufox: "Camoufox",
 }
 
 const providerDescriptions: Record<ActivityProvider, string> = {
   http: "No-browser acquisition",
-  chromium: "Harbor-managed Chromium",
-  browserless: "Managed Chromium lifecycle",
-  lightpanda: "Lightweight CDP browser",
-  camoufox: "Firefox-based stealth browser",
+  browserbase: "External CDP capacity for difficult sites",
+  browserless: "Managed browser lifecycle",
 }
 
 async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
@@ -114,11 +110,11 @@ function policySummary(
   )
   const confirmations = configuration.required_health_confirmations
 
-  return `When Harbor has no current health evidence for a domain, it bootstraps with ${defaultLabel}${
+  return `When Harbor has no current promotion evidence for a domain, it bootstraps with ${defaultLabel}${
     defaultCost === undefined ? "" : ` (${defaultCost} units/s)`
-  }. Harbor checks every enabled provider independently and marks it healthy after ${confirmations} healthy ${
+  }. HTTP and Browserless promotion requires ${confirmations} healthy ${
     confirmations === 1 ? "probe" : "probes"
-  }. Runtime selects the cheapest healthy, compatible provider. An incompatible command suppresses a provider immediately; one later compatible session restores it. ${probeRate}% of later eligible sessions are rechecked for health.`
+  }. Live HTTP failures escalate immediately. Browserbase is assumed healthy and is never probed automatically. ${probeRate}% of later eligible sessions are sampled for promotion evidence.`
 }
 
 function LoadingState() {

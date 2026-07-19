@@ -18,7 +18,7 @@ class CapturingPublisher:
 @pytest.mark.asyncio
 async def test_command_and_navigation_events_are_correlated_and_sanitized() -> None:
     publisher = CapturingPublisher()
-    observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.CHROMIUM, publisher)
+    observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.BROWSERLESS, publisher)
     await observer.command_received(
         {
             "id": 7,
@@ -46,21 +46,21 @@ async def test_command_and_navigation_events_are_correlated_and_sanitized() -> N
             }
         )
     )
+    await observer.flush_command_summaries()
 
     assert [event.event_type for event in publisher.events] == [
         "navigation.requested",
-        "command.received",
-        "command.succeeded",
         "navigation.response",
+        "command.summary",
     ]
-    assert publisher.events[1].payload["domain"] == "example.com"
-    assert publisher.events[-1].payload == {
+    assert publisher.events[1].payload == {
         "url": "https://example.com/path",
         "status": 200,
         "mime_type": "text/html",
         "resource_type": "Document",
         "selected_headers": {"content-type": "text/html"},
     }
+    assert publisher.events[-1].payload["methods"]["Page.navigate"]["count"] == 1
     serialized = b"".join(event.to_json() for event in publisher.events)
     assert b"token=secret" not in serialized
     assert b"Set-Cookie" not in serialized
@@ -70,26 +70,28 @@ async def test_command_and_navigation_events_are_correlated_and_sanitized() -> N
 @pytest.mark.asyncio
 async def test_unsupported_and_interrupted_commands_get_terminal_events() -> None:
     publisher = CapturingPublisher()
-    observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.LIGHTPANDA, publisher)
+    observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.BROWSERBASE, publisher)
     await observer.command_received({"id": 1, "method": "Page.printToPDF"})
     await observer.command_unsupported(1)
     await observer.command_received({"id": 2, "method": "Runtime.evaluate"})
     await observer.interrupt_pending("session_ended")
+    await observer.flush_command_summaries()
 
     assert [event.event_type for event in publisher.events] == [
-        "command.received",
         "command.failed",
-        "command.received",
         "command.interrupted",
+        "command.summary",
     ]
-    assert publisher.events[1].payload["cdp_error_code"] == -32601
-    assert publisher.events[-1].payload["reason"] == "session_ended"
+    assert publisher.events[0].payload["cdp_error_code"] == -32601
+    assert publisher.events[1].payload["reason"] == "session_ended"
+    assert publisher.events[-1].payload["methods"]["Page.printToPDF"]["failed_count"] == 1
+    assert publisher.events[-1].payload["methods"]["Runtime.evaluate"]["interrupted_count"] == 1
 
 
 @pytest.mark.asyncio
 async def test_malformed_provider_evidence_does_not_escape_the_observer() -> None:
     publisher = CapturingPublisher()
-    observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.CHROMIUM, publisher)
+    observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.BROWSERLESS, publisher)
 
     await observer.command_received({"id": 1, "method": "Runtime.enable", "params": ["unexpected"]})
     await observer.upstream_message("[]")
@@ -100,7 +102,6 @@ async def test_malformed_provider_evidence_does_not_escape_the_observer() -> Non
     )
 
     assert [event.event_type for event in publisher.events] == [
-        "command.received",
         "navigation.response",
     ]
     assert "status" not in publisher.events[-1].payload
@@ -109,7 +110,7 @@ async def test_malformed_provider_evidence_does_not_escape_the_observer() -> Non
 @pytest.mark.asyncio
 async def test_content_length_and_console_fingerprint_exclude_sensitive_text() -> None:
     publisher = CapturingPublisher()
-    observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.CHROMIUM, publisher)
+    observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.BROWSERLESS, publisher)
     expression = """() => {
         let retVal = "";
         if (document.doctype)

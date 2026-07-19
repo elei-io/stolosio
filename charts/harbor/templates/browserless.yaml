@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "harbor.fullname" . }}-browserless-headless
+  labels:
+    {{- include "harbor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: browserless
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: browserless
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: cdp
+      port: {{ .Values.browserless.service.port }}
+      targetPort: cdp
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "harbor.fullname" . }}-browserless-workload
+  labels:
+    {{- include "harbor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: browserless-workload
+data:
+  statefulset.json: |
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/name": "browserless",
+          "app.kubernetes.io/instance": {{ .Release.Name | quote }},
+          "app.kubernetes.io/managed-by": "harbor-fleet-controller"
+        }
+      },
+      "spec": {
+        "podManagementPolicy": "Parallel",
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "browserless",
+            "app.kubernetes.io/instance": {{ .Release.Name | quote }}
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {{ mergeOverwrite (deepCopy .Values.browserless.podLabels) (dict "app.kubernetes.io/name" "browserless" "app.kubernetes.io/instance" .Release.Name) | toJson }},
+            "annotations": {{ toJson .Values.browserless.podAnnotations }}
+          },
+          "spec": {
+            "imagePullSecrets": {{ toJson .Values.browserless.imagePullSecrets }},
+            "terminationGracePeriodSeconds": {{ .Values.browserless.terminationGracePeriodSeconds }},
+            "securityContext": {{ toJson .Values.browserless.securityContext }},
+            "nodeSelector": {{ toJson .Values.browserless.nodeSelector }},
+            "affinity": {{ toJson .Values.browserless.affinity }},
+            "tolerations": {{ toJson .Values.browserless.tolerations }},
+            "containers": [
+              {
+                "name": "browserless",
+                "image": {{ printf "%s:%s" .Values.browserless.image.repository .Values.browserless.image.tag | quote }},
+                "imagePullPolicy": {{ .Values.browserless.image.pullPolicy | quote }},
+                "securityContext": {{ toJson .Values.browserless.containerSecurityContext }},
+                "ports": [{"name": "cdp", "containerPort": {{ .Values.browserless.service.port }}}],
+                "env": [
+                  {"name": "QUEUED", "value": "0"},
+                  {"name": "TIMEOUT", "value": {{ .Values.browserless.timeoutMilliseconds | quote }}}
+                ],
+                "startupProbe": {
+                  "tcpSocket": {"port": "cdp"},
+                  "periodSeconds": 2,
+                  "failureThreshold": 30
+                },
+                "readinessProbe": {
+                  "tcpSocket": {"port": "cdp"},
+                  "periodSeconds": 2,
+                  "failureThreshold": 3
+                },
+                "livenessProbe": {
+                  "tcpSocket": {"port": "cdp"},
+                  "periodSeconds": 10,
+                  "failureThreshold": 3
+                },
+                "resources": {{ toJson .Values.browserless.resources }}
+              }
+            ]
+          }
+        }
+      }
+    }

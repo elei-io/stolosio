@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -16,7 +17,6 @@ from backend.db.models import (
 )
 from backend.events.cdp import CdpEventObserver
 from backend.events.publisher import NullEventPublisher
-from backend.proxy.capabilities import CapabilityRegistry
 from backend.proxy.contracts import (
     HarborSession,
     ProviderName,
@@ -27,9 +27,6 @@ from backend.proxy.contracts import (
     SettingSource,
 )
 from backend.proxy.provider_transition.history import ProviderTransitionRepository
-from backend.proxy.provider_transition.materialization import (
-    CdpReplayMaterializationStrategy,
-)
 from backend.proxy.provider_transition.session import (
     ProviderTransitionSession,
     ReplayEntry,
@@ -40,11 +37,19 @@ from backend.settings import Settings
 
 
 class FakeProviderSession:
-    provider = ProviderName.CHROMIUM
+    provider = ProviderName.BROWSERLESS
 
-    def __init__(self, messages: list[dict]) -> None:
+    def __init__(
+        self,
+        messages: list[dict],
+        provider: ProviderName = ProviderName.BROWSERLESS,
+    ) -> None:
+        self.provider = provider
         self._messages = messages
         self.sent: list[dict] = []
+        self.provider_session_id = None
+        self.provider_started_at = datetime.now(UTC)
+        self.provider_ended_at = None
 
     async def send(self, message: str) -> None:
         self.sent.append(json.loads(message))
@@ -81,7 +86,6 @@ def transition_session(upstream: FakeProviderSession) -> ProviderTransitionSessi
         HarborSession(str(session_id), "test", "lease", SessionState.OPEN),
         resolved,
         None,  # type: ignore[arg-type]
-        CapabilityRegistry({ProviderName.CHROMIUM: frozenset()}),
         None,  # type: ignore[arg-type]
         CdpEventObserver(session_id, None, ProviderName.HTTP, publisher),
         settings,
@@ -113,50 +117,16 @@ async def test_disabling_javascript_remains_lazy_and_is_recorded_for_replay() ->
 
 
 @pytest.mark.asyncio
-async def test_failed_automatic_session_does_not_publish_compatibility() -> None:
-    recorded = []
-
-    class Compatibility:
-        async def record_session(self, *values):
-            recorded.append(values)
-
-    facade = transition_session(FakeProviderSession([]))
-    facade._runtime_compatibility = Compatibility()  # type: ignore[assignment]
-    facade._track_command(
-        {
-            "method": "Page.navigate",
-            "params": {"url": "https://example.test/"},
-        }
-    )
-    await facade.fail("provider_connection_lost")
-    await facade.close()
-
-    assert recorded == []
-
-
-def test_materialization_strategy_rejects_side_effecting_commands() -> None:
-    strategy = CdpReplayMaterializationStrategy()
-
-    assert strategy.can_materialize(["Page.navigate"]) is True
-    assert strategy.can_materialize(["Input.dispatchMouseEvent"]) is False
-
-
-@pytest.mark.asyncio
 async def test_exhausted_support_plan_returns_explicit_protocol_error() -> None:
     class EmptyPlan:
         async def plan(self, *args, **kwargs):
             raise NoSupportedProvider("No supported provider remains")
 
     facade = transition_session(FakeProviderSession([]))
+    facade._upstream = None
+    facade._upstream_messages = None
     facade._routing = EmptyPlan()  # type: ignore[assignment]
     facade._domain = "example.test"
-    suppressed = []
-
-    class Compatibility:
-        async def suppress(self, **values):
-            suppressed.append(values)
-
-    facade._runtime_compatibility = Compatibility()  # type: ignore[assignment]
     command = {"id": 30, "method": "Page.printToPDF", "params": {}}
 
     await facade.send(json.dumps(command))
@@ -166,14 +136,81 @@ async def test_exhausted_support_plan_returns_explicit_protocol_error() -> None:
         "id": 30,
         "error": {"code": -32000, "message": "No supported provider remains"},
     }
-    assert suppressed == [
-        {
-            "session_id": facade._session.session_id,
-            "hostname": "example.test",
-            "provider": ProviderName.CHROMIUM,
-            "method": "Page.printToPDF",
-        }
-    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "headers", "body", "trigger"),
+    [
+        (503, {"content-type": "text/html"}, "<main>down</main>", "unhealthy_http_status"),
+        (
+            200,
+            {"content-type": "application/pdf"},
+            "pdf",
+            "non_html_content_type",
+        ),
+        (
+            200,
+            {"content-type": "text/html"},
+            "<main>Access denied</main>",
+            "error_page",
+        ),
+    ],
+)
+async def test_http_validation_failures_escalate_on_the_live_path(
+    monkeypatch,
+    status: int,
+    headers: dict[str, str],
+    body: str,
+    trigger: str,
+) -> None:
+    class Response:
+        def __init__(self) -> None:
+            self.status_code = status
+            self.content = body.encode()
+            self.text = body
+            self.url = "https://example.test/"
+            self.reason_phrase = "test"
+            self.headers = httpx.Headers(headers)
+
+    class Client:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            pass
+
+        async def get(self, *args, **kwargs):
+            return Response()
+
+    escalations: list[str] = []
+
+    async def escalate(self, pending, reason, **kwargs) -> None:
+        escalations.append(reason)
+
+    monkeypatch.setattr(
+        "backend.proxy.provider_transition.session.httpx.AsyncClient", Client
+    )
+    monkeypatch.setattr(ProviderTransitionSession, "_transition", escalate)
+    facade = transition_session(FakeProviderSession([]))
+    facade._upstream = None
+    facade._upstream_messages = None
+    facade._attempt = object()  # type: ignore[assignment]
+
+    await facade.send(
+        json.dumps(
+            {
+                "id": 31,
+                "method": "Page.navigate",
+                "params": {"url": "https://example.test/"},
+            }
+        )
+    )
+
+    assert escalations == [trigger]
 
 
 @pytest.mark.asyncio
@@ -265,9 +302,6 @@ async def test_navigation_clears_stale_execution_context_and_object_mappings() -
         ]
     )
     facade = transition_session(upstream)
-    facade._capabilities = CapabilityRegistry(
-        {ProviderName.CHROMIUM: frozenset({"Runtime.evaluate"})}
-    )
     facade._forward_ids["session"]["synthetic-session"] = "actual-session"
     facade._reverse_ids["session"]["actual-session"] = "synthetic-session"
     facade._forward_ids["execution"][3] = 2
@@ -294,6 +328,17 @@ async def test_navigation_clears_stale_execution_context_and_object_mappings() -
         }
     ]
     assert "execution" not in facade._forward_ids
+
+
+@pytest.mark.asyncio
+async def test_transition_preserves_provider_timeout_reason() -> None:
+    upstream = FakeProviderSession([])
+    upstream.disconnect_reason = "provider_timeout"
+    facade = transition_session(upstream)
+
+    await facade._pump_upstream()
+
+    assert facade.disconnect_reason == "provider_timeout"
     assert "execution" not in facade._reverse_ids
     assert "object" not in facade._forward_ids
     assert "object" not in facade._reverse_ids
@@ -320,8 +365,20 @@ async def test_transition_tries_the_full_plan_before_releasing_the_source(
         async def activate(self) -> None:
             timeline.append(f"activate:{self.attempt.provider.value}")
 
-        async def release(self, *, failed: bool, reason: str) -> None:
+        async def release(
+            self,
+            *,
+            failed: bool,
+            reason: str,
+            command_summary: dict[str, object] | None = None,
+        ) -> None:
             timeline.append(f"release:{self.attempt.provider.value}:{reason}")
+
+        async def bind_provider_session(self, **kwargs) -> None:
+            return None
+
+        async def record_provider_usage(self, **kwargs) -> None:
+            return None
 
     source = Lease(ProviderName.HTTP)
 
@@ -339,9 +396,9 @@ async def test_transition_tries_the_full_plan_before_releasing_the_source(
 
         async def acquire(self, session, resolved):
             timeline.append(f"connect:{self.provider.value}")
-            if self.provider is ProviderName.LIGHTPANDA:
+            if self.provider is ProviderName.BROWSERLESS:
                 raise ConnectionError("first candidate unavailable")
-            return FakeProviderSession([])
+            return FakeProviderSession([], self.provider)
 
     monkeypatch.setattr(
         "backend.proxy.provider_transition.session.get_provider_adapter",
@@ -361,12 +418,6 @@ async def test_transition_tries_the_full_plan_before_releasing_the_source(
             sources={"harbor.provider.slug": SettingSource.AUTO},
         ),
         Attempts(),  # type: ignore[arg-type]
-        CapabilityRegistry(
-            {
-                ProviderName.LIGHTPANDA: frozenset({"Page.printToPDF"}),
-                ProviderName.CHROMIUM: frozenset({"Page.printToPDF"}),
-            }
-        ),
         History(),  # type: ignore[arg-type]
         CdpEventObserver(
             session_id,
@@ -381,8 +432,8 @@ async def test_transition_tries_the_full_plan_before_releasing_the_source(
     facade._attempted_providers.add(ProviderName.HTTP)
     plan = ProviderPlan(
         (
-            ProviderCandidate(ProviderName.LIGHTPANDA, 10, 0),
-            ProviderCandidate(ProviderName.CHROMIUM, 100, 1),
+            ProviderCandidate(ProviderName.BROWSERLESS, 100, 0),
+            ProviderCandidate(ProviderName.BROWSERBASE, 300, 1),
         ),
         "cheapest_eligible",
         1,
@@ -396,14 +447,14 @@ async def test_transition_tries_the_full_plan_before_releasing_the_source(
     )
 
     assert timeline[:6] == [
-        "acquire:lightpanda",
-        "connect:lightpanda",
-        "release:lightpanda:provider_transition_attempt_failed",
-        "acquire:chromium",
-        "connect:chromium",
-        "activate:chromium",
+        "acquire:browserless",
+        "connect:browserless",
+        "release:browserless:provider_transition_attempt_failed",
+        "acquire:browserbase",
+        "connect:browserbase",
+        "activate:browserbase",
     ]
-    assert timeline.index("activate:chromium") < timeline.index(
+    assert timeline.index("activate:browserbase") < timeline.index(
         "release:http:provider_transitioned"
     )
 
@@ -441,7 +492,7 @@ async def test_transition_history_is_factual_and_durable(
                 id=attempt_id,
                 session_id=session_id,
                 ordinal=1,
-                provider="chromium",
+                provider="browserbase",
                 resolved_settings={},
                 setting_sources={},
                 state="active",
@@ -453,7 +504,7 @@ async def test_transition_history_is_factual_and_durable(
         session_id,
         attempt_id,
         from_provider="http",
-        to_provider=ProviderName.CHROMIUM,
+        to_provider=ProviderName.BROWSERBASE,
         trigger_method="Runtime.evaluate",
     )
 
@@ -463,7 +514,7 @@ async def test_transition_history_is_factual_and_durable(
             (
                 domain.id,
                 "http",
-                "chromium",
+                "browserbase",
                 "new_requirement",
             ),
         )

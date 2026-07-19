@@ -29,7 +29,6 @@ class HarborSettingsResolver:
             requested,
             defaults,
         )
-
         values: dict[str, object] = {}
         sources: dict[str, SettingSource] = {}
         for field in self._registry.fields:

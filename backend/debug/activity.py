@@ -52,10 +52,7 @@ _SUCCESS_TYPES = {
     EventType.SESSION_CLOSED,
     EventType.ATTEMPT_CONNECTED,
     EventType.ATTEMPT_CLOSED,
-    EventType.COMMAND_SUCCEEDED,
     EventType.NAVIGATION_RESPONSE,
-    EventType.PAGE_DOM_CONTENT_LOADED,
-    EventType.PAGE_LOADED,
     EventType.PAGE_CONTENT_OBSERVED,
 }
 _INTERRUPTED_TYPES = {EventType.COMMAND_INTERRUPTED}
@@ -155,12 +152,18 @@ class ActivityHistoryService:
         filters: ActivityEventFilters,
         *,
         before: str | None = None,
+        occurred_after: datetime | None = None,
+        occurred_before: datetime | None = None,
         limit: int = 100,
     ) -> ActivityEventPage:
         query = select(SessionEventRecord)
         query = self._apply_filters(query, filters)
         if before is not None:
             query = query.where(SessionEventRecord.id < decode_activity_cursor(before))
+        if occurred_after is not None:
+            query = query.where(SessionEventRecord.occurred_at >= occurred_after)
+        if occurred_before is not None:
+            query = query.where(SessionEventRecord.occurred_at <= occurred_before)
         query = query.order_by(SessionEventRecord.id.desc()).limit(limit + 1)
 
         async with self._sessions() as database:
@@ -247,10 +250,7 @@ class ActivityStreamService:
     ) -> AsyncIterator[str]:
         if after_sequence is not None:
             stream = await self._client.jetstream().stream_info(EVENT_STREAM)
-            if (
-                stream.state.messages > 0
-                and after_sequence < stream.state.first_seq - 1
-            ):
+            if stream.state.messages > 0 and after_sequence < stream.state.first_seq - 1:
                 yield self._sse(
                     "replay-unavailable",
                     {"reason": "cursor_expired"},

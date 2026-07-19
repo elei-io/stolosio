@@ -62,12 +62,54 @@ class FleetReconciler:
         instances = await self._runtime.list_instances(self._fleet.deployment)
         current = len(instances)
         direction = None
+        controller_status = "ready"
 
-        if current != configuration.desired_instances:
+        capacity_changed = any(
+            instance.configuration_stale
+            or instance.session_capacity
+            != configuration.session_capacity_per_instance
+            for instance in instances
+        )
+        current_capacity = next(
+            (
+                instance.session_capacity
+                for instance in instances
+                if instance.session_capacity is not None
+            ),
+            configuration.session_capacity_per_instance,
+        )
+        reconfigure = capacity_changed and decision.demand == 0
+        if capacity_changed and decision.demand > 0:
+            controller_status = "waiting_for_zero_demand"
+        if current != configuration.desired_instances or reconfigure:
             next_count = current + 1 if current < configuration.desired_instances else current - 1
-            direction = "up" if next_count > current else "down"
+            if current == configuration.desired_instances:
+                next_count = current
+                direction = "configure"
+            else:
+                direction = "up" if next_count > current else "down"
+            if direction == "down":
+                candidate = self._runtime.scale_down_candidate(instances)
+                if candidate is None or not await self._repository.prepare_scale_down(
+                    provider,
+                    candidate.instance_id,
+                ):
+                    controller_status = "waiting_for_scale_down_drain"
+                    direction = None
+                    next_count = current
+            else:
+                await self._repository.cancel_scale_down(provider)
             try:
-                await self._runtime.scale(self._fleet.deployment, next_count)
+                if direction is not None:
+                    await self._runtime.scale(
+                        self._fleet.deployment,
+                        next_count,
+                        session_capacity=(
+                            configuration.session_capacity_per_instance
+                            if decision.demand == 0
+                            else current_capacity
+                        ),
+                    )
             except Exception as error:
                 await self._repository.record_reconciliation(
                     provider,
@@ -95,6 +137,22 @@ class FleetReconciler:
                 and (now - unhealthy_since).total_seconds() >= self._startup_timeout_seconds
             )
             if startup_expired:
+                can_replace = await self._repository.prepare_scale_down(
+                    provider,
+                    instance.instance_id,
+                )
+                if not can_replace:
+                    observations.append(
+                        ObservedInstance(
+                            instance_id=instance.instance_id,
+                            endpoint=definition.endpoint(instance),
+                            state=FleetInstanceState.UNHEALTHY,
+                            started_at=instance.started_at,
+                            session_capacity=instance.session_capacity,
+                        )
+                    )
+                    controller_status = "waiting_for_unhealthy_instance_sessions"
+                    continue
                 try:
                     await self._runtime.remove(self._fleet.deployment, instance.instance_id)
                 except Exception as error:
@@ -112,6 +170,7 @@ class FleetReconciler:
                     endpoint=definition.endpoint(instance),
                     state=(FleetInstanceState.READY if ready else FleetInstanceState.STARTING),
                     started_at=instance.started_at,
+                    session_capacity=instance.session_capacity,
                 )
             )
 
@@ -121,7 +180,7 @@ class FleetReconciler:
             platform=self._runtime.platform,
             observation_ttl_seconds=self._observation_ttl_seconds,
         )
-        await self._repository.record_reconciliation(provider, status="ready")
+        await self._repository.record_reconciliation(provider, status=controller_status)
         if decision.direction is not None:
             logger.info(
                 "%s fleet policy requested scale %s to %s instances",

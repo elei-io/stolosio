@@ -34,7 +34,7 @@ async def main() -> None:
 
     events = await asyncio.wait_for(debug, timeout=10)
     attempts = [
-        event["provider"] for event in events if event["event_type"] == "attempt.started"
+        event["provider"] for event in events if event["event_type"] == "attempt.connected"
     ]
     transitions = [
         event for event in events if event["event_type"] == "execution.transitioned"

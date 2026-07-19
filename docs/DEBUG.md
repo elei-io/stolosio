@@ -9,7 +9,7 @@ downstream integration partner through a small, read-only WebSocket.
 ## Purpose
 
 The stream preserves useful evidence from a session regardless of whether the work was
-performed by plain HTTP, Chromium, Browserless, Lightpanda, or Camoufox.
+performed by plain HTTP, Browserless, or Browserbase.
 
 This evidence should help Harbor's operators, and potentially downstream consumers,
 investigate questions such as:
@@ -80,18 +80,19 @@ or promise that every provider can supply every observation.
 
 ## Standardization
 
-Harbor should normalize equivalent evidence so consumers do not need to understand CDP,
-Playwright/Juggler, Browserless conventions, Lightpanda differences, or the HTTP
-no-browser path.
+Harbor should normalize equivalent evidence so consumers do not need to understand
+provider conventions or the HTTP no-browser path.
 
 The useful common subset must be discovered from the evidence each provider actually
 supplies. Provider-specific evidence may be retained when it is useful, but it must be
 clearly distinguishable from observations available across providers.
 
-Phase 2 now defines the first deliberately small, versioned event envelope and filters
-main-document navigation, command outcomes, page lifecycle, provider disconnection,
-provider attempts, and Harbor session lifecycle into it. The checked-in registry is
-the contract; unknown event types and payload fields are rejected. URLs lose user
+Harbor defines a deliberately small, versioned event envelope for terminal session and
+attempt lifecycle, main-document navigation, command failures and interruptions, one
+bounded command summary per attempt, meaningful page failures/content observations,
+and provider disconnection. Generic successful commands, intermediate queue states,
+and DOM-ready/load notifications are not events. The checked-in registry is the
+contract; unknown event types and payload fields are rejected. URLs lose user
 information, query strings, and fragments, and response headers use a strict
 allowlist before an event reaches NATS.
 
@@ -99,6 +100,10 @@ Live internal consumers subscribe to
 `harbor.v1.events.session.<session_id>`. JetStream retains the same publication for
 durable consumers, and PostgreSQL supplies factual historical timelines. There is no
 separate, richer raw stream behind this view.
+
+JetStream and PostgreSQL receive the same compact event contract; Harbor does not
+split observations into multiple retention classes. PostgreSQL additionally keeps
+bounded factual projections such as provider-and-method command cost aggregates.
 
 Harbor also records `page.content_observed` with content length, plus `console.message`
 and `javascript.exception` with bounded source, level, and message fingerprint. HTML

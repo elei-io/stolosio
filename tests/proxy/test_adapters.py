@@ -1,18 +1,11 @@
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from backend.proxy.adapters.cdp import (
-    DirectCdpAdapter,
-    DiscoveredCdpAdapter,
-    WebSocketProviderSession,
-    _discovery_url,
-)
+from backend.proxy.adapters.browserbase import BrowserbaseAdapter
+from backend.proxy.adapters.cdp import DirectCdpAdapter, WebSocketProviderSession
 from backend.proxy.adapters.http import HttpAdapter
-from backend.proxy.adapters.lightpanda import (
-    LightpandaAdapter,
-    LightpandaProviderSession,
-)
 from backend.proxy.adapters.registry import get_provider_adapter
 from backend.proxy.contracts import (
     HarborSession,
@@ -28,6 +21,7 @@ class FakeWebSocket:
     def __init__(self, messages: list[str] | None = None) -> None:
         self.sent: list[str] = []
         self.messages = messages or []
+        self.closed = False
 
     async def send(self, message: str) -> None:
         self.sent.append(message)
@@ -40,16 +34,54 @@ class FakeWebSocket:
             raise StopAsyncIteration
         return self.messages.pop(0)
 
-    async def recv(self) -> str:
-        command = json.loads(self.sent[-1])
-        return json.dumps({"id": command["id"], "result": {}})
-
     async def close(self) -> None:
+        self.closed = True
+
+
+class FakeResponse:
+    def __init__(self, body: dict[str, object]) -> None:
+        self.body = body
+
+    def raise_for_status(self) -> None:
         pass
+
+    def json(self) -> dict[str, object]:
+        return self.body
+
+
+class FakeHttpClient:
+    requests: list[tuple[str, str, dict[str, object]]] = []
+
+    def __init__(self, **kwargs) -> None:
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args) -> None:
+        pass
+
+    async def post(self, url: str, **kwargs) -> FakeResponse:
+        self.requests.append(("POST", url, kwargs))
+        return FakeResponse(
+            {
+                "id": "bb-session",
+                "connectUrl": "wss://connect.browserbase.example",
+                "startedAt": "2026-07-18T01:02:03Z",
+            }
+        )
+
+    async def patch(self, url: str, **kwargs) -> FakeResponse:
+        self.requests.append(("PATCH", url, kwargs))
+        return FakeResponse({})
+
+    async def get(self, url: str, **kwargs) -> FakeResponse:
+        self.requests.append(("GET", url, kwargs))
+        return FakeResponse({"endedAt": "2026-07-18T01:03:03Z"})
 
 
 @pytest.mark.asyncio
-async def test_direct_adapter_connects_to_configured_endpoint(monkeypatch) -> None:
+async def test_direct_adapter_connects_to_assigned_browserless_worker(monkeypatch) -> None:
     request: dict[str, object] = {}
 
     async def fake_connect(url: str, **kwargs):
@@ -58,84 +90,177 @@ async def test_direct_adapter_connects_to_configured_endpoint(monkeypatch) -> No
         return FakeWebSocket()
 
     monkeypatch.setattr("backend.proxy.adapters.cdp.connect", fake_connect)
-    adapter = DirectCdpAdapter(ProviderName.LIGHTPANDA, "ws://lightpanda:9222")
+    adapter = DirectCdpAdapter(
+        ProviderName.BROWSERLESS,
+        "ws://harbor-browserless-2:3000",
+    )
 
     session = await adapter.acquire(None, None)  # type: ignore[arg-type]
 
-    assert session.provider is ProviderName.LIGHTPANDA
-    assert request["url"] == "ws://lightpanda:9222"
-
-
-def test_chromium_discovery_uses_http_endpoint() -> None:
-    assert _discovery_url("ws://chromium:9222") == "http://chromium:9222/json/version"
+    assert session.provider is ProviderName.BROWSERLESS
+    assert request == {
+        "url": "ws://harbor-browserless-2:3000",
+        "kwargs": {"max_size": None, "proxy": None},
+    }
 
 
 @pytest.mark.asyncio
-async def test_discovered_adapter_separates_websocket_and_transport_hosts(monkeypatch) -> None:
-    request: dict[str, object] = {}
-
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            pass
-
-        def json(self) -> dict[str, str]:
-            return {"webSocketDebuggerUrl": "ws://localhost/devtools/browser/browser-id"}
-
-    class FakeClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args) -> None:
-            pass
-
-        async def get(self, url: str, headers: dict[str, str]) -> FakeResponse:
-            request["url"] = url
-            request["headers"] = headers
-            return FakeResponse()
-
-    monkeypatch.setattr(
-        "backend.proxy.adapters.cdp.httpx.AsyncClient",
-        lambda **kwargs: FakeClient(),
+async def test_native_cdp_session_forwards_unknown_methods_without_interpreting_them() -> None:
+    websocket = FakeWebSocket(
+        ['{"id":7,"result":{"futureField":true},"sessionId":"page"}']
     )
+    session = WebSocketProviderSession(
+        ProviderName.BROWSERLESS,
+        websocket,  # type: ignore[arg-type]
+    )
+    command = '{"id":7,"method":"Future.experimentalMethod","params":{"x":1}}'
+
+    await session.send(command)
+    messages = [message async for message in session.messages()]
+
+    assert websocket.sent == [command]
+    assert messages == ['{"id":7,"result":{"futureField":true},"sessionId":"page"}']
+
+
+@pytest.mark.asyncio
+async def test_native_session_close_does_not_manage_client_contexts() -> None:
+    websocket = FakeWebSocket()
+    session = WebSocketProviderSession(
+        ProviderName.BROWSERLESS,
+        websocket,  # type: ignore[arg-type]
+    )
+
+    await session.send('{"id":1,"method":"Target.createBrowserContext"}')
+    await session.close()
+
+    assert websocket.sent == ['{"id":1,"method":"Target.createBrowserContext"}']
+    assert websocket.closed
+    assert session.provider_ended_at is not None
+    assert session.provider_started_at <= datetime.now(UTC)
+
+
+def test_native_session_reports_provider_deadline_expiration() -> None:
+    session = WebSocketProviderSession(
+        ProviderName.BROWSERLESS,
+        FakeWebSocket(),  # type: ignore[arg-type]
+        timeout_started_at=datetime.now(UTC) - timedelta(seconds=10),
+        session_timeout_seconds=5,
+    )
+
+    assert session.disconnect_reason == "provider_timeout"
+
+
+@pytest.mark.asyncio
+async def test_browserbase_adapter_owns_remote_session_lifecycle(monkeypatch) -> None:
+    websocket = FakeWebSocket()
+    FakeHttpClient.requests = []
 
     async def fake_connect(url: str, **kwargs):
-        request["websocket_url"] = url
-        request["websocket_kwargs"] = kwargs
-        return FakeWebSocket()
+        assert url == "wss://connect.browserbase.example"
+        assert kwargs == {"max_size": None, "proxy": None}
+        return websocket
 
-    monkeypatch.setattr("backend.proxy.adapters.cdp.connect", fake_connect)
-
-    session = await DiscoveredCdpAdapter(
-        ProviderName.CHROMIUM,
-        "ws://chromium:9222",
-    ).acquire(None, None)  # type: ignore[arg-type]
-
-    assert request["url"] == "http://chromium:9222/json/version"
-    assert request["headers"] == {"Host": "localhost"}
-    assert request["websocket_url"] == "ws://localhost/devtools/browser/browser-id"
-    assert request["websocket_kwargs"] == {
-        "max_size": None,
-        "proxy": None,
-        "host": "chromium",
-        "port": 9222,
-    }
-    assert session.provider is ProviderName.CHROMIUM
-
-
-def test_camoufox_uses_mapping_adapter() -> None:
-    adapter = get_provider_adapter(
-        ProviderName.CAMOUFOX,
-        endpoint="ws://harbor-camoufox-2:1234/harbor",
+    monkeypatch.setattr(
+        "backend.proxy.adapters.browserbase.httpx.AsyncClient", FakeHttpClient
+    )
+    monkeypatch.setattr("backend.proxy.adapters.browserbase.connect", fake_connect)
+    adapter = BrowserbaseAdapter(
+        api_url="https://api.browserbase.example/v1",
+        api_key="secret",
+        project_id="project",
+        timeout_seconds=600,
     )
 
-    assert adapter.provider is ProviderName.CAMOUFOX
-    assert adapter.endpoint == "ws://harbor-camoufox-2:1234/harbor"
+    provider_session = await adapter.acquire(
+        HarborSession("harbor-session", "owner", "lease", SessionState.OPEN),
+        ResolvedSessionSettings(
+            provider=ProviderSettingSchema(slug=ProviderName.BROWSERBASE),
+            session=SessionSettingSchema(),
+            sources={},
+        ),
+    )
+    await provider_session.close()
+
+    assert provider_session.provider_session_id == "bb-session"
+    assert provider_session.provider_started_at is not None
+    assert provider_session.provider_ended_at is not None
+    assert (
+        provider_session.provider_ended_at - provider_session.provider_started_at
+    ).total_seconds() == 60
+    assert websocket.closed
+    assert [(method, url) for method, url, _ in FakeHttpClient.requests] == [
+        ("POST", "https://api.browserbase.example/v1/sessions"),
+        ("PATCH", "https://api.browserbase.example/v1/sessions/bb-session"),
+        ("GET", "https://api.browserbase.example/v1/sessions/bb-session"),
+    ]
+    assert FakeHttpClient.requests[0][2]["json"] == {
+        "keepAlive": False,
+        "timeout": 600,
+        "userMetadata": {"harborSessionId": "harbor-session"},
+        "projectId": "project",
+    }
 
 
 @pytest.mark.asyncio
-async def test_explicit_http_is_a_normal_provider_and_never_transitions() -> None:
+async def test_browserbase_releases_session_when_connect_url_is_missing(
+    monkeypatch,
+) -> None:
+    class MissingConnectUrlClient(FakeHttpClient):
+        async def post(self, url: str, **kwargs) -> FakeResponse:
+            self.requests.append(("POST", url, kwargs))
+            return FakeResponse(
+                {
+                    "id": "orphaned-session",
+                    "startedAt": "2026-07-18T01:02:03Z",
+                }
+            )
+
+    FakeHttpClient.requests = []
+    monkeypatch.setattr(
+        "backend.proxy.adapters.browserbase.httpx.AsyncClient",
+        MissingConnectUrlClient,
+    )
+    adapter = BrowserbaseAdapter(
+        api_url="https://api.browserbase.example/v1",
+        api_key="secret",
+        project_id=None,
+        timeout_seconds=600,
+    )
+
+    with pytest.raises(RuntimeError, match="invalid session"):
+        await adapter.acquire(
+            HarborSession("harbor-session", "owner", "lease", SessionState.OPEN),
+            ResolvedSessionSettings(
+                provider=ProviderSettingSchema(slug=ProviderName.BROWSERBASE),
+                session=SessionSettingSchema(),
+                sources={},
+            ),
+        )
+
+    assert [(method, url) for method, url, _ in FakeHttpClient.requests] == [
+        ("POST", "https://api.browserbase.example/v1/sessions"),
+        (
+            "PATCH",
+            "https://api.browserbase.example/v1/sessions/orphaned-session",
+        ),
+        ("GET", "https://api.browserbase.example/v1/sessions/orphaned-session"),
+    ]
+
+
+def test_registry_has_only_http_browserless_and_browserbase_adapters() -> None:
+    assert isinstance(get_provider_adapter(ProviderName.HTTP), HttpAdapter)
+    browserless = get_provider_adapter(
+        ProviderName.BROWSERLESS,
+        endpoint="ws://browserless-worker:3000",
+    )
+    assert isinstance(browserless, DirectCdpAdapter)
+    assert browserless.session_timeout_seconds == 600
+    assert isinstance(get_provider_adapter(ProviderName.BROWSERBASE), BrowserbaseAdapter)
+
+
+@pytest.mark.asyncio
+async def test_explicit_http_is_bounded_and_never_transitions() -> None:
     adapter = get_provider_adapter(ProviderName.HTTP)
-    assert isinstance(adapter, HttpAdapter)
     session = await adapter.acquire(
         HarborSession("session", "owner", "lease", SessionState.OPEN),
         ResolvedSessionSettings(
@@ -147,7 +272,6 @@ async def test_explicit_http_is_a_normal_provider_and_never_transitions() -> Non
 
     await session.send(json.dumps({"id": 1, "method": "Page.printToPDF"}))
 
-    assert session.provider is ProviderName.HTTP
     assert json.loads(await anext(session.messages())) == {
         "id": 1,
         "error": {
@@ -155,91 +279,3 @@ async def test_explicit_http_is_a_normal_provider_and_never_transitions() -> Non
             "message": "Page.printToPDF is not supported by provider http",
         },
     }
-
-
-def test_lightpanda_uses_assigned_managed_instance_endpoint() -> None:
-    adapter = get_provider_adapter(
-        ProviderName.LIGHTPANDA,
-        endpoint="ws://harbor-lightpanda-2:9222",
-    )
-
-    assert isinstance(adapter, LightpandaAdapter)
-    assert adapter.endpoint == "ws://harbor-lightpanda-2:9222"
-
-
-@pytest.mark.asyncio
-async def test_lightpanda_maps_enabling_scripts_to_supported_no_op() -> None:
-    websocket = FakeWebSocket()
-    session = LightpandaProviderSession(  # type: ignore[arg-type]
-        ProviderName.LIGHTPANDA,
-        websocket,
-    )
-
-    await session.send(
-        json.dumps(
-            {
-                "id": 20,
-                "method": "Emulation.setScriptExecutionDisabled",
-                "params": {"value": False},
-                "sessionId": "page-session",
-            }
-        )
-    )
-
-    assert websocket.sent == []
-    assert json.loads(await anext(session.messages())) == {
-        "id": 20,
-        "result": {},
-        "sessionId": "page-session",
-    }
-
-
-@pytest.mark.asyncio
-async def test_lightpanda_returns_explicit_error_when_disabling_scripts() -> None:
-    websocket = FakeWebSocket()
-    session = LightpandaProviderSession(  # type: ignore[arg-type]
-        ProviderName.LIGHTPANDA,
-        websocket,
-    )
-    command = {
-        "id": 21,
-        "method": "Emulation.setScriptExecutionDisabled",
-        "params": {"value": True},
-    }
-
-    await session.send(json.dumps(command))
-
-    assert websocket.sent == []
-    assert json.loads(await anext(session.messages())) == {
-        "id": 21,
-        "error": {
-            "code": -32601,
-            "message": "Lightpanda cannot disable script execution",
-        },
-    }
-
-
-def test_browserless_uses_assigned_managed_instance_endpoint() -> None:
-    adapter = get_provider_adapter(
-        ProviderName.BROWSERLESS,
-        endpoint="ws://harbor-browserless-2:3000",
-    )
-
-    assert isinstance(adapter, DirectCdpAdapter)
-    assert adapter.endpoint == "ws://harbor-browserless-2:3000"
-
-
-@pytest.mark.asyncio
-async def test_cdp_session_disposes_only_contexts_created_through_that_connection() -> None:
-    websocket = FakeWebSocket(
-        [json.dumps({"id": 7, "result": {"browserContextId": "owned-context"}})]
-    )
-    session = WebSocketProviderSession(ProviderName.CHROMIUM, websocket)  # type: ignore[arg-type]
-    await session.send(json.dumps({"id": 7, "method": "Target.createBrowserContext"}))
-    assert [message async for message in session.messages()]
-
-    await session.close()
-
-    cleanup = json.loads(websocket.sent[-1])
-    assert cleanup["method"] == "Target.disposeBrowserContext"
-    assert cleanup["params"] == {"browserContextId": "owned-context"}

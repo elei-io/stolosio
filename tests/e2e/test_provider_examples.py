@@ -21,6 +21,7 @@ pytestmark = [
         reason="set HARBOR_E2E=1 with the Docker Compose stack running",
     ),
 ]
+LOCAL_E2E_PROVIDERS = [ProviderName.HTTP, ProviderName.BROWSERLESS]
 
 
 def harbor_url(provider: ProviderName) -> str:
@@ -29,7 +30,7 @@ def harbor_url(provider: ProviderName) -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", list(ProviderName))
+@pytest.mark.parametrize("provider", LOCAL_E2E_PROVIDERS)
 async def test_goto_and_content(provider: ProviderName) -> None:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.connect_over_cdp(harbor_url(provider))
@@ -42,7 +43,7 @@ async def test_goto_and_content(provider: ProviderName) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", list(ProviderName))
+@pytest.mark.parametrize("provider", LOCAL_E2E_PROVIDERS)
 async def test_interaction(provider: ProviderName) -> None:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.connect_over_cdp(harbor_url(provider))
@@ -61,7 +62,7 @@ async def test_interaction(provider: ProviderName) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", list(ProviderName))
+@pytest.mark.parametrize("provider", LOCAL_E2E_PROVIDERS)
 async def test_evaluate(provider: ProviderName) -> None:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.connect_over_cdp(harbor_url(provider))
@@ -152,9 +153,7 @@ async def test_no_browser_example_programs(example: str) -> None:
 async def test_provider_transition_examples(example: str) -> None:
     root = Path(__file__).parents[2]
     environment = os.environ.copy()
-    environment["HARBOR_CDP_URL"] = os.getenv(
-        "HARBOR_E2E_URL", "ws://localhost:8411/v1/connect"
-    )
+    environment["HARBOR_CDP_URL"] = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         str(root / "examples" / example),
@@ -188,14 +187,14 @@ async def test_automatic_routing_example_program() -> None:
 async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
     async with async_playwright() as playwright:
         blockers = [
-            await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.CHROMIUM))
+            await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.BROWSERLESS))
             for _ in range(2)
         ]
 
         async def abandon_waiter() -> None:
             with pytest.raises(PlaywrightTimeoutError):
                 await playwright.chromium.connect_over_cdp(
-                    harbor_url(ProviderName.CHROMIUM),
+                    harbor_url(ProviderName.BROWSERLESS),
                     timeout=100,
                 )
 
@@ -203,7 +202,7 @@ async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
         await asyncio.gather(*(blocker.close() for blocker in blockers))
 
         browser = await playwright.chromium.connect_over_cdp(
-            harbor_url(ProviderName.CHROMIUM),
+            harbor_url(ProviderName.BROWSERLESS),
             timeout=5_000,
         )
         page = await browser.new_page()
@@ -213,31 +212,42 @@ async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
 
 
 @pytest.mark.asyncio
-async def test_managed_chromium_fleet_packs_sessions_scales_and_returns_to_minimum() -> None:
+async def test_managed_browserless_fleet_packs_sessions_scales_and_returns_to_minimum() -> None:
     api = os.getenv("HARBOR_E2E_HTTP_URL", "http://localhost:8411")
 
-    async def chromium_fleet() -> dict:
+    async def browserless_fleet() -> dict:
         async with httpx.AsyncClient() as client:
             response = await client.get(f"{api}/v1/fleet/providers")
             response.raise_for_status()
             return next(
                 snapshot
                 for snapshot in response.json()
-                if snapshot["provider"] == ProviderName.CHROMIUM.value
+                if snapshot["provider"] == ProviderName.BROWSERLESS.value
             )
 
     async def wait_for(predicate, timeout_seconds: float = 20) -> dict:
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         while asyncio.get_running_loop().time() < deadline:
-            fleet = await chromium_fleet()
+            fleet = await browserless_fleet()
             if predicate(fleet):
                 return fleet
             await asyncio.sleep(0.1)
-        raise TimeoutError("Managed Chromium fleet did not reach expected state")
+        raise TimeoutError("Managed Browserless fleet did not reach expected state")
+
+    await wait_for(
+        lambda fleet: (
+            fleet["desired_instances"] == 1
+            and fleet["observed_instances"] == 1
+            and fleet["ready_instances"] == 1
+            and fleet["active_attempts"] == 0
+            and fleet["queued_attempts"] == 0
+        ),
+        timeout_seconds=30,
+    )
 
     async with async_playwright() as playwright:
-        first = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.CHROMIUM))
-        second = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.CHROMIUM))
+        first = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.BROWSERLESS))
+        second = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.BROWSERLESS))
         first_page = await first.new_page()
         second_page = await second.new_page()
         await asyncio.gather(
@@ -258,7 +268,7 @@ async def test_managed_chromium_fleet_packs_sessions_scales_and_returns_to_minim
 
         third_task = asyncio.create_task(
             playwright.chromium.connect_over_cdp(
-                harbor_url(ProviderName.CHROMIUM),
+                harbor_url(ProviderName.BROWSERLESS),
                 timeout=20_000,
             )
         )
@@ -286,68 +296,13 @@ async def test_managed_chromium_fleet_packs_sessions_scales_and_returns_to_minim
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "provider",
-    [
-        ProviderName.BROWSERLESS,
-        ProviderName.LIGHTPANDA,
-        ProviderName.CAMOUFOX,
-    ],
-)
-async def test_managed_single_slot_fleet_scales_instances(provider: ProviderName) -> None:
-    api = os.getenv("HARBOR_E2E_HTTP_URL", "http://localhost:8411")
-
-    async def provider_fleet() -> dict:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{api}/v1/fleet/providers")
-            response.raise_for_status()
-            return next(
-                fleet for fleet in response.json() if fleet["provider"] == provider.value
-            )
-
-    async def wait_for(predicate, timeout_seconds: float = 30) -> dict:
-        deadline = asyncio.get_running_loop().time() + timeout_seconds
-        while asyncio.get_running_loop().time() < deadline:
-            fleet = await provider_fleet()
-            if predicate(fleet):
-                return fleet
-            await asyncio.sleep(0.1)
-        raise TimeoutError(f"Managed {provider.value} fleet did not reach expected state")
-
-    async with async_playwright() as playwright:
-        first = await playwright.chromium.connect_over_cdp(
-            harbor_url(provider)
-        )
-        second_task = asyncio.create_task(
-            playwright.chromium.connect_over_cdp(
-                harbor_url(provider),
-                timeout=30_000,
-            )
-        )
-        scaled = await wait_for(
-            lambda fleet: fleet["desired_instances"] == 2 and fleet["ready_instances"] == 2
-        )
-        assert scaled["total_slots"] == 2
-        second = await second_task
-        await asyncio.gather(first.close(), second.close())
-
-    reduced = await wait_for(
-        lambda fleet: (
-            fleet["desired_instances"] == 1
-            and fleet["observed_instances"] == 1
-            and fleet["ready_instances"] == 1
-        )
-    )
-    assert reduced["total_slots"] == 1
-    assert reduced["active_attempts"] == 0
-
-
-@pytest.mark.asyncio
 async def test_debug_stream_replays_session_start_and_tails_until_close() -> None:
     reference = str(uuid4())
     base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
     separator = "&" if "?" in base else "?"
-    cdp_url = f"{base}{separator}harbor.provider.slug=chromium&harbor.session.reference={reference}"
+    cdp_url = (
+        f"{base}{separator}harbor.provider.slug=browserless&harbor.session.reference={reference}"
+    )
     debug_base = os.getenv("HARBOR_DEBUG_URL", "ws://localhost:8411/v1/debug")
     debug_url = f"{debug_base}?harbor.session.reference={reference}"
 
@@ -368,7 +323,7 @@ async def test_debug_stream_replays_session_start_and_tails_until_close() -> Non
 
     events = await asyncio.wait_for(debug, timeout=10)
     event_types = [event["event_type"] for event in events]
-    assert event_types[0] == "session.requested"
+    assert event_types[0] == "session.open"
     assert event_types[-1] == "session.closed"
     assert "navigation.response" in event_types
     assert len({event["event_id"] for event in events}) == len(events)

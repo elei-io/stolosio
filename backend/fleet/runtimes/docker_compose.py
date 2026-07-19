@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -48,16 +49,40 @@ class DockerComposeRuntime:
                 if started_at_raw
                 else None
             )
+            environment = container.get("Config", {}).get("Env", [])
+            concurrent = next(
+                (
+                    value.partition("=")[2]
+                    for value in environment
+                    if isinstance(value, str)
+                    and value.startswith("CONCURRENT=")
+                ),
+                None,
+            )
             instances.append(
                 RuntimeInstance(
                     instance_id=instance_id,
                     address=address,
                     started_at=started_at,
+                    session_capacity=(
+                        int(concurrent)
+                        if concurrent is not None and concurrent.isdigit()
+                        else None
+                    ),
                 )
             )
         return sorted(instances, key=lambda instance: instance.address)
 
-    async def scale(self, deployment: str, replicas: int) -> None:
+    async def scale(
+        self,
+        deployment: str,
+        replicas: int,
+        *,
+        session_capacity: int,
+    ) -> None:
+        environment_key = (
+            f"HARBOR_{deployment.upper().replace('-', '_')}_CONCURRENT"
+        )
         await self._run(
             "docker",
             "compose",
@@ -67,9 +92,15 @@ class DockerComposeRuntime:
             "-d",
             "--scale",
             f"{deployment}={replicas}",
-            "--no-recreate",
             deployment,
+            environment={environment_key: str(session_capacity)},
         )
+
+    def scale_down_candidate(
+        self,
+        instances: list[RuntimeInstance],
+    ) -> RuntimeInstance | None:
+        return instances[-1] if instances else None
 
     async def remove(self, deployment: str, instance_id: str) -> None:
         del deployment
@@ -89,10 +120,15 @@ class DockerComposeRuntime:
             return False
         return True
 
-    async def _run(self, *command: str) -> str:
+    async def _run(
+        self,
+        *command: str,
+        environment: dict[str, str] | None = None,
+    ) -> str:
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=self._workdir,
+            env={**os.environ, **(environment or {})},
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

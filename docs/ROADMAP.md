@@ -10,16 +10,14 @@ client.
   attempts, transactional admission, leases, queues, and safe WebSocket cleanup.
 - [Evidence and observability foundation](roadmap/observability.md): normalized DEBUG
   events, JetStream delivery, PostgreSQL history, and factual domain projections.
-- [Managed fleets](roadmap/managed-fleets.md): runtime-neutral reconciliation,
-  Chromium and Lightpanda instance slots, Docker Compose runtime support, scaling
-  metrics, packing, scale-up, and idle scale-down.
-- [Provider transitions](roadmap/provider-transitions.md): let an automatic session
-  serve navigation and content through plain HTTP, then acquire Chromium and continue
-  the same CDP session after replaying safe acknowledged history when another operation
-  is observed.
-- [Domain eligibility routing](roadmap/deterministic-routing.md): probe acquisition
-  health independently, suppress exact runtime incompatibilities, restore after one
-  later compatible session, and order eligible providers by cost.
+- [Managed Browserless fleet](FLEET_MANAGEMENT.md): runtime-neutral reconciliation,
+  multi-session instances, Docker Compose runtime support, packing, scale-up, and idle
+  scale-down.
+- [Bounded HTTP execution](NO_BROWSER.md): serve navigation and content without a
+  browser, then escalate once to a native CDP provider when another operation is
+  observed.
+- [Domain routing](ARCHITECTURE.md): use current health evidence and cost to order
+  Browserless and retain Browserbase as the capacity-controlled terminal fallback.
 
 ## Next
 

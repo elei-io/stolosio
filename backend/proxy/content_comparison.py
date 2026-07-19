@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 
-_REFERENCE_PROVIDERS = frozenset({"browserless", "chromium", "camoufox"})
-_MIN_REFERENCE_PROVIDERS = 2
+_REFERENCE_PROVIDERS = frozenset({"browserless"})
+_PROMOTION_PROVIDERS = frozenset({"http", "browserless"})
+_MIN_REFERENCE_PROVIDERS = 1
 _INCOMPLETE_COVERAGE = 0.35
 _DEFICIENT_COVERAGE = 0.25
 
@@ -55,7 +56,7 @@ def compare_content(
     }
 
     results: dict[str, RelativeContentResult] = {}
-    for provider in sorted(absolutely_healthy):
+    for provider in sorted(absolutely_healthy & _PROMOTION_PROVIDERS):
         facts = facts_by_provider.get(provider)
         if facts is None:
             continue

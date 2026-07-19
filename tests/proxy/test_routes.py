@@ -40,13 +40,13 @@ def test_proxy_websocket_routes_are_registered() -> None:
 def test_direct_websocket_route_connects_through_resolved_adapter(monkeypatch) -> None:
     class FakeGateway:
         async def connect(self, websocket) -> None:
-            assert websocket.query_params["harbor.provider.slug"] == "chromium"
+            assert websocket.query_params["harbor.provider.slug"] == "browserless"
             await websocket.accept()
             await websocket.send_text(await websocket.receive_text())
 
     with TestClient(app) as client:
         app.state.gateway = FakeGateway()
-        with client.websocket_connect("/v1/connect?harbor.provider.slug=chromium") as websocket:
+        with client.websocket_connect("/v1/connect?harbor.provider.slug=browserless") as websocket:
             websocket.send_text('{"id":1}')
             assert websocket.receive_text() == '{"id":1}'
 

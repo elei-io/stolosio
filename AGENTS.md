@@ -29,8 +29,6 @@ WS /v1/connect
   API.
 - Native CDP providers should preserve command IDs, session IDs, event order,
   backpressure, and close behavior.
-- Camoufox mappings must be implemented and tested command by command. Do not claim
-  general CDP compatibility from a partial mapping.
 - PostgreSQL is the durable source of truth and owns transactional admission, queues,
   leases, capacity, and analytical projections.
 - Logical sessions consume global Harbor capacity and never own a permanent provider.
@@ -61,8 +59,36 @@ WS /v1/connect
   fleet controller.
 - Administrative fleet limits are not downstream session settings and cannot be
   overridden through `harbor.*` query parameters.
+- PostgreSQL is authoritative for operator-editable fleet, provider-capacity, and
+  routing policy. Startup may seed missing rows with product defaults but must never
+  reconcile saved values from environment variables. Keep environment configuration
+  for credentials, service endpoints, connection details, and process/runtime
+  mechanics.
 - Prefer the smallest implementation that satisfies the current milestone. Roadmap
   documents describe direction, not permission to build speculative abstractions.
+
+## Greenfield compatibility policy
+
+Harbor is currently unreleased: it has no external users, supported deployments, or
+production data whose compatibility must be preserved.
+
+- Do not add compatibility shims for contracts, provider names, settings, database
+  values, event shapes, or behavior that no external user has observed.
+- Remove obsolete code, schema, migrations, tests, documentation, aliases, and
+  projections instead of retaining parallel old and new paths.
+- Prefer changing an unreleased contract directly over introducing deprecation
+  machinery, legacy enum variants, fallback decoders, dual writes, or transitional
+  adapters.
+- Alembic migrations may be squashed or replaced while this greenfield status holds.
+  Reset affected development databases rather than preserving upgrade paths for
+  schemas that have never been deployed.
+- Tests should assert the intended current product contract, not compatibility with
+  discarded prototypes.
+
+This policy stops applying to a contract or persisted schema as soon as it has been
+used by an external user, included in a supported deployment, or written as data that
+must survive an upgrade. From that point onward, preserve compatibility or provide an
+explicit migration and deprecation plan.
 
 ## Development workflow
 
@@ -86,7 +112,9 @@ Before handing off a change:
 
 1. Add or update tests at the closest appropriate level.
 2. Run targeted tests, then the broader unit suite and Ruff when practical.
-3. Add an Alembic migration for schema changes; do not rewrite applied migrations.
+3. Follow the greenfield compatibility policy for schema changes. Once that policy no
+   longer applies, add a forward Alembic migration and do not rewrite applied
+   migrations.
 4. Update documentation when a public contract, invariant, or provider capability
    changes.
 5. Preserve unrelated work in the working tree.

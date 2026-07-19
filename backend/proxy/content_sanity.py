@@ -51,6 +51,19 @@ class ContentSanity:
     facts: dict[str, int | bool]
 
 
+def inspect_headers(headers: dict[str, str]) -> ContentSanity:
+    content_type = headers.get("content-type", "").lower()
+    disposition = headers.get("content-disposition", "").lower()
+    if content_type and not any(
+        value in content_type
+        for value in ("text/html", "application/xhtml+xml")
+    ):
+        return ContentSanity("unhealthy", ("non_html_content_type",), {})
+    if "attachment" in disposition:
+        return ContentSanity("unhealthy", ("download_response",), {})
+    return ContentSanity("healthy", (), {})
+
+
 class _DocumentFacts(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)

@@ -44,19 +44,6 @@ class SessionDomain(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-class DomainCommandStat(Base):
-    __tablename__ = "domain_command_stats"
-
-    domain_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("domains.id", ondelete="CASCADE"), primary_key=True
-    )
-    method: Mapped[str] = mapped_column(String(128), primary_key=True)
-    command_count: Mapped[int] = mapped_column(BigInteger, default=0)
-    session_count: Mapped[int] = mapped_column(BigInteger, default=0)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-
 class DomainProviderTransitionStat(Base):
     __tablename__ = "domain_provider_transition_stats"
 
@@ -72,17 +59,37 @@ class DomainProviderTransitionStat(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-class SessionDomainCommand(Base):
-    __tablename__ = "session_domain_commands"
-    __table_args__ = (Index("ix_session_domain_commands_domain", "domain_id"),)
+class ProviderCommandCostStat(Base):
+    __tablename__ = "provider_command_cost_stats"
 
-    session_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("gateway_sessions.id", ondelete="CASCADE"), primary_key=True
-    )
-    domain_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("domains.id", ondelete="CASCADE"), primary_key=True
-    )
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
     method: Mapped[str] = mapped_column(String(128), primary_key=True)
+    command_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    failed_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    interrupted_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    total_duration_ms: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    total_provider_latency_ms: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    total_harbor_queue_ms: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    attributed_browser_time_ms: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    attributed_cost_units: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class RoutingConfiguration(Base):
@@ -136,8 +143,7 @@ class DomainProviderHealth(Base):
     __tablename__ = "domain_provider_health"
     __table_args__ = (
         CheckConstraint(
-            "health_state IN "
-            "('unknown', 'checking', 'healthy', 'unhealthy', 'inconclusive')",
+            "health_state IN ('unknown', 'healthy', 'unhealthy', 'inconclusive')",
             name="ck_domain_provider_health_state",
         ),
     )
@@ -184,9 +190,7 @@ class HealthProbe(Base):
             "source_session_id",
             "candidate_provider",
             unique=True,
-            postgresql_where=text(
-                "trigger IN ('new_domain', 'existing_sample')"
-            ),
+            postgresql_where=text("trigger IN ('new_domain', 'existing_sample')"),
         ),
         Index("ix_health_probes_queue", "state", "created_at"),
         Index("ix_health_probes_cohort", "cohort_id", "state"),
@@ -220,9 +224,7 @@ class HealthProbe(Base):
     source_session_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("gateway_sessions.id", ondelete="CASCADE"), nullable=False
     )
-    cohort_id: Mapped[str] = mapped_column(
-        String(36), nullable=False, default=lambda: str(uuid4())
-    )
+    cohort_id: Mapped[str] = mapped_column(String(36), nullable=False, default=lambda: str(uuid4()))
     candidate_provider: Mapped[str] = mapped_column(String(32), nullable=False)
     trigger: Mapped[str] = mapped_column(String(32), nullable=False)
     sampling_bucket: Mapped[int | None]
@@ -248,50 +250,6 @@ class HealthProbe(Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
-class DomainProviderRuntimeState(Base):
-    __tablename__ = "domain_provider_runtime_state"
-    __table_args__ = (
-        CheckConstraint(
-            "state IN ('eligible', 'suppressed')",
-            name="ck_domain_provider_runtime_state",
-        ),
-    )
-
-    domain_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("domains.id", ondelete="CASCADE"), primary_key=True
-    )
-    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
-    state: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="eligible", server_default="eligible"
-    )
-    suppressed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    suppressed_session_id: Mapped[str | None] = mapped_column(String(36))
-    incompatible_method: Mapped[str | None] = mapped_column(String(128))
-    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    restored_session_id: Mapped[str | None] = mapped_column(String(36))
-    last_evidence_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    provider_contract_version: Mapped[int] = mapped_column(nullable=False)
-
-
-class SessionDomainProviderCompatibility(Base):
-    __tablename__ = "session_domain_provider_compatibility"
-
-    session_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("gateway_sessions.id", ondelete="CASCADE"), primary_key=True
-    )
-    domain_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("domains.id", ondelete="CASCADE"), primary_key=True
-    )
-    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
-    compatible: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    incompatible_method: Mapped[str | None] = mapped_column(String(128))
-    domain_first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    provider_contract_version: Mapped[int] = mapped_column(nullable=False)
 
 
 class DomainProviderCostStat(Base):

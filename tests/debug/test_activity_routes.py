@@ -10,8 +10,18 @@ class FakeHistory:
     def __init__(self) -> None:
         self.filters = None
 
-    async def events(self, filters, *, before, limit):
+    async def events(
+        self,
+        filters,
+        *,
+        before,
+        occurred_after,
+        occurred_before,
+        limit,
+    ):
         self.filters = filters
+        self.occurred_after = occurred_after
+        self.occurred_before = occurred_before
         return SimpleNamespace(events=[], next_cursor=None)
 
 
@@ -24,10 +34,12 @@ def test_activity_history_route_parses_repeated_filters() -> None:
     response = TestClient(app).get(
         "/v1/admin/events",
         params=[
-            ("provider", "chromium"),
-            ("provider", "camoufox"),
+            ("provider", "browserless"),
+            ("provider", "browserbase"),
             ("event_family", "attempt"),
             ("outcome", "failure"),
+            ("occurred_after", "2026-07-18T01:00:00Z"),
+            ("occurred_before", "2026-07-18T02:00:00Z"),
             ("limit", "25"),
         ],
     )
@@ -35,11 +47,13 @@ def test_activity_history_route_parses_repeated_filters() -> None:
     assert response.status_code == 200
     assert response.json() == {"events": [], "next_cursor": None}
     assert [provider.value for provider in history.filters.providers] == [
-        "chromium",
-        "camoufox",
+        "browserless",
+        "browserbase",
     ]
     assert [family.value for family in history.filters.families] == ["attempt"]
     assert [outcome.value for outcome in history.filters.outcomes] == ["failure"]
+    assert history.occurred_after.isoformat() == "2026-07-18T01:00:00+00:00"
+    assert history.occurred_before.isoformat() == "2026-07-18T02:00:00+00:00"
 
 
 def test_activity_routes_reject_unknown_filters_and_unavailable_stream() -> None:

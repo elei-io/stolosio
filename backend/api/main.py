@@ -6,9 +6,14 @@ from contextlib import asynccontextmanager
 import nats
 from fastapi import FastAPI
 
+from backend.api.routes.admin_command_costs import (
+    router as admin_command_costs_router,
+)
+from backend.api.routes.admin_costs import router as admin_costs_router
 from backend.api.routes.admin_domains import router as admin_domains_router
 from backend.api.routes.admin_events import router as admin_events_router
 from backend.api.routes.admin_fleets import router as admin_fleets_router
+from backend.api.routes.admin_provider_capacity import router as admin_provider_capacity_router
 from backend.api.routes.admin_routing import router as admin_routing_router
 from backend.api.routes.admin_sessions import router as admin_sessions_router
 from backend.api.routes.debug import router as debug_router
@@ -27,10 +32,13 @@ from backend.messaging.jetstream import (
 )
 from backend.metrics import FleetSnapshotService, InstrumentedEventPublisher
 from backend.proxy.attempts import AttemptAdmission
-from backend.proxy.capabilities import capability_registry
+from backend.proxy.command_costs import CommandCostQueryService
+from backend.proxy.contracts import ProviderName
+from backend.proxy.costs import CostQueryService
 from backend.proxy.domains import DomainQueryService
+from backend.proxy.external_capacity import ExternalCapacityRepository
 from backend.proxy.gateway import Gateway
-from backend.proxy.health import HealthRepository
+from backend.proxy.health import PromotionRepository
 from backend.proxy.postgres import (
     PostgresAttemptRepository,
     PostgresSessionRepository,
@@ -38,7 +46,6 @@ from backend.proxy.postgres import (
 )
 from backend.proxy.provider_transition import ProviderTransitionRepository
 from backend.proxy.routing import RoutingRepository
-from backend.proxy.runtime_compatibility import RuntimeCompatibilityRepository
 from backend.proxy.session_queries import SessionQueryService
 from backend.proxy.sessions import SessionAdmission
 from backend.settings import settings
@@ -49,7 +56,23 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     fleet_repository = FleetRepository(session_factory)
-    await ensure_managed_fleets(fleet_repository, settings)
+    await ensure_managed_fleets(fleet_repository)
+    external_capacity = ExternalCapacityRepository(
+        session_factory,
+        browserbase_api_key=settings.browserbase_api_key,
+    )
+    await external_capacity.ensure(
+        ProviderName.HTTP,
+        enabled=True,
+        max_active_sessions=100,
+        max_queued_attempts=100,
+    )
+    await external_capacity.ensure(
+        ProviderName.BROWSERBASE,
+        enabled=False,
+        max_active_sessions=5,
+        max_queued_attempts=100,
+    )
     repository = PostgresSessionRepository(
         session_factory,
         SessionRepositorySettings(
@@ -94,10 +117,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.fleet = FleetSnapshotService(session_factory, settings)
     app.state.fleet_admin = FleetService(fleet_repository)
+    app.state.external_capacity = external_capacity
     app.state.routing = routing
     app.state.domains = DomainQueryService(session_factory)
     app.state.session_queries = SessionQueryService(session_factory)
-    app.state.health = HealthRepository(session_factory)
+    app.state.command_costs = CommandCostQueryService(session_factory)
+    app.state.costs = CostQueryService(session_factory)
+    app.state.health = PromotionRepository(session_factory)
     app.state.activity_history = ActivityHistoryService(session_factory)
     app.state.activity_stream = (
         ActivityStreamService(
@@ -108,7 +134,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if nats_client is not None
         else None
     )
-    app.state.environment = settings.environment
     app.state.debug_stream = (
         DebugStreamService(
             session_factory,
@@ -123,12 +148,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.gateway = Gateway(
         sessions,
         attempts,
-        capability_registry,
         settings,
         event_publisher if nats_client is not None else None,
         transition_repository=ProviderTransitionRepository(session_factory),
         routing=routing,
-        runtime_compatibility=RuntimeCompatibilityRepository(session_factory),
     )
     try:
         yield
@@ -140,8 +163,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app.include_router(admin_command_costs_router)
+app.include_router(admin_costs_router)
 app.include_router(admin_events_router)
 app.include_router(admin_fleets_router)
+app.include_router(admin_provider_capacity_router)
 app.include_router(admin_domains_router)
 app.include_router(admin_routing_router)
 app.include_router(admin_sessions_router)

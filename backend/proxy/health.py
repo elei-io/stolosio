@@ -21,7 +21,11 @@ from backend.db.models import (
 from backend.events import EventType
 from backend.events.normalization import normalize_domain
 from backend.proxy.content_comparison import compare_content
-from backend.proxy.contracts import ProviderName
+from backend.proxy.contracts import PROMOTION_PROVIDERS, ProviderName
+
+_PROMOTION_PROVIDER_VALUES = tuple(
+    provider.value for provider in PROMOTION_PROVIDERS
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +70,8 @@ class ManualProbeUnavailableError(RuntimeError):
     pass
 
 
-class HealthRepository:
+class PromotionRepository:
+    """Turns background probe results into routing promotion evidence."""
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
@@ -101,7 +106,12 @@ class HealthRepository:
             profiles = list(
                 await database.scalars(
                     select(ProviderRoutingProfile)
-                    .where(ProviderRoutingProfile.automatic_enabled.is_(True))
+                    .where(
+                        ProviderRoutingProfile.automatic_enabled.is_(True),
+                        ProviderRoutingProfile.provider.in_(
+                            _PROMOTION_PROVIDER_VALUES
+                        ),
+                    )
                     .order_by(
                         ProviderRoutingProfile.cost_units_per_second,
                         ProviderRoutingProfile.provider,
@@ -204,26 +214,17 @@ class HealthRepository:
                         .values(
                             domain_id=domain.id,
                             provider=profile.provider,
-                            health_state="checking",
+                            health_state="unknown",
                             health_policy_version=configuration.health_policy_version,
                             provider_contract_version=(
                                 profile.provider_contract_version
                             ),
                         )
-                        .on_conflict_do_update(
+                        .on_conflict_do_nothing(
                             index_elements=[
                                 DomainProviderHealth.domain_id,
                                 DomainProviderHealth.provider,
-                            ],
-                            set_={
-                                "health_state": "checking",
-                                "health_policy_version": (
-                                    configuration.health_policy_version
-                                ),
-                                "provider_contract_version": (
-                                    profile.provider_contract_version
-                                ),
-                            },
+                            ]
                         )
                     )
                     created.append(
@@ -287,12 +288,21 @@ class HealthRepository:
                     "no probe-safe navigation has been recorded for this domain"
                 )
 
-            profile_query = select(ProviderRoutingProfile)
-            if providers is not None:
-                profile_query = profile_query.where(
+            if providers is None:
+                # "Probe all" remains cost-safe and covers only providers eligible
+                # for automatic promotion. Costly terminal providers require an
+                # explicit operator selection.
+                profile_query = select(ProviderRoutingProfile).where(
                     ProviderRoutingProfile.provider.in_(
-                        [provider.value for provider in dict.fromkeys(providers)]
+                        _PROMOTION_PROVIDER_VALUES
                     )
+                )
+            else:
+                requested_providers = [
+                    provider.value for provider in dict.fromkeys(providers)
+                ]
+                profile_query = select(ProviderRoutingProfile).where(
+                    ProviderRoutingProfile.provider.in_(requested_providers)
                 )
             profiles = list(
                 await database.scalars(
@@ -397,6 +407,12 @@ class HealthRepository:
             row = await database.scalar(
                 select(HealthProbe)
                 .where(
+                    or_(
+                        HealthProbe.candidate_provider.in_(
+                            _PROMOTION_PROVIDER_VALUES
+                        ),
+                        HealthProbe.trigger == "manual",
+                    ),
                     (HealthProbe.state == "queued")
                     | (
                         (HealthProbe.state == "running")
@@ -426,6 +442,12 @@ class HealthRepository:
             first = await database.scalar(
                 select(HealthProbe)
                 .where(
+                    or_(
+                        HealthProbe.candidate_provider.in_(
+                            _PROMOTION_PROVIDER_VALUES
+                        ),
+                        HealthProbe.trigger == "manual",
+                    ),
                     (HealthProbe.state == "queued")
                     | (
                         (HealthProbe.state == "running")
@@ -443,6 +465,12 @@ class HealthRepository:
                     select(HealthProbe)
                     .where(
                         HealthProbe.cohort_id == first.cohort_id,
+                        or_(
+                            HealthProbe.candidate_provider.in_(
+                                _PROMOTION_PROVIDER_VALUES
+                            ),
+                            HealthProbe.trigger == "manual",
+                        ),
                         (HealthProbe.state == "queued")
                         | (
                             (HealthProbe.state == "running")
@@ -484,7 +512,7 @@ class HealthRepository:
                 await database.scalar(
                     select(
                         func.coalesce(
-                            func.sum(AcquisitionAttempt.actual_cost_units), 0
+                            func.sum(AcquisitionAttempt.modeled_cost_units), 0
                         )
                     ).where(AcquisitionAttempt.session_id == candidate_session.id)
                 )
@@ -540,11 +568,8 @@ class HealthRepository:
             profile.last_checked_at = now
             if result.outcome == "healthy":
                 profile.successful_probe_count += 1
-                profile.health_state = (
-                    "healthy"
-                    if profile.successful_probe_count >= required
-                    else "checking"
-                )
+                if profile.successful_probe_count >= required:
+                    profile.health_state = "healthy"
                 if profile.health_state == "healthy":
                     profile.last_healthy_at = now
             elif result.outcome == "unhealthy":

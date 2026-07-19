@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "harbor.fullname" . }}-web
+  labels:
+    {{- include "harbor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      {{- include "harbor.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      annotations:
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
+      labels:
+        {{- include "harbor.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+        {{- include "harbor.extraPodLabels" . | nindent 8 }}
+    spec:
+      {{- include "harbor.commonPodSpec" . | nindent 6 }}
+      containers:
+        - name: web
+          image: "{{ .Values.webImage.repository }}:{{ .Values.webImage.tag }}"
+          imagePullPolicy: {{ .Values.webImage.pullPolicy }}
+          env:
+            - name: HARBOR_API_PROXY_TARGET
+              value: http://{{ include "harbor.fullname" . }}-api:{{ .Values.api.service.port }}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "harbor.fullname" . }}-web
+  labels:
+    {{- include "harbor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  annotations:
+    {{- toYaml .Values.web.service.annotations | nindent 4 }}
+spec:
+  type: {{ .Values.web.service.type }}
+  {{- with .Values.web.service.loadBalancerClass }}
+  loadBalancerClass: {{ . }}
+  {{- end }}
+  selector:
+    {{- include "harbor.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  ports:
+    - name: http
+      port: {{ .Values.web.service.port }}
+      targetPort: http

@@ -19,10 +19,9 @@ Harbor routing policy:
 
 ```text
 wss://harbor.example/v1/connect
-wss://harbor.example/v1/connect?harbor.provider.slug=chromium
+wss://harbor.example/v1/connect?harbor.provider.slug=http
 wss://harbor.example/v1/connect?harbor.provider.slug=browserless
-wss://harbor.example/v1/connect?harbor.provider.slug=lightpanda
-wss://harbor.example/v1/connect?harbor.provider.slug=camoufox
+wss://harbor.example/v1/connect?harbor.provider.slug=browserbase
 ```
 
 Harbor will target the common 80 percent of browser automation behavior across all
@@ -30,21 +29,20 @@ providers. Provider-specific and uncommon commands may not work everywhere initi
 but unsupported behavior must fail explicitly and predictably rather than hang or
 silently produce an incorrect result.
 
-Harbor does not promise that every provider behaves exactly like Chromium. It promises
-that ordinary CDP automation can be portable when the selected provider has the
-required capabilities.
+Native browser providers relay CDP without method-by-method mappings. The bounded HTTP
+facade supports only its explicitly documented bootstrap surface and escalates an
+automatic session to a browser for every other operation.
 
 ## Initial providers
 
-Harbor begins with four providers:
+Harbor begins with three acquisition paths:
 
-- Plain Chromium provides direct CDP control and serves as the behavioral baseline.
-- Browserless Chromium provides CDP with managed browser lifecycle, concurrency, and
-  queueing.
-- Lightpanda provides a lightweight, CDP-compatible browser optimized for automation.
-- Camoufox provides a Firefox-based, anti-detection browser through Playwright's
-  Firefox/Juggler protocol. Harbor translates the portable CDP surface for this
-  provider.
+- Plain HTTP provides bounded navigation and content retrieval without occupying a
+  browser.
+- Browserless provides native CDP through a Harbor-managed, horizontally scalable
+  fleet with explicit per-instance session capacity.
+- Browserbase provides native CDP as the externally managed terminal fallback for
+  difficult sites, with Harbor-owned concurrency and queue limits.
 
 The provider is an implementation detail for clients that remain within Harbor's
 portable capability surface. Clients may still select a provider explicitly when a task
@@ -59,9 +57,8 @@ Harbor will:
 - Pack isolated sessions into compatible browser instances and scale managed provider
   fleets from measured demand.
 - Expose per-provider demand, capacity, health, and scaling metrics.
-- Normalize browser and provider quirks behind a CDP-compatible gateway.
-- Track provider capabilities and report unsupported operations clearly.
-- Preserve native CDP passthrough where possible.
+- Preserve opaque native CDP passthrough for browser providers.
+- Report operations outside the bounded HTTP facade explicitly.
 - Own session authentication, authorization, lifecycle, and cleanup.
 
 Browser processes are local Docker Compose dependencies during development. Harbor

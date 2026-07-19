@@ -1,10 +1,10 @@
 import asyncio
 import logging
 from dataclasses import replace
+from datetime import datetime
 from uuid import uuid4
 
 from backend.messaging import CapacityNotifier, PollingNotifier
-from backend.proxy.attempts.capacity import provider_capacity
 from backend.proxy.contracts import (
     AttemptState,
     HarborSession,
@@ -19,6 +19,23 @@ from backend.proxy.postgres import (
 from backend.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+_TRANSIENT_DATABASE_STATES = {"40001", "40P01"}
+_DATABASE_RELEASE_ATTEMPTS = 3
+
+
+def _is_transient_database_error(error: BaseException) -> bool:
+    current: BaseException | None = error
+    while current is not None:
+        sqlstate = getattr(current, "sqlstate", None) or getattr(
+            current,
+            "pgcode",
+            None,
+        )
+        if sqlstate in _TRANSIENT_DATABASE_STATES:
+            return True
+        current = current.__cause__
+    return False
 
 
 class AttemptLease:
@@ -38,20 +55,61 @@ class AttemptLease:
             raise RuntimeError("Acquisition attempt is no longer claimable")
         self.attempt = replace(self.attempt, state=AttemptState.ACTIVE)
 
+    async def bind_provider_session(
+        self,
+        *,
+        provider_session_id: str | None,
+        provider_started_at: datetime | None,
+    ) -> None:
+        await self._repository.bind_provider_session(
+            self.attempt,
+            provider_session_id=provider_session_id,
+            provider_started_at=provider_started_at,
+        )
+
+    async def record_provider_usage(
+        self,
+        *,
+        provider_ended_at: datetime | None,
+    ) -> None:
+        await self._repository.record_provider_usage(
+            self.attempt,
+            provider_ended_at=provider_ended_at,
+        )
+
     async def release(
         self,
         *,
         failed: bool = False,
         reason: str = "client_disconnected",
+        command_summary: dict[str, object] | None = None,
     ) -> None:
         if self._released:
             return
+        for release_attempt in range(1, _DATABASE_RELEASE_ATTEMPTS + 1):
+            try:
+                released = await self._repository.finish(
+                    self.attempt,
+                    failed=failed,
+                    reason=reason,
+                    command_summary=command_summary,
+                )
+                break
+            except Exception as error:
+                if (
+                    release_attempt == _DATABASE_RELEASE_ATTEMPTS
+                    or not _is_transient_database_error(error)
+                ):
+                    raise
+                logger.warning(
+                    "Retrying acquisition attempt %s release after transient "
+                    "database error (%s/%s)",
+                    self.attempt.attempt_id,
+                    release_attempt,
+                    _DATABASE_RELEASE_ATTEMPTS,
+                )
+                await asyncio.sleep(0)
         self._released = True
-        released = await self._repository.finish(
-            self.attempt,
-            failed=failed,
-            reason=reason,
-        )
         if released:
             try:
                 await self._notifier.notify(self.attempt.provider)
@@ -83,7 +141,6 @@ class AttemptAdmission:
             raise RuntimeError(
                 "An acquisition attempt requires a concrete provider selection"
             )
-        capacity = provider_capacity(self._settings, provider)
         attempt = ProviderAttempt(
             attempt_id=str(uuid4()),
             session_id=session.session_id,
@@ -96,8 +153,6 @@ class AttemptAdmission:
                 session,
                 attempt.attempt_id,
                 provider,
-                max_active=capacity.max_active,
-                max_queued=capacity.max_queued,
                 resolved_settings={"harbor.provider.slug": provider.value},
                 setting_sources={
                     field: source.value
@@ -114,7 +169,6 @@ class AttemptAdmission:
                         claimed = await self._repository.claim(
                             session,
                             attempt,
-                            max_active=capacity.max_active,
                         )
                         if claimed is not None:
                             attempt = claimed

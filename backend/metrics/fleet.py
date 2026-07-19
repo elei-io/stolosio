@@ -4,10 +4,9 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.db.models import AcquisitionAttempt, GatewaySession
+from backend.db.models import AcquisitionAttempt, ExternalProviderLimit, GatewaySession
 from backend.fleet import FleetRepository
-from backend.proxy.attempts import provider_capacity
-from backend.proxy.contracts import AttemptState, ProviderName, SessionState
+from backend.proxy.contracts import ACTIVE_PROVIDERS, AttemptState, ProviderName, SessionState
 from backend.settings import Settings
 
 
@@ -114,16 +113,25 @@ class FleetSnapshotService:
                     )
                 ).all()
             }
+            external_limits = {
+                row.provider: row
+                for row in await database.scalars(select(ExternalProviderLimit))
+            }
 
         snapshots = []
-        for provider in ProviderName:
+        for provider in ACTIVE_PROVIDERS:
             queued, oldest = queued_rows.get(provider.value, (0, None))
             age = max(0.0, (now - oldest).total_seconds()) if oldest else 0.0
             managed = await self._fleets.snapshot(provider)
+            external = external_limits.get(provider.value)
             capacity = (
                 managed.total_slots
                 if managed is not None
-                else provider_capacity(self._settings, provider).max_active
+                else external.max_active_sessions
+                if external is not None and external.enabled
+                else 0
+                if external is not None
+                else 0
             )
             snapshots.append(
                 ProviderFleetSnapshot(
