@@ -163,7 +163,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await engine.dispose()
 
 
-app = FastAPI(title=settings.app_name, version="0.1.8", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.1.9", lifespan=lifespan)
 app.include_router(admin_command_costs_router)
 app.include_router(admin_costs_router)
 app.include_router(admin_events_router)
