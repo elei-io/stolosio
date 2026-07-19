@@ -29,6 +29,41 @@ def test_policy_scales_one_instance_at_a_time_for_slot_demand() -> None:
     assert decision.direction == "up"
 
 
+def test_policy_scales_from_observed_capacity_during_capacity_transition() -> None:
+    now = datetime.now(UTC)
+    configured = configuration(session_capacity_per_instance=10)
+
+    decision = scaling_decision(
+        configured,
+        demand=8,
+        now=now,
+        provisioned_instances=1,
+        provisioned_capacity=5,
+    )
+
+    assert decision.desired_instances == 2
+    assert decision.direction == "up"
+
+
+def test_policy_does_not_compound_an_in_flight_scale_operation() -> None:
+    now = datetime.now(UTC)
+    configured = configuration(
+        session_capacity_per_instance=10,
+        desired_instances=2,
+    )
+
+    decision = scaling_decision(
+        configured,
+        demand=8,
+        now=now,
+        provisioned_instances=1,
+        provisioned_capacity=5,
+    )
+
+    assert decision.desired_instances == 2
+    assert decision.direction is None
+
+
 def test_policy_scales_down_only_after_the_whole_fleet_is_idle_for_cooldown() -> None:
     now = datetime.now(UTC)
     idle_since = now - timedelta(seconds=31)

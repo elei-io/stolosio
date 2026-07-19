@@ -18,7 +18,10 @@ def scaling_decision(
     *,
     demand: int,
     now: datetime,
+    provisioned_instances: int | None = None,
+    provisioned_capacity: int | None = None,
 ) -> ScalingDecision:
+    current = configuration.desired_instances
     if not configuration.enabled:
         target = 0
     else:
@@ -27,8 +30,18 @@ def scaling_decision(
             configuration.maximum_instances,
             max(configuration.minimum_instances, required),
         )
+        if (
+            demand > 0
+            and provisioned_instances is not None
+            and provisioned_capacity is not None
+            and provisioned_instances >= current
+            and demand > provisioned_capacity
+        ):
+            target = max(
+                target,
+                min(configuration.maximum_instances, current + 1),
+            )
 
-    current = configuration.desired_instances
     if target > current:
         return ScalingDecision(current + 1, "up", None, demand)
 

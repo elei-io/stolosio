@@ -1,9 +1,12 @@
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
 import pytest
 from sqlalchemy import select
 
-from backend.db.models import FleetConfigurationEvent
-from backend.fleet import FleetRepository
-from backend.proxy.contracts import ProviderName
+from backend.db.models import AcquisitionAttempt, FleetConfigurationEvent, GatewaySession
+from backend.fleet import FleetInstanceState, FleetRepository, ObservedInstance
+from backend.proxy.contracts import AttemptState, ProviderName, SessionState
 
 
 @pytest.mark.asyncio
@@ -65,3 +68,72 @@ async def test_bootstrap_preserves_database_fleet_limits(database_sessions) -> N
             )
         )
     assert event is None
+
+
+@pytest.mark.asyncio
+async def test_evaluate_scales_from_observed_capacity_during_transition(
+    database_sessions,
+) -> None:
+    repository = FleetRepository(database_sessions)
+    await repository.ensure_fleet(
+        ProviderName.BROWSERLESS,
+        minimum_instances=1,
+        maximum_instances=4,
+        session_capacity_per_instance=5,
+        scale_down_cooldown_seconds=30,
+    )
+    await repository.observe_instances(
+        ProviderName.BROWSERLESS,
+        [
+            ObservedInstance(
+                instance_id="browserless-0",
+                endpoint="ws://browserless-0:3000",
+                state=FleetInstanceState.READY,
+                session_capacity=5,
+            )
+        ],
+        platform="test",
+        observation_ttl_seconds=60,
+    )
+    await repository.update_configuration(
+        ProviderName.BROWSERLESS,
+        {"session_capacity_per_instance": 10},
+        actor="test-operator",
+    )
+    now = datetime.now(UTC)
+    async with database_sessions.begin() as database:
+        session_ids = [str(uuid4()) for _ in range(8)]
+        for session_id in session_ids:
+            database.add(
+                GatewaySession(
+                    id=session_id,
+                    owner_id=str(uuid4()),
+                    lease_token=str(uuid4()),
+                    requested_settings={},
+                    state=SessionState.OPEN.value,
+                    lease_expires_at=now + timedelta(minutes=1),
+                )
+            )
+        await database.flush()
+        for session_id in session_ids:
+            database.add(
+                AcquisitionAttempt(
+                    id=str(uuid4()),
+                    session_id=session_id,
+                    ordinal=1,
+                    provider=ProviderName.BROWSERLESS.value,
+                    resolved_settings={},
+                    setting_sources={},
+                    state=AttemptState.QUEUED.value,
+                )
+            )
+
+    configuration, decision = await repository.evaluate(ProviderName.BROWSERLESS)
+
+    assert configuration.desired_instances == 2
+    assert decision.direction == "up"
+
+    configuration, decision = await repository.evaluate(ProviderName.BROWSERLESS)
+
+    assert configuration.desired_instances == 2
+    assert decision.direction is None

@@ -133,8 +133,28 @@ class FleetRepository:
                 raise LookupError(f"No managed fleet for {provider.value}")
             now = await self._now(database)
             demand = await self._attempt_count(database, provider.value, _LIVE_ATTEMPT_STATES, now)
+            provisioned_capacities = list(
+                await database.scalars(
+                    select(ProviderInstance.capacity).where(
+                        ProviderInstance.provider == provider.value,
+                        ProviderInstance.state.in_(
+                            (
+                                FleetInstanceState.STARTING.value,
+                                FleetInstanceState.READY.value,
+                            )
+                        ),
+                        ProviderInstance.observation_expires_at > now,
+                    )
+                )
+            )
             configuration = self._configuration(row)
-            decision = scaling_decision(configuration, demand=demand, now=now)
+            decision = scaling_decision(
+                configuration,
+                demand=demand,
+                now=now,
+                provisioned_instances=len(provisioned_capacities),
+                provisioned_capacity=sum(provisioned_capacities),
+            )
             if decision.desired_instances != row.desired_instances:
                 if decision.direction == "up":
                     row.last_scale_up_at = now
