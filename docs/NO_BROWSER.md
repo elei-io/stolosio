@@ -13,6 +13,10 @@ sanity is also a browser requirement. Harbor asks the planner
 for Browserless or Browserbase, acquires one browser, replays safe HTTP state, verifies
 document readiness and execution-context catch-up, switches execution, and only then
 releases the HTTP source. Replay does not wait for every page subresource to finish.
+Execution-context mappings are tracked across the replayed session rather than being
+owned by the command that happened to receive each context event. Navigation waits
+for its response and matching default context; later commands wait only for the
+specific execution context they reference.
 An immediate browser command error terminates that candidate without consuming the
 whole replay timeout. A failed acquisition leaves the HTTP source intact while Harbor
 tries the next candidate.

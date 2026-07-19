@@ -1,5 +1,6 @@
 """Explicit HTTP execution and automatic provider-transition tests."""
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -363,6 +364,214 @@ async def test_transition_replays_every_acknowledged_command_in_order_with_id_ma
     ]
     assert upstream.sent[1]["params"]["browserContextId"] == "actual-context"
     assert upstream.sent[2]["sessionId"] == "actual-session"
+
+
+@pytest.mark.asyncio
+async def test_replay_maps_isolated_context_created_after_navigation() -> None:
+    class DelayedIsolatedWorldProvider(FakeProviderSession):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.queue: asyncio.Queue[dict] = asyncio.Queue()
+
+        async def send(self, message: str) -> None:
+            command = json.loads(message)
+            self.sent.append(command)
+            if command["method"] == "Page.navigate":
+                await self.queue.put(
+                    {"id": command["id"], "result": {"frameId": "actual-frame"}}
+                )
+                await self.queue.put(
+                    {
+                        "method": "Runtime.executionContextCreated",
+                        "params": {
+                            "context": {
+                                "id": 7,
+                                "name": "",
+                                "auxData": {
+                                    "isDefault": True,
+                                    "type": "default",
+                                    "frameId": "actual-frame",
+                                },
+                            }
+                        },
+                    }
+                )
+            elif command["method"] == "Page.createIsolatedWorld":
+                assert command["params"]["frameId"] == "actual-frame"
+                await self.queue.put(
+                    {
+                        "id": command["id"],
+                        "result": {"executionContextId": 8},
+                    }
+                )
+                await self.queue.put(
+                    {
+                        "method": "Runtime.executionContextCreated",
+                        "params": {
+                            "context": {
+                                "id": 8,
+                                "name": "__playwright_utility_world",
+                                "auxData": {
+                                    "isDefault": False,
+                                    "type": "isolated",
+                                    "frameId": "actual-frame",
+                                },
+                            }
+                        },
+                    }
+                )
+            elif command["method"] == "Runtime.evaluate":
+                await self.queue.put({"id": command["id"], "result": {}})
+
+        async def messages(self) -> AsyncIterator[str]:
+            while True:
+                yield json.dumps(await self.queue.get())
+
+    def context_event(
+        context_id: int,
+        *,
+        name: str,
+        is_default: bool,
+    ) -> dict:
+        return {
+            "method": "Runtime.executionContextCreated",
+            "params": {
+                "context": {
+                    "id": context_id,
+                    "name": name,
+                    "auxData": {
+                        "isDefault": is_default,
+                        "type": "default" if is_default else "isolated",
+                        "frameId": "synthetic-frame",
+                    },
+                }
+            },
+        }
+
+    upstream = DelayedIsolatedWorldProvider()
+    facade = transition_session(upstream)
+    facade._replay = [
+        ReplayEntry(
+            command={
+                "id": 1,
+                "method": "Page.navigate",
+                "params": {"url": "https://example.test"},
+            },
+            response={"id": 1, "result": {"frameId": "synthetic-frame"}},
+            events=[
+                context_event(3, name="", is_default=True),
+                context_event(
+                    4,
+                    name="__playwright_utility_world",
+                    is_default=False,
+                ),
+            ],
+        ),
+        ReplayEntry(
+            command={
+                "id": 2,
+                "method": "Page.createIsolatedWorld",
+                "params": {
+                    "frameId": "synthetic-frame",
+                    "worldName": "__playwright_utility_world",
+                },
+            },
+            response={"id": 2, "result": {"executionContextId": 5}},
+            events=[
+                context_event(
+                    5,
+                    name="__playwright_utility_world",
+                    is_default=False,
+                )
+            ],
+        ),
+        ReplayEntry(
+            command={
+                "id": 3,
+                "method": "Runtime.evaluate",
+                "params": {
+                    "contextId": 4,
+                    "expression": "document.title",
+                },
+            },
+            response={"id": 3, "result": {}},
+        ),
+    ]
+
+    await facade._replay_history()
+
+    assert [command["method"] for command in upstream.sent] == [
+        "Page.navigate",
+        "Page.createIsolatedWorld",
+        "Runtime.evaluate",
+    ]
+    assert upstream.sent[2]["params"]["contextId"] == 8
+
+
+@pytest.mark.asyncio
+async def test_replay_context_timeout_logs_expected_and_observed_descriptors(
+    caplog,
+) -> None:
+    upstream = FakeProviderSession(
+        [
+            {
+                "method": "Runtime.executionContextCreated",
+                "params": {
+                    "context": {
+                        "id": 8,
+                        "name": "__playwright_utility_world",
+                        "auxData": {
+                            "isDefault": False,
+                            "type": "isolated",
+                            "frameId": "actual-frame",
+                        },
+                    }
+                },
+            }
+        ]
+    )
+    facade = transition_session(upstream)
+    facade._reset_replay_context_tracking()
+    facade._register_expected_replay_contexts(
+        [
+            {
+                "method": "Runtime.executionContextCreated",
+                "params": {
+                    "context": {
+                        "id": 3,
+                        "name": "",
+                        "auxData": {
+                            "isDefault": True,
+                            "type": "default",
+                            "frameId": "synthetic-frame",
+                        },
+                    }
+                },
+            }
+        ]
+    )
+
+    with pytest.raises(
+        ProviderTransitionError,
+        match="Replay timed out for Runtime.evaluate",
+    ):
+        await facade._wait_for_replay_contexts(
+            {
+                "id": 9,
+                "method": "Runtime.evaluate",
+                "params": {"contextId": 3, "expression": "document.title"},
+            }
+        )
+
+    log = next(
+        record.getMessage()
+        for record in caplog.records
+        if "Replay context wait timed out" in record.getMessage()
+    )
+    assert "'id': 3" in log
+    assert "'isDefault': True" in log
+    assert "'id': 8" in log
+    assert "'isDefault': False" in log
 
 
 @pytest.mark.asyncio
