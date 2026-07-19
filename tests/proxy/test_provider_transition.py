@@ -28,6 +28,7 @@ from backend.proxy.contracts import (
 )
 from backend.proxy.provider_transition.history import ProviderTransitionRepository
 from backend.proxy.provider_transition.session import (
+    ProviderTransitionError,
     ProviderTransitionSession,
     ReplayEntry,
     _http_request_headers,
@@ -228,7 +229,7 @@ async def test_transition_replays_every_acknowledged_command_in_order_with_id_ma
             },
             {"id": 2, "result": {"targetId": "actual-target"}},
             {"id": 3, "result": {"frameId": "actual-frame"}},
-            {"method": "Page.loadEventFired", "params": {"timestamp": 1.0}},
+            {"method": "Page.domContentEventFired", "params": {"timestamp": 1.0}},
         ]
     )
     facade = transition_session(upstream)
@@ -278,6 +279,38 @@ async def test_transition_replays_every_acknowledged_command_in_order_with_id_ma
     ]
     assert upstream.sent[1]["params"]["browserContextId"] == "actual-context"
     assert upstream.sent[2]["sessionId"] == "actual-session"
+
+
+@pytest.mark.asyncio
+async def test_transition_stops_waiting_when_replayed_navigation_returns_an_error() -> None:
+    upstream = FakeProviderSession(
+        [
+            {
+                "id": 1,
+                "error": {
+                    "code": -32000,
+                    "message": "Navigation failed",
+                },
+            }
+        ]
+    )
+    facade = transition_session(upstream)
+    facade._replay = [
+        ReplayEntry(
+            command={
+                "id": 1,
+                "method": "Page.navigate",
+                "params": {"url": "https://example.com"},
+            },
+            response={"id": 1, "result": {"frameId": "synthetic-frame"}},
+        )
+    ]
+
+    with pytest.raises(
+        ProviderTransitionError,
+        match="Replay failed for Page.navigate: provider command error",
+    ):
+        await facade._replay_history()
 
 
 @pytest.mark.asyncio

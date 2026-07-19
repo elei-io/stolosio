@@ -11,8 +11,11 @@ Every other non-bootstrap command is a browser requirement. HTTP transport failu
 non-success status, invalid HTML headers, excessive response size, or failed content
 sanity is also a browser requirement. Harbor asks the planner
 for Browserless or Browserbase, acquires one browser, replays safe HTTP state, verifies
-lifecycle catch-up, switches execution, and only then releases the HTTP source. A
-failed acquisition leaves the HTTP source intact while Harbor tries the next candidate.
+document readiness and execution-context catch-up, switches execution, and only then
+releases the HTTP source. Replay does not wait for every page subresource to finish.
+An immediate browser command error terminates that candidate without consuming the
+whole replay timeout. A failed acquisition leaves the HTTP source intact while Harbor
+tries the next candidate.
 
 After that escalation, Harbor forwards CDP opaquely and never switches browser
 providers. The provider's CDP response is authoritative. Commands with unsafe side
