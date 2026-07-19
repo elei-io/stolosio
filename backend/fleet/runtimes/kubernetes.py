@@ -136,7 +136,12 @@ class KubernetesRuntime:
             return
 
         instances = await self.list_instances(deployment)
-        stale = [instance for instance in instances if instance.configuration_stale]
+        stale = [
+            instance
+            for instance in instances
+            if instance.configuration_stale
+            or instance.session_capacity != session_capacity
+        ]
         await self._request(
             "PATCH",
             f"/apis/apps/v1/namespaces/{self._namespace}/statefulsets/{deployment}",

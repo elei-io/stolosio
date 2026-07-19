@@ -212,13 +212,31 @@ async def test_kubernetes_runtime_scopes_pod_lookup_before_delete() -> None:
 
 
 @pytest.mark.asyncio
-async def test_kubernetes_runtime_replaces_one_stale_pod_during_stable_reconfigure() -> None:
+@pytest.mark.parametrize(
+    ("pod_revision", "pod_capacity", "requested_capacity"),
+    [
+        ("old", "5", 5),
+        ("current", "5", 4),
+    ],
+)
+async def test_kubernetes_runtime_replaces_one_stale_pod_during_stable_reconfigure(
+    pod_revision: str,
+    pod_capacity: str,
+    requested_capacity: int,
+) -> None:
     requests: list[httpx.Request] = []
+    config_map = _config_map()
+    if pod_revision == "current":
+        data = config_map["data"]
+        assert isinstance(data, dict)
+        pod_revision = hashlib.sha256(
+            str(data["statefulset.json"]).encode()
+        ).hexdigest()
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.url.path.endswith("/configmaps/workload"):
-            return httpx.Response(200, json=_config_map())
+            return httpx.Response(200, json=config_map)
         if request.url.path.endswith("/statefulsets/browserless"):
             return httpx.Response(200, json={"metadata": {"name": "browserless"}})
         if request.method == "GET" and request.url.path.endswith("/pods"):
@@ -239,8 +257,8 @@ async def test_kubernetes_runtime_replaces_one_stale_pod_during_stable_reconfigu
                                     }
                                 ],
                                 "annotations": {
-                                    "harbor.openai.com/workload-revision": "old",
-                                    "harbor.openai.com/session-capacity": "5",
+                                    "harbor.openai.com/workload-revision": pod_revision,
+                                    "harbor.openai.com/session-capacity": pod_capacity,
                                 },
                             },
                             "status": {
@@ -270,7 +288,11 @@ async def test_kubernetes_runtime_replaces_one_stale_pod_during_stable_reconfigu
         client=client,
     )
 
-    await runtime.scale("browserless", 2, session_capacity=5)
+    await runtime.scale(
+        "browserless",
+        2,
+        session_capacity=requested_capacity,
+    )
 
     delete = next(request for request in requests if request.method == "DELETE")
     assert json.loads(delete.content) == {"preconditions": {"uid": "pod-1"}}
