@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -56,6 +57,8 @@ async def list_events(
     session_id: UUID | None = None,
     attempt_id: UUID | None = None,
     before: str | None = None,
+    occurred_after: datetime | None = None,
+    occurred_before: datetime | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> ActivityEventPageResponse:
     filters = _filters(
@@ -70,6 +73,8 @@ async def list_events(
         page = await request.app.state.activity_history.events(
             filters,
             before=before,
+            occurred_after=occurred_after,
+            occurred_before=occurred_before,
             limit=limit,
         )
     except ValueError as error:

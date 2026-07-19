@@ -1,6 +1,8 @@
 """Unified browser contracts."""
 
 from backend.proxy.contracts.provider import (
+    ACTIVE_PROVIDERS,
+    PROMOTION_PROVIDERS,
     ProviderAdapter,
     ProviderName,
     ProviderSession,
@@ -22,6 +24,8 @@ from backend.proxy.contracts.settings import (
 )
 
 __all__ = [
+    "ACTIVE_PROVIDERS",
+    "PROMOTION_PROVIDERS",
     "ProviderAdapter",
     "ProviderAttempt",
     "ProviderName",

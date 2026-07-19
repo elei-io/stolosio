@@ -1,0 +1,15 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: harbor-chart
+  namespace: harbor
+spec:
+  interval: 10m
+  url: oci://ghcr.io/ekkuleivonen/charts/harbor
+  ref:
+    semver: ">=0.1.0 <0.2.0"
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  secretRef:
+    name: ghcr-auth

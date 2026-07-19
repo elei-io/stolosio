@@ -1,10 +1,10 @@
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 from starlette.datastructures import QueryParams
 from starlette.websockets import WebSocketState
 
-from backend.proxy.capabilities import CapabilityRegistry
 from backend.proxy.contracts import (
     AttemptState,
     HarborSession,
@@ -12,18 +12,21 @@ from backend.proxy.contracts import (
     ProviderName,
     SessionState,
 )
+from backend.proxy.errors import ProviderUnavailable
 from backend.proxy.gateway import Gateway
 from backend.proxy.sessions import SessionLease
+from backend.proxy.settings import harbor_settings_resolver
 from backend.settings import Settings
 
 
 class FakeWebSocket:
-    def __init__(self, query: str = "harbor.provider.slug=chromium") -> None:
+    def __init__(self, query: str = "harbor.provider.slug=browserless") -> None:
         self.query_params = QueryParams(query)
         self.application_state = WebSocketState.CONNECTING
         self.client_state = WebSocketState.CONNECTING
         self.accepted = False
         self.denial_status: int | None = None
+        self.denial_headers: list[tuple[bytes, bytes]] = []
         self.closed: tuple[int, str] | None = None
         self._initial = True
         self._disconnected = asyncio.Event()
@@ -47,6 +50,7 @@ class FakeWebSocket:
 
     async def send_denial_response(self, response) -> None:
         self.denial_status = response.status_code
+        self.denial_headers = response.raw_headers
         self.application_state = WebSocketState.DISCONNECTED
 
     def disconnect(self) -> None:
@@ -84,13 +88,20 @@ class FakeAttemptLease:
             attempt_id="00000000-0000-4000-8000-000000000002",
             session_id="00000000-0000-4000-8000-000000000001",
             ordinal=1,
-            provider=ProviderName.CHROMIUM,
+            provider=ProviderName.BROWSERLESS,
             state=AttemptState.ACQUIRING,
         )
         self.released: list[tuple[bool, str]] = []
+        self.usage: list[dict] = []
 
     async def activate(self) -> None:
         return None
+
+    async def bind_provider_session(self, **kwargs) -> None:
+        return None
+
+    async def record_provider_usage(self, **kwargs) -> None:
+        self.usage.append(kwargs)
 
     async def release(self, *, failed: bool, reason: str) -> None:
         self.released.append((failed, reason))
@@ -116,22 +127,82 @@ async def test_provider_acquisition_failure_releases_both_admission_levels(
             raise ConnectionError("provider unavailable")
 
     monkeypatch.setattr(
-        "backend.proxy.gateway.get_provider_adapter", lambda provider: FailingAdapter()
+        "backend.proxy.gateway.get_provider_adapter",
+        lambda provider, endpoint=None: FailingAdapter(),
     )
     websocket = FakeWebSocket()
     gateway = Gateway(
         Sessions(),  # type: ignore[arg-type]
         Attempts(),  # type: ignore[arg-type]
-        CapabilityRegistry({}),
         Settings(session_cleanup_timeout_seconds=1),
     )
 
     await gateway.connect(websocket)  # type: ignore[arg-type]
 
     assert websocket.denial_status == 503
+    assert all(
+        name.lower() != b"content-length"
+        for name, _ in websocket.denial_headers
+    )
     assert not websocket.accepted
     assert attempt.released == [(True, "provider_unavailable")]
+    assert attempt.usage == [{"provider_ended_at": None}]
     assert session.released == [(True, "provider_unavailable")]
+
+
+@pytest.mark.asyncio
+async def test_bind_failure_closes_provider_before_releasing_attempt(
+    monkeypatch,
+) -> None:
+    session = FakeSessionLease()
+    attempt = FakeAttemptLease()
+
+    async def fail_bind(**kwargs) -> None:
+        raise ConnectionError("database unavailable")
+
+    attempt.bind_provider_session = fail_bind  # type: ignore[method-assign]
+
+    class Attempts:
+        async def acquire(self, harbor_session, resolved):
+            return attempt
+
+    class ProviderSession:
+        provider_session_id = "remote-session"
+        provider_started_at = datetime.now(UTC)
+        provider_ended_at = None
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+            self.provider_ended_at = datetime.now(UTC)
+
+    provider = ProviderSession()
+
+    class Adapter:
+        async def acquire(self, harbor_session, resolved):
+            return provider
+
+    monkeypatch.setattr(
+        "backend.proxy.gateway.get_provider_adapter",
+        lambda selected, endpoint=None: Adapter(),
+    )
+    _, resolved = await harbor_settings_resolver.resolve(
+        [("harbor.provider.slug", "browserless")]
+    )
+    gateway = Gateway(
+        None,  # type: ignore[arg-type]
+        Attempts(),  # type: ignore[arg-type]
+        Settings(session_cleanup_timeout_seconds=1),
+    )
+
+    with pytest.raises(ProviderUnavailable):
+        await gateway._prepare(session, resolved)
+
+    assert provider.closed
+    assert attempt.usage == [{"provider_ended_at": provider.provider_ended_at}]
+    assert attempt.released == [(True, "provider_unavailable")]
 
 
 @pytest.mark.asyncio
@@ -157,7 +228,6 @@ async def test_disconnect_while_queued_cancels_work_without_accepting() -> None:
     gateway = Gateway(
         Sessions(),  # type: ignore[arg-type]
         Attempts(),  # type: ignore[arg-type]
-        CapabilityRegistry({}),
         Settings(session_cleanup_timeout_seconds=1),
     )
     task = asyncio.create_task(gateway.connect(websocket))  # type: ignore[arg-type]

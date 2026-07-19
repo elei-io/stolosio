@@ -3,6 +3,7 @@ import {
   Anchor,
   Boxes,
   CircleDot,
+  Coins,
   Gauge,
   Globe2,
   Menu,
@@ -15,6 +16,7 @@ import { type ComponentType, useEffect, useState } from "react"
 
 import { useTheme } from "@/components/theme-provider"
 import { ActivityPage } from "@/components/activity-page"
+import { CostPage } from "@/components/cost-page"
 import { DomainsPage } from "@/components/domains-page"
 import { FleetsPage } from "@/components/fleets-page"
 import { OverviewPage } from "@/components/overview-page"
@@ -48,6 +50,12 @@ const navigationItems: NavigationItem[] = [
     href: "/sessions",
     icon: CircleDot,
     description: "Search session history and inspect individual timelines.",
+  },
+  {
+    label: "Cost",
+    href: "/cost",
+    icon: Coins,
+    description: "Provider usage, modeled spend, and CDP action attribution.",
   },
   {
     label: "Fleets",
@@ -245,13 +253,15 @@ export default function App() {
         {activeItem.href === "/overview" ? (
           <OverviewPage navigate={navigate} />
         ) : activeItem.href === "/activity" ? (
-          <ActivityPage />
+          <ActivityPage navigate={navigate} />
         ) : activeItem.href === "/fleets" ? (
           <FleetsPage provider={fleetProvider} navigate={navigate} />
         ) : activeItem.href === "/routing" ? (
           <RoutingPage />
         ) : activeItem.href === "/sessions" ? (
           <SessionsPage sessionId={sessionId} navigate={navigate} />
+        ) : activeItem.href === "/cost" ? (
+          <CostPage navigate={navigate} />
         ) : activeItem.href === "/domains" ? (
           <DomainsPage
             domainId={Number.isInteger(domainId) ? domainId : undefined}

@@ -11,7 +11,7 @@ from backend.proxy.routing import RoutingSettings
 
 class FakeRouting:
     def __init__(self) -> None:
-        self.value = RoutingSettings(ProviderName.CAMOUFOX, 100, 1, 1, 1)
+        self.value = RoutingSettings(ProviderName.BROWSERBASE, 100, 1, 1, 1)
         self.providers = [
             SimpleNamespace(
                 provider="http",
@@ -40,7 +40,6 @@ class FakeRouting:
 def test_routing_configuration_and_costs_are_operator_configurable() -> None:
     app = FastAPI()
     app.state.routing = FakeRouting()
-    app.state.environment = "development"
     app.include_router(router)
 
     with TestClient(app) as client:

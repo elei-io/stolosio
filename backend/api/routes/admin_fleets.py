@@ -15,6 +15,7 @@ class FleetConfigurationResponse(BaseModel):
     maximum_instances: int
     session_capacity_per_instance: int
     scale_down_cooldown_seconds: int
+    max_queued_attempts: int
     desired_instances: int
     configuration_version: int
     enabled: bool
@@ -28,6 +29,7 @@ class FleetConfigurationResponse(BaseModel):
             maximum_instances=value.maximum_instances,
             session_capacity_per_instance=value.session_capacity_per_instance,
             scale_down_cooldown_seconds=value.scale_down_cooldown_seconds,
+            max_queued_attempts=value.max_queued_attempts,
             desired_instances=value.desired_instances,
             configuration_version=value.configuration_version,
             enabled=value.enabled,
@@ -40,8 +42,9 @@ class FleetConfigurationUpdate(BaseModel):
 
     minimum_instances: int | None = Field(default=None, ge=0, le=100)
     maximum_instances: int | None = Field(default=None, ge=0, le=100)
-    session_capacity_per_instance: int | None = Field(default=None, ge=1, le=100)
+    session_capacity_per_instance: int | None = Field(default=None, ge=1)
     scale_down_cooldown_seconds: int | None = Field(default=None, ge=1)
+    max_queued_attempts: int | None = Field(default=None, ge=0)
     enabled: bool | None = None
 
     @model_validator(mode="after")
@@ -72,8 +75,6 @@ async def update_fleet(
     request: Request,
     actor: Annotated[str, Header(alias="X-Harbor-Actor")] = "local-admin",
 ) -> FleetConfigurationResponse:
-    if request.app.state.environment != "development":
-        raise HTTPException(status_code=404, detail="not found")
     try:
         value = await request.app.state.fleet_admin.update(
             provider,

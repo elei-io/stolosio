@@ -11,7 +11,6 @@ from backend.events.cdp import CdpEventObserver
 from backend.events.publisher import EventPublisher, NullEventPublisher
 from backend.proxy.adapters import get_provider_adapter
 from backend.proxy.attempts import AttemptAdmission, AttemptLease
-from backend.proxy.capabilities import CapabilityRegistry
 from backend.proxy.contracts import ProviderSelection, ResolvedSessionSettings
 from backend.proxy.errors import (
     ConnectionRejected,
@@ -20,12 +19,11 @@ from backend.proxy.errors import (
     ProviderUnavailable,
     SessionLeaseLost,
 )
-from backend.proxy.provider_transition import (
-    ProviderTransitionRepository,
-    ProviderTransitionSession,
+from backend.proxy.escalation import (
+    EscalatingProviderSession,
+    EscalationHistoryRepository,
 )
 from backend.proxy.routing import RoutingRepository
-from backend.proxy.runtime_compatibility import RuntimeCompatibilityRepository
 from backend.proxy.sessions import SessionAdmission, SessionLease
 from backend.proxy.settings import HarborSettingsResolver, harbor_settings_resolver
 from backend.proxy.transport import relay_cdp
@@ -39,23 +37,19 @@ class Gateway:
         self,
         sessions: SessionAdmission,
         attempts: AttemptAdmission,
-        capabilities: CapabilityRegistry,
         settings: Settings,
         event_publisher: EventPublisher | None = None,
         resolver: HarborSettingsResolver = harbor_settings_resolver,
-        transition_repository: ProviderTransitionRepository | None = None,
+        transition_repository: EscalationHistoryRepository | None = None,
         routing: RoutingRepository | None = None,
-        runtime_compatibility: RuntimeCompatibilityRepository | None = None,
     ) -> None:
         self._sessions = sessions
         self._attempts = attempts
-        self._capabilities = capabilities
         self._settings = settings
         self._event_publisher = event_publisher or NullEventPublisher()
         self._resolver = resolver
         self._transition_repository = transition_repository
         self._routing = routing
-        self._runtime_compatibility = runtime_compatibility
 
     async def connect(self, websocket: WebSocket) -> None:
         session: SessionLease | None = None
@@ -100,25 +94,21 @@ class Gateway:
                         reason = "client_disconnected"
                         return
                     if self._transition_repository is None:
-                        raise RuntimeError(
-                            "Provider transition repository is unavailable"
-                        )
+                        raise RuntimeError("Provider transition repository is unavailable")
                     observer = CdpEventObserver(
                         UUID(session.session.session_id),
                         None,
                         None,
                         self._event_publisher,
                     )
-                    provider_session = ProviderTransitionSession(
+                    provider_session = EscalatingProviderSession(
                         session.session,
                         resolved,
                         self._attempts,
-                        self._capabilities,
                         self._transition_repository,
                         observer,
                         self._settings,
                         self._routing,
-                        self._runtime_compatibility,
                     )
                 else:
                     preparation = asyncio.create_task(self._prepare(session, resolved))
@@ -172,8 +162,6 @@ class Gateway:
                 relay_cdp(
                     websocket,
                     provider_session,
-                    provider_session.provider,
-                    self._capabilities,
                     observer,
                 )
             )
@@ -208,13 +196,36 @@ class Gateway:
                 if failed and hasattr(provider_session, "fail"):
                     with suppress(Exception):
                         await provider_session.fail(reason)
-                with suppress(Exception):
-                    await provider_session.close()
+                await self._bounded_cleanup(provider_session.close(), "provider session")
             if attempt is not None:
+                command_summary = (
+                    observer.command_summary(UUID(attempt.attempt.attempt_id))
+                    if observer is not None
+                    else None
+                )
                 await self._bounded_cleanup(
-                    attempt.release(failed=failed, reason=reason),
+                    attempt.record_provider_usage(
+                        provider_ended_at=getattr(
+                            provider_session,
+                            "provider_ended_at",
+                            None,
+                        )
+                    ),
+                    "provider usage",
+                )
+                await self._bounded_cleanup(
+                    attempt.release(
+                        failed=failed,
+                        reason=reason,
+                        command_summary=command_summary,
+                    ),
                     "attempt",
                 )
+                if observer is not None:
+                    await self._bounded_cleanup(
+                        observer.flush_command_summary(UUID(attempt.attempt.attempt_id)),
+                        "command summary",
+                    )
             if session is not None:
                 await self._bounded_cleanup(
                     session.release(
@@ -223,6 +234,11 @@ class Gateway:
                     ),
                     "session",
                 )
+            if observer is not None:
+                await self._bounded_cleanup(
+                    observer.flush_command_summaries(),
+                    "command summaries",
+                )
 
     async def _prepare(
         self,
@@ -230,11 +246,10 @@ class Gateway:
         resolved: ResolvedSessionSettings,
     ):
         attempt: AttemptLease | None = None
+        provider_session = None
         try:
             if resolved.provider.slug is None:
-                raise RuntimeError(
-                    "Direct provider preparation requires a concrete provider"
-                )
+                raise RuntimeError("Direct provider preparation requires a concrete provider")
             total_timeout = (
                 self._settings.provider_queue_timeout_seconds
                 + self._settings.provider_acquisition_timeout_seconds
@@ -248,6 +263,18 @@ class Gateway:
                 try:
                     async with asyncio.timeout(self._settings.provider_acquisition_timeout_seconds):
                         provider_session = await adapter.acquire(session.session, resolved)
+                        await attempt.bind_provider_session(
+                            provider_session_id=getattr(
+                                provider_session,
+                                "provider_session_id",
+                                None,
+                            ),
+                            provider_started_at=getattr(
+                                provider_session,
+                                "provider_started_at",
+                                None,
+                            ),
+                        )
                 except TimeoutError as error:
                     raise ProviderAcquisitionTimeout from error
                 except NotImplementedError as error:
@@ -256,26 +283,52 @@ class Gateway:
                     raise ProviderUnavailable from error
                 return attempt, provider_session
         except TimeoutError as error:
-            if attempt is not None:
-                await self._bounded_cleanup(
-                    attempt.release(failed=True, reason="provider_acquisition_timeout"),
-                    "attempt",
-                )
+            await self._cleanup_preparation(
+                attempt,
+                provider_session,
+                reason="provider_acquisition_timeout",
+            )
             raise ProviderAcquisitionTimeout from error
         except BaseException as error:
-            if attempt is not None:
-                reason = (
-                    error.reason
-                    if isinstance(error, ConnectionRejected)
-                    else "client_disconnected"
-                    if isinstance(error, asyncio.CancelledError)
-                    else "provider_unavailable"
-                )
-                await self._bounded_cleanup(
-                    attempt.release(failed=True, reason=reason),
-                    "attempt",
-                )
+            reason = (
+                error.reason
+                if isinstance(error, ConnectionRejected)
+                else "client_disconnected"
+                if isinstance(error, asyncio.CancelledError)
+                else "provider_unavailable"
+            )
+            await self._cleanup_preparation(
+                attempt,
+                provider_session,
+                reason=reason,
+            )
             raise
+
+    async def _cleanup_preparation(
+        self,
+        attempt: AttemptLease | None,
+        provider_session,
+        *,
+        reason: str,
+    ) -> None:
+        if provider_session is not None:
+            await self._bounded_cleanup(provider_session.close(), "provider session")
+        if attempt is None:
+            return
+        await self._bounded_cleanup(
+            attempt.record_provider_usage(
+                provider_ended_at=getattr(
+                    provider_session,
+                    "provider_ended_at",
+                    None,
+                )
+            ),
+            "provider usage",
+        )
+        await self._bounded_cleanup(
+            attempt.release(failed=True, reason=reason),
+            "attempt",
+        )
 
     async def _bounded_cleanup(self, cleanup, resource: str) -> None:
         try:
@@ -300,7 +353,16 @@ class Gateway:
             return
         try:
             if websocket.application_state is WebSocketState.CONNECTING:
-                await websocket.send_denial_response(Response(status_code=error.status_code))
+                response = Response(status_code=error.status_code)
+                # Uvicorn supplies Content-Length for WebSocket denial responses.
+                # Starlette also adds it to Response, producing an invalid duplicate
+                # header that strict CDP clients reject before seeing the status.
+                response.raw_headers = [
+                    (name, value)
+                    for name, value in response.raw_headers
+                    if name.lower() != b"content-length"
+                ]
+                await websocket.send_denial_response(response)
             elif websocket.application_state is WebSocketState.CONNECTED:
                 await websocket.close(code=error.close_code, reason=error.reason)
         except (OSError, RuntimeError, WebSocketDisconnect):

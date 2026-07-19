@@ -60,11 +60,12 @@ one live connection but does not invent a total order across processes.
 
 Registered event families are:
 
-- Session lifecycle: requested, admitted, open, closing, closed, and failed.
-- Acquisition attempts: started, queued, acquiring, connected, closed, and failed.
-- CDP commands: received, succeeded, failed, and interrupted.
-- Browser observations: navigation, main-document response, page lifecycle, page crash,
-  and provider disconnect.
+- Session lifecycle: open, closed, and failed.
+- Acquisition attempts: connected, closed, and failed.
+- CDP commands: one bounded per-attempt summary, plus individual failures and
+  interruptions.
+- Browser observations: main-document navigation/response/failure, redirects, content
+  size, page crash, console/JavaScript failures, and provider disconnect.
 
 Adding an event requires a typed payload and normalization tests. Arbitrary event names
 or unvalidated payload fields are rejected.
@@ -79,8 +80,11 @@ Protocol and browser observations are published to JetStream without blocking CD
 transport. The maintenance recorder consumes them durably and writes them to PostgreSQL
 idempotently. Failed deliveries are bounded and use sanitized dead-letter records.
 
-Retention is bounded independently for JetStream event detail, PostgreSQL event rows,
-terminal sessions, and domain projections.
+JetStream and PostgreSQL retain the same compact event contract. There are no
+high-volume and low-volume event classes or individual successful-command records.
+Operational entities and factual projections retain their own product state. The
+transactional attempt command summary is cleared after its bounded aggregate has
+been projected.
 
 ## Evidence and projections
 
@@ -88,8 +92,9 @@ The recorder maintains factual projections for:
 
 - Seen domains.
 - Domains observed during each session.
-- Seen CDP methods.
-- CDP method counts per domain and session.
+- Provider-and-method command counts, failures, interruptions, latency, attributed
+  browser time, and attributed cost. Method identity is capped per provider, with
+  overflow folded into `__other__`.
 
 These projections contain no confidence scores or recommendations. Their future use is
 described in [ANALYTICS.md](../ANALYTICS.md) and no-browser policy is described in
@@ -142,21 +147,27 @@ GET /v1/admin/events
 GET /v1/admin/events/stream
 ```
 
+It reads cumulative browser-time attribution through:
+
+```text
+GET /v1/admin/command-costs
+```
+
 The live endpoint uses SSE because activity delivery is one-way. JetStream stream
 sequences provide resumable cursors while PostgreSQL remains the historical source.
 
 ## DEBUG delivery
 
-The initial downstream DEBUG contract is:
+The downstream DEBUG contract is:
 
 ```text
 WS /v1/debug?harbor.session.reference=<uuid>
 ```
 
-The stream resolves the caller-provided reference to Harbor's internal session, replays
-retained PostgreSQL history, removes duplicate event IDs, and follows the JetStream live
-tail until the session terminates. Buffers are bounded; a slow consumer is disconnected
-instead of slowing browser traffic.
+The stream resolves the caller-provided reference to Harbor's internal session and uses
+an ephemeral ordered JetStream consumer to replay and follow that session until it
+terminates. Buffers are bounded; a slow consumer is disconnected instead of slowing
+browser traffic.
 
 See [DEBUG.md](../DEBUG.md) for the observation and redaction contract.
 

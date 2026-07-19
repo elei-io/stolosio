@@ -7,7 +7,6 @@ from backend.db.models import (
     Domain,
     GatewaySession,
     SessionDomain,
-    SessionDomainCommand,
 )
 from backend.proxy.session_queries import SessionFilters, SessionQueryService
 
@@ -48,7 +47,7 @@ async def test_session_queries_return_summaries_and_redacted_detail(
             setting_sources={"provider": "automatic"},
             state="closed",
             selection_reason="cheapest_eligible",
-            actual_cost_units=2,
+            modeled_cost_units=2,
             created_at=now - timedelta(seconds=9),
             finished_at=now,
         )
@@ -61,11 +60,6 @@ async def test_session_queries_return_summaries_and_redacted_detail(
                     first_seen_at=now,
                     last_seen_at=now,
                 ),
-                SessionDomainCommand(
-                    session_id=session.id,
-                    domain_id=domain.id,
-                    method="Page.navigate",
-                ),
             ]
         )
 
@@ -74,13 +68,10 @@ async def test_session_queries_return_summaries_and_redacted_detail(
     detail = await service.session(session.id)
 
     assert page.sessions[0]["providers"] == ["http"]
-    assert page.sessions[0]["domains"] == [
-        {"id": domain.id, "hostname": "example.test"}
-    ]
+    assert page.sessions[0]["domains"] == [{"id": domain.id, "hostname": "example.test"}]
     assert page.sessions[0]["duration_seconds"] == 10
     assert detail is not None
     assert detail["requested_setting_keys"] == ["locale", "proxy"]
-    assert detail["command_count"] == 1
     assert detail["attempts"][0]["resolved_setting_keys"] == ["proxy"]
     assert "requested_settings" not in detail
     assert "resolved_settings" not in detail["attempts"][0]

@@ -1,0 +1,95 @@
+image:
+  repository: ghcr.io/ekkuleivonen/harbor
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+webImage:
+  repository: ghcr.io/ekkuleivonen/harbor-web
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+database:
+  existingSecret: ""
+  urlSecretKey: database-url
+
+nats:
+  existingSecret: ""
+  urlSecretKey: nats-url
+
+browserbase:
+  apiUrl: https://api.browserbase.com/v1
+  existingSecret: ""
+  apiKeySecretKey: api-key
+  projectIdSecretKey: project-id
+
+api:
+  replicas: 2
+  service:
+    type: LoadBalancer
+    port: 8411
+    annotations: {}
+    loadBalancerClass: ""
+  resources: {}
+
+web:
+  replicas: 2
+  service:
+    type: LoadBalancer
+    port: 80
+    annotations: {}
+    loadBalancerClass: ""
+  resources: {}
+
+maintenance:
+  resources: {}
+
+health:
+  resources: {}
+
+fleetController:
+  reconcileIntervalSeconds: 1
+  observationTtlSeconds: 5
+  instanceStartupTimeoutSeconds: 30
+  metricsPort: 9101
+  resources: {}
+
+browserless:
+  imagePullSecrets: []
+  image:
+    repository: ghcr.io/browserless/chromium
+    tag: v2.55.0
+    pullPolicy: IfNotPresent
+  service:
+    port: 3000
+  timeoutMilliseconds: 600000
+  terminationGracePeriodSeconds: 60
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  podAnnotations: {}
+  podLabels: {}
+  securityContext: {}
+  containerSecurityContext: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+affinity: {}
+tolerations: []
+
+nameOverride: ""
+fullnameOverride: ""

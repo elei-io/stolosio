@@ -21,6 +21,7 @@ class FleetConfiguration:
     maximum_instances: int
     session_capacity_per_instance: int
     scale_down_cooldown_seconds: int
+    max_queued_attempts: int
     desired_instances: int
     configuration_version: int
     enabled: bool
@@ -47,6 +48,7 @@ class ObservedInstance:
     endpoint: str
     state: FleetInstanceState
     started_at: datetime | None = None
+    session_capacity: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +58,8 @@ class RuntimeInstance:
     instance_id: str
     address: str
     started_at: datetime | None = None
+    session_capacity: int | None = None
+    configuration_stale: bool = False
 
 
 class FleetRuntime(Protocol):
@@ -66,7 +70,18 @@ class FleetRuntime(Protocol):
 
     async def list_instances(self, deployment: str) -> list[RuntimeInstance]: ...
 
-    async def scale(self, deployment: str, replicas: int) -> None: ...
+    async def scale(
+        self,
+        deployment: str,
+        replicas: int,
+        *,
+        session_capacity: int,
+    ) -> None: ...
+
+    def scale_down_candidate(
+        self,
+        instances: list[RuntimeInstance],
+    ) -> RuntimeInstance | None: ...
 
     async def remove(self, deployment: str, instance_id: str) -> None: ...
 

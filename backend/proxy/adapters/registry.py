@@ -1,6 +1,5 @@
-from backend.proxy.adapters.camoufox import CamoufoxAdapter
-from backend.proxy.adapters.cdp import DirectCdpAdapter, DiscoveredCdpAdapter
-from backend.proxy.adapters.lightpanda import LightpandaAdapter
+from backend.proxy.adapters.browserbase import BrowserbaseAdapter
+from backend.proxy.adapters.cdp import DirectCdpAdapter
 from backend.proxy.contracts import ProviderAdapter, ProviderName
 from backend.settings import settings
 
@@ -11,11 +10,18 @@ def get_provider_adapter(provider: ProviderName, *, endpoint: str | None = None)
             from backend.proxy.adapters.http import HttpAdapter
 
             return HttpAdapter()
-        case ProviderName.CHROMIUM:
-            return DiscoveredCdpAdapter(provider, endpoint or str(settings.chromium_url))
         case ProviderName.BROWSERLESS:
-            return DirectCdpAdapter(provider, endpoint or str(settings.browserless_url))
-        case ProviderName.LIGHTPANDA:
-            return LightpandaAdapter(endpoint or str(settings.lightpanda_url))
-        case ProviderName.CAMOUFOX:
-            return CamoufoxAdapter(endpoint or str(settings.camoufox_url))
+            return DirectCdpAdapter(
+                provider,
+                endpoint or str(settings.browserless_url),
+                session_timeout_seconds=settings.browserless_session_timeout_seconds,
+            )
+        case ProviderName.BROWSERBASE:
+            return BrowserbaseAdapter(
+                api_url=str(settings.browserbase_api_url).rstrip("/"),
+                api_key=settings.browserbase_api_key,
+                project_id=settings.browserbase_project_id,
+                timeout_seconds=settings.browserbase_session_timeout_seconds,
+            )
+        case _:
+            raise ValueError(f"Unsupported provider: {provider}")

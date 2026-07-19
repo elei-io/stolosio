@@ -28,11 +28,11 @@ async def test_omitted_provider_stays_unresolved_until_automatic_selection() -> 
 @pytest.mark.asyncio
 async def test_resolves_explicit_provider_and_ignores_non_harbor_keys() -> None:
     requested, resolved = await harbor_settings_resolver.resolve(
-        [("client.setting", "value"), ("harbor.provider.slug", "lightpanda")]
+        [("client.setting", "value"), ("harbor.provider.slug", "browserbase")]
     )
 
-    assert requested.provider is ProviderSelection.LIGHTPANDA
-    assert resolved.provider.slug is ProviderName.LIGHTPANDA
+    assert requested.provider is ProviderSelection.BROWSERBASE
+    assert resolved.provider.slug is ProviderName.BROWSERBASE
     assert resolved.sources["harbor.provider.slug"] is SettingSource.EXPLICIT
 
 
@@ -70,7 +70,7 @@ async def test_resolver_uses_one_context_aware_planner_for_automatic_fields() ->
     class Planner:
         async def plan(self, context, requested, defaults):
             seen.append(context)
-            return {"harbor.provider.slug": ProviderName.LIGHTPANDA}
+            return {"harbor.provider.slug": ProviderName.BROWSERBASE}
 
     resolver = HarborSettingsResolver(harbor_settings_registry, Planner())
     context = SettingsResolutionContext(target_url="https://example.com")
@@ -78,7 +78,7 @@ async def test_resolver_uses_one_context_aware_planner_for_automatic_fields() ->
     _, resolved = await resolver.resolve([], context)
 
     assert seen == [context]
-    assert resolved.provider.slug is ProviderName.LIGHTPANDA
+    assert resolved.provider.slug is ProviderName.BROWSERBASE
     assert resolved.sources["harbor.provider.slug"] is SettingSource.AUTO
 
 
@@ -86,7 +86,7 @@ async def test_resolver_uses_one_context_aware_planner_for_automatic_fields() ->
 async def test_explicit_value_takes_precedence_over_the_automatic_plan() -> None:
     class Planner:
         async def plan(self, context, requested, defaults):
-            return {"harbor.provider.slug": ProviderName.LIGHTPANDA}
+            return {"harbor.provider.slug": ProviderName.BROWSERBASE}
 
     resolver = HarborSettingsResolver(harbor_settings_registry, Planner())
 
@@ -101,10 +101,13 @@ async def test_explicit_value_takes_precedence_over_the_automatic_plan() -> None
     "query",
     [
         [("harbor.provider.slug", "")],
-        [("harbor.provider.slug", "CHROMIUM")],
+        [("harbor.provider.slug", "BROWSERLESS")],
         [("harbor.provider.slug", "unknown")],
+        [("harbor.provider.slug", "browser")],
+        [("harbor.provider.slug", "premium")],
+        [("harbor.provider.slug", "none")],
         [("harbor.unknown", "value")],
-        [("harbor.provider", "chromium")],
+        [("harbor.provider", "browserless")],
         [("harbor.provider.slug", "auto"), ("harbor.provider.slug", "auto")],
         [("harbor.session.reference", "not-a-uuid")],
         [("harbor.session.reference", "auto")],

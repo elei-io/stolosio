@@ -1,4 +1,3 @@
-import math
 from datetime import datetime
 from enum import StrEnum
 
@@ -8,10 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.db.models import (
     AcquisitionAttempt,
+    ExternalProviderLimit,
     GatewaySession,
     ProviderFleet,
     ProviderInstance,
-    ProviderRoutingProfile,
     ProviderState,
     SessionEventRecord,
 )
@@ -22,6 +21,7 @@ from backend.proxy.contracts import (
     ProviderName,
     SessionState,
 )
+from backend.proxy.postgres.usage import finalize_attempt_usage
 
 
 class AttemptAdmissionStatus(StrEnum):
@@ -49,8 +49,6 @@ class PostgresAttemptRepository:
         attempt_id: str,
         provider: ProviderName,
         *,
-        max_active: int,
-        max_queued: int,
         resolved_settings: dict[str, object],
         setting_sources: dict[str, object],
         replacement_for: str | None = None,
@@ -74,17 +72,13 @@ class PostgresAttemptRepository:
                 )
             )
             if replacement_for is None and live_for_session:
-                raise RuntimeError(
-                    "Harbor session already has a live acquisition attempt"
-                )
+                raise RuntimeError("Harbor session already has a live acquisition attempt")
             if replacement_for is not None and (
                 len(live_for_session) != 1
                 or live_for_session[0].id != replacement_for
                 or live_for_session[0].state != AttemptState.ACTIVE.value
             ):
-                raise RuntimeError(
-                    "Harbor transition source is not the session's active attempt"
-                )
+                raise RuntimeError("Harbor transition source is not the session's active attempt")
             ordinal = (
                 int(
                     await database.scalar(
@@ -108,7 +102,6 @@ class PostgresAttemptRepository:
             )
             database.add(row)
             await database.flush()
-            self._event(database, row, "attempt.started", now)
 
             queued = await self._count(
                 database,
@@ -117,6 +110,15 @@ class PostgresAttemptRepository:
                 now,
             )
             managed = await database.get(ProviderFleet, provider.value)
+            external = await database.get(ExternalProviderLimit, provider.value)
+            if managed is not None:
+                max_active = 0
+                max_queued = managed.max_queued_attempts if managed.enabled else 0
+            elif external is not None:
+                max_active = external.max_active_sessions if external.enabled else 0
+                max_queued = external.max_queued_attempts if external.enabled else 0
+            else:
+                raise RuntimeError(f"Provider capacity is not configured for {provider.value}")
             instance = (
                 await self._select_instance(database, provider.value, now)
                 if managed is not None and managed.enabled and queued == 0
@@ -124,20 +126,16 @@ class PostgresAttemptRepository:
             )
             active = await self._count(database, provider.value, _ACTIVE_ATTEMPT_STATES, now)
             can_acquire = queued == 0 and (
-                instance is not None
-                if managed is not None
-                else active < max_active
+                instance is not None if managed is not None else active < max_active
             )
             if can_acquire:
                 row.state = AttemptState.ACQUIRING.value
                 row.acquiring_at = now
                 row.provider_instance_id = instance.id if instance is not None else None
-                self._event(database, row, "attempt.acquiring", now)
                 status = AttemptAdmissionStatus.ACQUIRING
             elif queued < max_queued:
                 row.state = AttemptState.QUEUED.value
                 row.queued_at = now
-                self._event(database, row, "attempt.queued", now)
                 status = AttemptAdmissionStatus.QUEUED
             else:
                 row.state = AttemptState.FAILED.value
@@ -157,8 +155,6 @@ class PostgresAttemptRepository:
         self,
         session: HarborSession,
         attempt: ProviderAttempt,
-        *,
-        max_active: int,
     ) -> ProviderAttempt | None:
         async with self._sessions.begin() as database:
             now = await self._now(database)
@@ -191,6 +187,15 @@ class PostgresAttemptRepository:
             if head != attempt.attempt_id:
                 return None
             managed = await database.get(ProviderFleet, attempt.provider.value)
+            external = await database.get(ExternalProviderLimit, attempt.provider.value)
+            if managed is None and external is None:
+                raise RuntimeError(
+                    f"Provider capacity is not configured for {attempt.provider.value}"
+                )
+            if external is not None:
+                if not external.enabled:
+                    return None
+                max_active = external.max_active_sessions
             instance = (
                 await self._select_instance(database, attempt.provider.value, now)
                 if managed is not None and managed.enabled
@@ -212,7 +217,6 @@ class PostgresAttemptRepository:
             row.state = AttemptState.ACQUIRING.value
             row.acquiring_at = now
             row.provider_instance_id = instance.id if instance is not None else None
-            self._event(database, row, "attempt.acquiring", now)
             return self._contract(row, instance.endpoint if instance is not None else None)
 
     async def activate(self, attempt: ProviderAttempt) -> bool:
@@ -226,12 +230,53 @@ class PostgresAttemptRepository:
             self._event(database, row, "attempt.connected", now)
             return True
 
+    async def bind_provider_session(
+        self,
+        attempt: ProviderAttempt,
+        *,
+        provider_session_id: str | None,
+        provider_started_at: datetime | None,
+    ) -> None:
+        async with self._sessions.begin() as database:
+            row = await database.get(
+                AcquisitionAttempt,
+                attempt.attempt_id,
+                with_for_update=True,
+            )
+            if row is None:
+                return
+            row.provider_session_id = provider_session_id
+            row.provider_started_at = provider_started_at
+
+    async def record_provider_usage(
+        self,
+        attempt: ProviderAttempt,
+        *,
+        provider_ended_at: datetime | None,
+    ) -> None:
+        async with self._sessions.begin() as database:
+            now = await self._now(database)
+            row = await database.get(
+                AcquisitionAttempt,
+                attempt.attempt_id,
+                with_for_update=True,
+            )
+            if row is None:
+                return
+            row.provider_ended_at = provider_ended_at or now
+            if row.provider_started_at is not None:
+                row.provider_reported_ms = max(
+                    0,
+                    round((row.provider_ended_at - row.provider_started_at).total_seconds() * 1000),
+                )
+
     async def finish(
         self,
         attempt: ProviderAttempt,
         *,
         failed: bool,
         reason: str,
+        command_summary: dict[str, object] | None = None,
     ) -> bool:
         async with self._sessions.begin() as database:
             now = await self._now(database)
@@ -243,13 +288,9 @@ class PostgresAttemptRepository:
                 return True
             row.state = AttemptState.FAILED.value if failed else AttemptState.COMPLETED.value
             row.finished_at = now
+            await finalize_attempt_usage(database, row, now)
+            row.command_summary = command_summary
             row.terminal_reason = reason
-            start = row.active_at or row.acquiring_at
-            if start is not None:
-                profile = await database.get(ProviderRoutingProfile, row.provider)
-                if profile is not None:
-                    seconds = max(0.0, (now - start).total_seconds())
-                    row.actual_cost_units = math.ceil(seconds * profile.cost_units_per_second)
             self._event(
                 database,
                 row,
@@ -333,6 +374,7 @@ class PostgresAttemptRepository:
         for row in rows:
             row.state = AttemptState.FAILED.value
             row.finished_at = now
+            await finalize_attempt_usage(database, row, now)
             row.terminal_reason = "session_lease_expired"
             self._event(
                 database,
@@ -430,15 +472,10 @@ class PostgresAttemptRepository:
         reason: str | None = None,
     ) -> None:
         payload: dict[str, object] = {}
-        if event_type == "attempt.started":
-            payload = {
-                "resolved_settings": row.resolved_settings,
-                "setting_sources": row.setting_sources,
-            }
         if reason is not None:
             payload["reason"] = reason
-        if row.actual_cost_units is not None:
-            payload["cost_units"] = row.actual_cost_units
+        if row.modeled_cost_units is not None:
+            payload["cost_units"] = row.modeled_cost_units
         database.add(
             SessionEventRecord(
                 session_id=row.session_id,

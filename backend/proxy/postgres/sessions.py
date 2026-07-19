@@ -13,6 +13,7 @@ from backend.db.models import (
     SessionEventRecord,
 )
 from backend.proxy.contracts import AttemptState, HarborSession, SessionState
+from backend.proxy.postgres.usage import finalize_attempt_usage
 
 
 class SessionAdmissionStatus(StrEnum):
@@ -70,7 +71,6 @@ class PostgresSessionRepository:
             )
             database.add(row)
             await database.flush()
-            self._event(database, row, SessionState.REQUESTED, now)
 
             active = await database.scalar(
                 select(func.count())
@@ -96,7 +96,6 @@ class PostgresSessionRepository:
             row.state = SessionState.ADMITTED.value
             row.admitted_at = now
             row.lease_expires_at = now + timedelta(seconds=self._settings.lease_seconds)
-            self._event(database, row, SessionState.ADMITTED, now)
             return SessionAdmissionStatus.ADMITTED
 
     async def heartbeat(self, session: HarborSession) -> bool:
@@ -142,12 +141,42 @@ class PostgresSessionRepository:
             row = await self._owned(database, session, for_update=True)
             if row is None:
                 return False
-            if row.state in (SessionState.CLOSED.value, SessionState.FAILED.value):
+            already_terminal = row.state in (
+                SessionState.CLOSED.value,
+                SessionState.FAILED.value,
+            )
+            cleanup_failed = failed or row.state == SessionState.FAILED.value
+            cleanup_reason = row.terminal_reason or reason
+            attempts = list(
+                await database.scalars(
+                    select(AcquisitionAttempt)
+                    .where(
+                        AcquisitionAttempt.session_id == row.id,
+                        AcquisitionAttempt.state.in_(_LIVE_ATTEMPT_STATES),
+                    )
+                    .order_by(AcquisitionAttempt.id)
+                    .with_for_update()
+                )
+            )
+            for attempt in attempts:
+                await finalize_attempt_usage(database, attempt, now)
+                attempt.state = (
+                    AttemptState.FAILED.value if cleanup_failed else AttemptState.COMPLETED.value
+                )
+                attempt.finished_at = now
+                attempt.terminal_reason = cleanup_reason
+                self._attempt_event(
+                    database,
+                    attempt,
+                    "attempt.failed" if cleanup_failed else "attempt.closed",
+                    now,
+                    reason=cleanup_reason if cleanup_failed else None,
+                )
+            if already_terminal:
                 return True
             if not failed and row.state == SessionState.OPEN.value:
                 row.state = SessionState.CLOSING.value
                 row.closing_at = now
-                self._event(database, row, SessionState.CLOSING, now)
 
             terminal = SessionState.FAILED if failed else SessionState.CLOSED
             row.state = terminal.value
@@ -226,6 +255,7 @@ class PostgresSessionRepository:
                 )
             )
             for attempt in attempts:
+                await finalize_attempt_usage(database, attempt, now)
                 attempt.state = AttemptState.FAILED.value
                 attempt.finished_at = now
                 attempt.terminal_reason = "session_lease_expired"
@@ -280,8 +310,6 @@ class PostgresSessionRepository:
         reason: str | None = None,
     ) -> None:
         payload: dict[str, object] = {}
-        if state is SessionState.REQUESTED:
-            payload["requested_settings"] = row.requested_settings
         if reason is not None:
             payload["reason"] = reason
         database.add(

@@ -30,12 +30,7 @@ def managed_browser_controller() -> Iterator[None]:
         stderr=subprocess.DEVNULL,
     )
     originals = {}
-    providers = {
-        "chromium": 2,
-        "browserless": 1,
-        "lightpanda": 1,
-        "camoufox": 1,
-    }
+    providers = {"browserless": 2}
     for provider in providers:
         original_response = httpx.get(f"{api}/v1/admin/fleets/{provider}", timeout=5)
         original_response.raise_for_status()
@@ -116,18 +111,9 @@ def managed_browser_controller() -> Iterator[None]:
                     "up",
                     "-d",
                     "--scale",
-                    "chromium=1",
-                    "--scale",
                     "browserless=1",
-                    "--scale",
-                    "lightpanda=1",
-                    "--scale",
-                    "camoufox=1",
                     "--no-recreate",
-                    "chromium",
                     "browserless",
-                    "lightpanda",
-                    "camoufox",
                 ],
                 cwd=root,
                 check=True,

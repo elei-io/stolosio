@@ -1,9 +1,7 @@
 from dataclasses import dataclass
 
-from backend.fleet.providers import MANAGED_FLEETS, managed_fleet_definition
 from backend.fleet.repository import FleetRepository
 from backend.proxy.contracts import ProviderName
-from backend.settings import Settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,44 +11,29 @@ class FleetBootstrapConfiguration:
     maximum_instances: int
     session_capacity_per_instance: int
     scale_down_cooldown_seconds: int
+    max_queued_attempts: int
 
 
-def managed_fleet_configurations(settings: Settings) -> tuple[FleetBootstrapConfiguration, ...]:
-    return tuple(
+def managed_fleet_configurations() -> tuple[FleetBootstrapConfiguration, ...]:
+    return (
         FleetBootstrapConfiguration(
-            provider=provider,
-            minimum_instances=getattr(settings, f"{provider.value}_minimum_instances"),
-            maximum_instances=getattr(settings, f"{provider.value}_maximum_instances"),
-            session_capacity_per_instance=getattr(
-                settings,
-                f"{provider.value}_session_capacity_per_instance",
-            ),
-            scale_down_cooldown_seconds=getattr(
-                settings,
-                f"{provider.value}_scale_down_cooldown_seconds",
-            ),
-        )
-        for provider in MANAGED_FLEETS
+            provider=ProviderName.BROWSERLESS,
+            minimum_instances=1,
+            maximum_instances=4,
+            session_capacity_per_instance=5,
+            scale_down_cooldown_seconds=30,
+            max_queued_attempts=100,
+        ),
     )
 
 
-async def ensure_managed_fleets(repository: FleetRepository, settings: Settings) -> None:
-    for configuration in managed_fleet_configurations(settings):
-        definition = managed_fleet_definition(configuration.provider)
-        if (
-            definition is not None
-            and definition.maximum_session_capacity is not None
-            and configuration.session_capacity_per_instance
-            > definition.maximum_session_capacity
-        ):
-            raise ValueError(
-                f"{configuration.provider.value} supports at most "
-                f"{definition.maximum_session_capacity} session per instance"
-            )
+async def ensure_managed_fleets(repository: FleetRepository) -> None:
+    for configuration in managed_fleet_configurations():
         await repository.ensure_fleet(
             configuration.provider,
             minimum_instances=configuration.minimum_instances,
             maximum_instances=configuration.maximum_instances,
             session_capacity_per_instance=configuration.session_capacity_per_instance,
             scale_down_cooldown_seconds=configuration.scale_down_cooldown_seconds,
+            max_queued_attempts=configuration.max_queued_attempts,
         )

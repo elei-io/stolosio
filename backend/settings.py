@@ -12,7 +12,6 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Harbor"
-    environment: str = "development"
     database_url: str = "postgresql+asyncpg://harbor:harbor@localhost:5433/harbor"
     nats_url: AnyUrl = AnyUrl("nats://localhost:4223")
     nats_connect_timeout_seconds: float = 1
@@ -35,18 +34,18 @@ class Settings(BaseSettings):
     domain_history_retention_days: int = 365
     retention_delete_batch_size: int = 10_000
     browserless_url: AnyUrl = AnyUrl("ws://localhost:3000")
-    camoufox_url: AnyUrl = AnyUrl("ws://localhost:1234/harbor")
-    chromium_url: AnyUrl = AnyUrl("ws://localhost:9223")
-    lightpanda_url: AnyUrl = AnyUrl("ws://localhost:9222")
+    browserless_session_timeout_seconds: int = 600
+    browserbase_api_url: AnyUrl = AnyUrl("https://api.browserbase.com/v1")
+    browserbase_api_key: str = ""
+    browserbase_project_id: str | None = None
+    browserbase_session_timeout_seconds: int = 600
     harbor_max_active_sessions: int = 100
     session_lease_seconds: float = 30
     session_heartbeat_seconds: float = 10
     provider_queue_poll_ms: int = 1000
     provider_queue_timeout_seconds: float = 30
-    provider_acquisition_timeout_seconds: int = 10
+    provider_acquisition_timeout_seconds: int = 30
     session_cleanup_timeout_seconds: float = 2
-    http_max_active_sessions: int = 100
-    http_max_queued_attempts: int = 100
     http_request_timeout_seconds: float = 20
     http_max_response_bytes: int = 10 * 1024 * 1024
     http_user_agent: str = "HarborBot/0.1 (https://github.com/ekkuleivonen/harbor)"
@@ -60,27 +59,6 @@ class Settings(BaseSettings):
     health_poll_seconds: float = 1
     health_lease_seconds: float = 60
     health_browser_settle_seconds: float = 8
-    chromium_minimum_instances: int = 1
-    chromium_maximum_instances: int = 4
-    chromium_session_capacity_per_instance: int = 4
-    chromium_scale_down_cooldown_seconds: int = 30
-    chromium_max_queued_attempts: int = 100
-    browserless_minimum_instances: int = 1
-    browserless_maximum_instances: int = 4
-    browserless_session_capacity_per_instance: int = 5
-    browserless_scale_down_cooldown_seconds: int = 30
-    browserless_max_queued_attempts: int = 100
-    lightpanda_max_active_sessions: int = 1
-    lightpanda_max_queued_attempts: int = 100
-    lightpanda_minimum_instances: int = 1
-    lightpanda_maximum_instances: int = 4
-    lightpanda_session_capacity_per_instance: int = 1
-    lightpanda_scale_down_cooldown_seconds: int = 30
-    camoufox_minimum_instances: int = 1
-    camoufox_maximum_instances: int = 4
-    camoufox_session_capacity_per_instance: int = 1
-    camoufox_scale_down_cooldown_seconds: int = 30
-    camoufox_max_queued_attempts: int = 100
     fleet_reconcile_interval_seconds: float = 1
     fleet_observation_ttl_seconds: float = 5
     fleet_instance_startup_timeout_seconds: float = 30
@@ -88,10 +66,11 @@ class Settings(BaseSettings):
     fleet_controller_metrics_port: int = 9101
     fleet_compose_project_name: str = "harbor"
     fleet_compose_workdir: str = "."
-    chromium_fleet_compose_service: str = "chromium"
     browserless_fleet_compose_service: str = "browserless"
-    lightpanda_fleet_compose_service: str = "lightpanda"
-    camoufox_fleet_compose_service: str = "camoufox"
+    kubernetes_namespace: str = "harbor"
+    kubernetes_browserless_statefulset: str = "harbor-browserless"
+    kubernetes_browserless_workload_config_map: str = "harbor-browserless-workload"
+    kubernetes_browserless_headless_service: str = "harbor-browserless-headless"
 
 
 @lru_cache

@@ -6,30 +6,21 @@ from backend.proxy.contracts import ProviderName
 
 
 @pytest.mark.parametrize(
-    ("provider", "method"),
+    "provider",
     [
-        (ProviderName.CHROMIUM, "Page.navigate"),
-        (ProviderName.BROWSERLESS, "Page.navigate"),
-        (ProviderName.BROWSERLESS, "Page.setFontFamilies"),
-        (ProviderName.LIGHTPANDA, "Page.navigate"),
-        (ProviderName.LIGHTPANDA, "Target.closeTarget"),
+        ProviderName.BROWSERLESS,
+        ProviderName.BROWSERBASE,
     ],
 )
-def test_explicitly_verified_provider_method_is_supported(
+def test_browser_providers_treat_every_method_as_native_passthrough(
     provider: ProviderName,
-    method: str,
 ) -> None:
-    assert capability_registry.supports(provider, method)
+    assert capability_registry.supports(provider, "Future.methodAddedAfterHarborRelease")
 
 
-@pytest.mark.parametrize("provider", list(ProviderName))
-def test_unverified_method_is_not_supported(provider: ProviderName) -> None:
-    assert not capability_registry.supports(provider, "Page.printToPDF")
-
-
-def test_camoufox_enables_only_implemented_mapping_baseline() -> None:
-    assert capability_registry.supports(ProviderName.CAMOUFOX, "Page.navigate")
-    assert not capability_registry.supports(ProviderName.CAMOUFOX, "Page.printToPDF")
+def test_http_remains_an_explicitly_bounded_facade() -> None:
+    assert capability_registry.supports(ProviderName.HTTP, "Page.navigate")
+    assert not capability_registry.supports(ProviderName.HTTP, "Page.printToPDF")
 
 
 def test_http_method_name_does_not_authorize_arbitrary_evaluation() -> None:
@@ -67,27 +58,15 @@ def test_http_content_capability_requires_the_exact_executable_shape() -> None:
     )
 
 
-def test_script_execution_capability_depends_on_requested_value() -> None:
+def test_http_script_execution_capability_requires_a_boolean() -> None:
     disabled = {"value": True}
-    enabled = {"value": False}
-
     assert capability_registry.supports(
         ProviderName.HTTP,
         "Emulation.setScriptExecutionDisabled",
         disabled,
     )
-    assert capability_registry.supports(
-        ProviderName.CHROMIUM,
-        "Emulation.setScriptExecutionDisabled",
-        disabled,
-    )
     assert not capability_registry.supports(
-        ProviderName.LIGHTPANDA,
+        ProviderName.HTTP,
         "Emulation.setScriptExecutionDisabled",
-        disabled,
-    )
-    assert capability_registry.supports(
-        ProviderName.LIGHTPANDA,
-        "Emulation.setScriptExecutionDisabled",
-        enabled,
+        {"value": "true"},
     )

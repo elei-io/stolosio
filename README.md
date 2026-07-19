@@ -1,19 +1,17 @@
 # Harbor
 
 Harbor is a browser and web-acquisition gateway. It gives CDP-compatible automation
-clients one endpoint for sessions across Chromium, Browserless Chromium, Lightpanda,
-and Camoufox.
+clients one endpoint across a bounded HTTP path, a Harbor-managed Browserless fleet,
+and quota-controlled Browserbase capacity.
 
 It is for teams building browser automation, scraping, testing, and web-data systems
 that want to change providers without rewriting downstream automation. Harbor owns
 session admission, provider queues, managed browser fleets, observations, and
 eventually cost-aware acquisition planning.
 
-Harbor checks acquisition health independently per provider and learns exact runtime
-compatibility from real automatic sessions. It routes to the cheapest eligible
-provider, suppresses one immediately when a command is incompatible, and restores it
-after one later compatible session. The operator-selected default only bootstraps
-domains without current health evidence.
+Native browser traffic is opaque CDP passthrough. Harbor owns admission, capacity,
+session lifecycle, observations, and routing; the selected browser remains the
+authority on individual CDP methods.
 
 ## Developer setup
 
@@ -28,8 +26,8 @@ docker compose up --build -d
 The Harbor UI is available at `http://localhost:5173` by default. Set
 `HARBOR_WEB_PORT` to publish it on a different host port.
 
-Run the development fleet controller in another terminal. It reconciles the managed
-Chromium, Browserless, Lightpanda, and Camoufox fleets through Docker Compose:
+Run the development fleet controller in another terminal. It reconciles Browserless
+workers and their configured session slots through Docker Compose:
 
 ```bash
 uv run python -m backend.fleet.controllers.docker
@@ -62,14 +60,29 @@ The Compose stack is required for examples and E2E tests:
 HARBOR_E2E=1 uv run pytest -m e2e
 ```
 
+## Kubernetes and k3s
+
+The Helm chart under `charts/harbor` installs Harbor, its Kubernetes fleet controller,
+and the Harbor-managed Browserless workload. It requires existing PostgreSQL and NATS
+connection Secrets and creates separate API and UI Services; it does not provision
+those dependencies, ingress, DNS, or TLS. See
+[Kubernetes and k3s](docs/KUBERNETES.md).
+
+Release images are published as `ghcr.io/ekkuleivonen/harbor` and
+`ghcr.io/ekkuleivonen/harbor-web`; the chart is published as
+`oci://ghcr.io/ekkuleivonen/charts/harbor`. A ready-to-copy Flux example lives under
+[`deploy/flux`](deploy/flux).
+
 ## Documentation
 
 - [Vision](docs/VISION.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Fleet management](docs/FLEET_MANAGEMENT.md)
+- [Kubernetes and k3s](docs/KUBERNETES.md)
 - [Provider matrix](docs/PROVIDERS.md)
 - [DEBUG stream](docs/DEBUG.md)
 - [No-browser execution](docs/NO_BROWSER.md)
 - [Deterministic domain routing](docs/ANALYTICS.md)
 - [Roadmap](docs/ROADMAP.md)
+- [CI and releases](docs/RELEASING.md)
 - [Contributor and agent guide](AGENTS.md)

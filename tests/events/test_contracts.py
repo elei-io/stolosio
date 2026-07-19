@@ -10,10 +10,20 @@ from backend.proxy.contracts import ProviderName
 
 def test_event_round_trip_is_stable_and_validated() -> None:
     event = SessionEvent.create(
-        EventType.COMMAND_RECEIVED,
+        EventType.COMMAND_SUMMARY,
         uuid4(),
-        provider=ProviderName.CHROMIUM,
-        payload={"command_id": 7, "method": "Page.navigate", "domain": "example.com"},
+        provider=ProviderName.BROWSERLESS,
+        payload={
+            "methods": {
+                "Page.navigate": {
+                    "count": 1,
+                    "failed_count": 0,
+                    "duration_ms": 25,
+                    "provider_latency_ms": 21,
+                    "harbor_queue_ms": 4,
+                }
+            }
+        },
         occurred_at=datetime(2026, 7, 16, tzinfo=UTC),
     )
 
@@ -29,7 +39,7 @@ def test_unknown_event_and_payload_fields_are_rejected() -> None:
 
     with pytest.raises(ValueError):
         SessionEvent.create(
-            EventType.COMMAND_RECEIVED,
+            EventType.COMMAND_FAILED,
             uuid4(),
             payload={"command_id": 1, "method": "Page.navigate", "cookie": "secret"},
         )
@@ -52,23 +62,34 @@ def test_transition_event_records_the_factual_transition() -> None:
     event = SessionEvent.create(
         EventType.EXECUTION_TRANSITIONED,
         uuid4(),
-        provider=ProviderName.CHROMIUM,
+        provider=ProviderName.BROWSERLESS,
         attempt_id=uuid4(),
         payload={
             "from_provider": "http",
-            "to_provider": "chromium",
+            "to_provider": "browserless",
             "trigger_method": "Runtime.evaluate",
         },
     )
 
     assert SessionEvent.from_json(event.to_json()) == event
 
+
 def test_event_contract_bounds_database_fields_and_requires_timezone() -> None:
     with pytest.raises(ValueError):
         SessionEvent.create(
-            EventType.COMMAND_RECEIVED,
+            EventType.COMMAND_SUMMARY,
             uuid4(),
-            payload={"command_id": 1, "method": "x" * 129},
+            payload={
+                "methods": {
+                    "x" * 129: {
+                        "count": 1,
+                        "failed_count": 0,
+                        "duration_ms": 1,
+                        "provider_latency_ms": 1,
+                        "harbor_queue_ms": 0,
+                    }
+                }
+            },
         )
     with pytest.raises(ValueError, match="timezone"):
         SessionEvent.create(

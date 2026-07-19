@@ -16,6 +16,8 @@ class CapabilityRegistry:
         method: str,
         params: dict | None = None,
     ) -> bool:
+        if provider is not ProviderName.HTTP:
+            return True
         if provider is ProviderName.HTTP and method == "Runtime.evaluate":
             return is_utility_evaluation(params) if isinstance(params, dict) else False
         if provider is ProviderName.HTTP and method == "Runtime.callFunctionOn":
@@ -24,9 +26,7 @@ class CapabilityRegistry:
             value = params.get("value") if isinstance(params, dict) else None
             if not isinstance(value, bool):
                 return False
-            if provider in {ProviderName.HTTP, ProviderName.CHROMIUM, ProviderName.BROWSERLESS}:
-                return True
-            return provider is ProviderName.LIGHTPANDA and value is False
+            return provider is ProviderName.HTTP
         return method in self._manifests.get(provider, frozenset())
 
 capability_registry = CapabilityRegistry(PROVIDER_METHODS)

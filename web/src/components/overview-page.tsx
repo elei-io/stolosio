@@ -26,6 +26,7 @@ import type {
   ActivityEvent,
   ActivityEventPage,
   ActivityProvider,
+  CommandCostStat,
   DomainPage,
   GatewayFleetSnapshot,
   ProviderFleetSnapshot,
@@ -43,10 +44,8 @@ type SystemStatus = {
 
 const providerLabels: Record<ActivityProvider, string> = {
   http: "HTTP",
-  chromium: "Chromium",
+  browserbase: "Browserbase",
   browserless: "Browserless",
-  lightpanda: "Lightpanda",
-  camoufox: "Camoufox",
 }
 
 const numberFormatter = new Intl.NumberFormat()
@@ -66,6 +65,11 @@ function formatDuration(seconds: number) {
   const minutes = Math.floor(seconds / 60)
   const remainder = Math.round(seconds % 60)
   return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`
+}
+
+function formatMilliseconds(milliseconds: number) {
+  if (milliseconds < 1_000) return `${milliseconds}ms`
+  return formatDuration(milliseconds / 1_000)
 }
 
 function relativeTime(value: string) {
@@ -248,6 +252,12 @@ export function OverviewPage({ navigate }: OverviewPageProps) {
     queryFn: () => apiRequest<DomainPage>("/v1/admin/domains?limit=5"),
     refetchInterval: 30_000,
   })
+  const commandCosts = useQuery({
+    queryKey: ["command-costs"],
+    queryFn: () =>
+      apiRequest<CommandCostStat[]>("/v1/admin/command-costs?limit=100"),
+    refetchInterval: 30_000,
+  })
 
   const providers = useMemo(() => fleets.data ?? [], [fleets.data])
   const totals = useMemo(
@@ -278,6 +288,9 @@ export function OverviewPage({ navigate }: OverviewPageProps) {
   const recentEvents = (activity.data?.events ?? [])
     .filter((event) => event.event_family !== "command")
     .slice(0, 8)
+  const browserCommandCosts = (commandCosts.data ?? [])
+    .filter((row) => row.attributed_browser_time_ms > 0)
+    .slice(0, 10)
 
   const attention = providers.flatMap((provider) => {
     const items: {
@@ -322,12 +335,14 @@ export function OverviewPage({ navigate }: OverviewPageProps) {
     void fleets.refetch()
     void activity.refetch()
     void domains.refetch()
+    void commandCosts.refetch()
   }
   const isRefreshing =
     gateway.isFetching ||
     fleets.isFetching ||
     activity.isFetching ||
-    domains.isFetching
+    domains.isFetching ||
+    commandCosts.isFetching
 
   return (
     <main className="mx-auto w-full max-w-[100rem] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
@@ -744,9 +759,7 @@ export function OverviewPage({ navigate }: OverviewPageProps) {
                   </p>
                 </div>
               </div>
-              {(domains.data?.summary.unhealthy_domains ?? 0) +
-                (domains.data?.summary.suppressed_domains ?? 0) >
-                0 && (
+              {(domains.data?.summary.unhealthy_domains ?? 0) > 0 && (
                 <button
                   type="button"
                   className="mt-4 flex w-full items-center justify-between rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-left"
@@ -757,9 +770,8 @@ export function OverviewPage({ navigate }: OverviewPageProps) {
                       className="size-4 text-amber-600"
                       aria-hidden
                     />
-                    {(domains.data?.summary.unhealthy_domains ?? 0) +
-                      (domains.data?.summary.suppressed_domains ?? 0)}{" "}
-                    domains need review
+                    {domains.data?.summary.unhealthy_domains ?? 0} domains need
+                    review
                   </span>
                   <ArrowRight
                     className="size-4 text-muted-foreground"
@@ -771,6 +783,98 @@ export function OverviewPage({ navigate }: OverviewPageProps) {
           )}
         </section>
       </div>
+
+      <section className="mt-5 overflow-hidden rounded-lg border bg-card">
+        <div className="border-b px-4 py-3">
+          <h2 className="font-semibold">Browser time attribution</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Cumulative provider-and-method totals. Harbor retains these
+            aggregates, not individual successful commands.
+          </p>
+        </div>
+        {commandCosts.isLoading ? (
+          <div className="flex min-h-48 items-center justify-center">
+            <LoaderCircle
+              className="size-5 animate-spin text-muted-foreground"
+              aria-hidden
+            />
+          </div>
+        ) : commandCosts.error ? (
+          <SectionError
+            error={commandCosts.error}
+            retry={() => void commandCosts.refetch()}
+          />
+        ) : browserCommandCosts.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[48rem] text-left">
+              <thead className="border-b bg-muted/20 text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Method</th>
+                  <th className="px-4 py-2.5 font-medium">Provider</th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    Browser time
+                  </th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    Commands
+                  </th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    Failed / interrupted
+                  </th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    Cost units
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {browserCommandCosts.map((row) => (
+                  <tr key={`${row.provider}-${row.method}`}>
+                    <td className="max-w-md px-4 py-3">
+                      <code className="text-xs">
+                        {row.method === "__session_overhead__"
+                          ? "Session overhead"
+                          : row.method === "__other__"
+                            ? "Other methods"
+                            : row.method}
+                      </code>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant="secondary">
+                        {providerLabels[row.provider]}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm font-medium tabular-nums">
+                      {formatMilliseconds(row.attributed_browser_time_ms)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm tabular-nums">
+                      {row.method === "__session_overhead__"
+                        ? "—"
+                        : numberFormatter.format(row.command_count)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm tabular-nums">
+                      {numberFormatter.format(row.failed_count)} /{" "}
+                      {numberFormatter.format(row.interrupted_count)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm tabular-nums">
+                      {numberFormatter.format(row.attributed_cost_units)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="flex min-h-40 flex-col items-center justify-center text-center">
+            <Clock3 className="size-6 text-muted-foreground" aria-hidden />
+            <p className="mt-3 text-sm font-medium">
+              No browser time attributed yet
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Browserless and Browserbase command totals will appear after
+              attempts complete.
+            </p>
+          </div>
+        )}
+      </section>
     </main>
   )
 }

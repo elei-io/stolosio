@@ -17,7 +17,7 @@ class FakeDebugStream:
 
     async def stream(self, websocket, reference) -> bool:
         self.references.append(reference)
-        await websocket.send_text(json.dumps({"event_type": "session.requested"}))
+        await websocket.send_text(json.dumps({"event_type": "session.open"}))
         return True
 
 
@@ -31,7 +31,7 @@ def test_debug_route_streams_by_client_reference_and_closes_at_terminal_event() 
         with client.websocket_connect(
             f"/v1/debug?harbor.session.reference={REFERENCE}"
         ) as websocket:
-            assert websocket.receive_json() == {"event_type": "session.requested"}
+            assert websocket.receive_json() == {"event_type": "session.open"}
             with pytest.raises(WebSocketDisconnect) as closed:
                 websocket.receive_text()
 

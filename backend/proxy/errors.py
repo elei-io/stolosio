@@ -57,3 +57,9 @@ class SessionLeaseLost(ConnectionRejected):
 class ProviderConnectionLost(ConnectionRejected):
     close_code = 1011
     reason = "provider_connection_lost"
+
+
+class ProviderTimeout(ConnectionRejected):
+    close_code = 4508
+    reason = "provider_timeout"
+    status_code = 504

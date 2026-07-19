@@ -5,20 +5,27 @@ from fastapi import WebSocket, WebSocketDisconnect
 from websockets.exceptions import ConnectionClosed
 
 from backend.events.cdp import CdpEventObserver
-from backend.proxy.capabilities import CapabilityRegistry
-from backend.proxy.contracts import ProviderName, ProviderSession
-from backend.proxy.errors import InvalidCdpMessage, ProviderConnectionLost
+from backend.proxy.contracts import ProviderSession
+from backend.proxy.errors import (
+    InvalidCdpMessage,
+    ProviderConnectionLost,
+    ProviderTimeout,
+)
+
+
+def _provider_disconnect_error(upstream: ProviderSession) -> Exception:
+    if getattr(upstream, "disconnect_reason", None) == ProviderTimeout.reason:
+        return ProviderTimeout()
+    return ProviderConnectionLost()
 
 
 async def relay_cdp(
     downstream: WebSocket,
     upstream: ProviderSession,
-    provider: ProviderName | None,
-    capabilities: CapabilityRegistry,
     observer: CdpEventObserver | None = None,
 ) -> None:
     downstream_task = asyncio.create_task(
-        _downstream_to_upstream(downstream, upstream, provider, capabilities, observer)
+        _downstream_to_upstream(downstream, upstream, observer)
     )
     upstream_task = asyncio.create_task(_upstream_to_downstream(upstream, downstream, observer))
     tasks = {downstream_task, upstream_task}
@@ -31,7 +38,9 @@ async def relay_cdp(
     try:
         for task in done:
             error = task.exception()
-            if error is not None and not isinstance(error, (ConnectionClosed, WebSocketDisconnect)):
+            if isinstance(error, ConnectionClosed):
+                raise _provider_disconnect_error(upstream)
+            if error is not None and not isinstance(error, WebSocketDisconnect):
                 raise error
     finally:
         if observer is not None:
@@ -41,8 +50,6 @@ async def relay_cdp(
 async def _downstream_to_upstream(
     downstream: WebSocket,
     upstream: ProviderSession,
-    provider: ProviderName | None,
-    capabilities: CapabilityRegistry,
     observer: CdpEventObserver | None = None,
 ) -> None:
     while True:
@@ -64,23 +71,8 @@ async def _downstream_to_upstream(
 
         if observer is not None:
             await observer.command_received(command)
-        if provider is not None and not capabilities.supports(
-            provider,
-            method,
-            command.get("params"),
-        ):
-            await downstream.send_json(
-                {
-                    "id": command_id,
-                    "error": {
-                        "code": -32601,
-                        "message": f"{method} is not supported by provider {provider.value}",
-                    },
-                }
-            )
-            if observer is not None:
-                await observer.command_unsupported(command_id)
-            continue
+        if observer is not None:
+            observer.command_forwarded(command)
         await upstream.send(text)
 
 
@@ -95,4 +87,4 @@ async def _upstream_to_downstream(
         await downstream.send_text(message)
     if observer is not None:
         await observer.provider_disconnected()
-    raise ProviderConnectionLost
+    raise _provider_disconnect_error(upstream)

@@ -10,8 +10,7 @@ from backend.proxy.contracts import ProviderName
 
 
 def provider_from_storage(value: str | None) -> ProviderName | None:
-    """Decode persisted provider attribution, including the retired sentinel."""
-    if value is None or value == "unknown":
+    if value is None:
         return None
     return ProviderName(value)
 

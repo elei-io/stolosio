@@ -1,0 +1,11 @@
+apiVersion: v2
+name: harbor
+description: CDP-compatible browser acquisition gateway
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/ekkuleivonen/harbor
+sources:
+  - https://github.com/ekkuleivonen/harbor
+annotations:
+  org.opencontainers.image.source: https://github.com/ekkuleivonen/harbor

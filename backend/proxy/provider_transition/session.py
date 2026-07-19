@@ -15,8 +15,8 @@ import httpx
 from backend.events.cdp import CdpEventObserver
 from backend.proxy.adapters import get_provider_adapter
 from backend.proxy.attempts import AttemptAdmission, AttemptLease
-from backend.proxy.capabilities import CapabilityRegistry
 from backend.proxy.capabilities.http import is_content_call, is_utility_evaluation
+from backend.proxy.content_sanity import inspect_content, inspect_headers
 from backend.proxy.contracts import (
     HarborSession,
     ProviderName,
@@ -26,24 +26,19 @@ from backend.proxy.contracts import (
     SettingSource,
 )
 from backend.proxy.provider_transition.history import ProviderTransitionRepository
-from backend.proxy.provider_transition.materialization import (
-    CdpReplayMaterializationStrategy,
-)
 from backend.proxy.routing import (
     NoSupportedProvider,
     ProviderCandidate,
     ProviderPlan,
     RoutingRepository,
 )
-from backend.proxy.runtime_compatibility import (
-    RuntimeCompatibilityRepository,
-    SessionCompatibilityTracker,
-)
 from backend.settings import Settings
 
 logger = logging.getLogger(__name__)
 
 _CLOSED = object()
+
+
 def _http_request_headers(settings: Settings) -> dict[str, str]:
     return {
         "User-Agent": settings.http_user_agent,
@@ -104,32 +99,25 @@ class ProviderTransitionSession:
         session: HarborSession,
         resolved: ResolvedSessionSettings,
         attempts: AttemptAdmission | None,
-        capabilities: CapabilityRegistry,
         history: ProviderTransitionRepository | None,
         observer: CdpEventObserver | None,
         settings: Settings,
         routing: RoutingRepository | None = None,
-        runtime_compatibility: RuntimeCompatibilityRepository | None = None,
         *,
         automatic: bool = True,
-        materialization: CdpReplayMaterializationStrategy | None = None,
     ) -> None:
         self._session = session
         self._resolved = resolved
         self._attempts = attempts
-        self._capabilities = capabilities
         self._history = history
         self._observer = observer
         self._settings = settings
         self._routing = routing
-        self._runtime_compatibility = runtime_compatibility
         self._automatic = automatic
-        self._materialization = materialization or CdpReplayMaterializationStrategy()
 
         self._messages: asyncio.Queue[str | object] = asyncio.Queue()
         self._closed = False
         self._failed = False
-        self._compatibility_valid = True
         self._failure_reason = "provider_connection_lost"
         self._attempt: AttemptLease | None = None
         self._upstream: ProviderSession | None = None
@@ -139,8 +127,6 @@ class ProviderTransitionSession:
         self._replay: list[ReplayEntry] = []
         self._replay_bytes = 0
         self._current_entry: ReplayEntry | None = None
-        self._forwarded: dict[int, ReplayEntry] = {}
-        self._forward_event_entry: ReplayEntry | None = None
         self._forward_ids: dict[str, dict[object, object]] = defaultdict(dict)
         self._reverse_ids: dict[str, dict[object, object]] = defaultdict(dict)
 
@@ -159,38 +145,15 @@ class ProviderTransitionSession:
         self._html = ""
         self._domain: str | None = None
         self._attempted_providers: set[ProviderName] = set()
-        self._compatibility = SessionCompatibilityTracker()
+
+    @property
+    def disconnect_reason(self) -> str | None:
+        return self._failure_reason if self._failed else None
 
     async def send(self, message: str) -> None:
         command = json.loads(message)
         self._track_command(command)
         if self._upstream is not None:
-            provider = self._upstream.provider
-            if not self._capabilities.supports(
-                provider,
-                command["method"],
-                command.get("params"),
-            ):
-                if self._routing is not None and self._domain is not None:
-                    await self._suppress(provider, command["method"])
-                    try:
-                        plan = await self._routing.plan(
-                            self._domain,
-                            required_commands=self._required_commands(command),
-                            exclude=frozenset(
-                                self._attempted_providers | {provider}
-                            ),
-                        )
-                        await self._transition(command, command["method"], plan=plan)
-                    except (NoSupportedProvider, ProviderTransitionError) as error:
-                        self._compatibility_valid = False
-                        await self._put(
-                            self._response(
-                                command,
-                                error={"code": -32000, "message": str(error)},
-                            )
-                        )
-                    return
             await self._forward(command)
             return
 
@@ -198,7 +161,6 @@ class ProviderTransitionSession:
             try:
                 await self._transition(command, "replay_budget")
             except (NoSupportedProvider, ProviderTransitionError) as error:
-                self._compatibility_valid = False
                 await self._put(
                     self._response(
                         command,
@@ -229,11 +191,6 @@ class ProviderTransitionSession:
                     )
                 )
                 return
-            if (
-                transition.trigger == command["method"]
-                and self._domain is not None
-            ):
-                await self._suppress(ProviderName.HTTP, command["method"])
             try:
                 await self._transition(
                     command,
@@ -242,7 +199,6 @@ class ProviderTransitionSession:
                     plan=transition.plan,
                 )
             except (NoSupportedProvider, ProviderTransitionError) as error:
-                self._compatibility_valid = False
                 await self._put(
                     self._response(
                         command,
@@ -252,7 +208,6 @@ class ProviderTransitionSession:
             return
         except Exception as error:
             self._current_entry = None
-            self._compatibility_valid = False
             await self._put(
                 self._response(
                     command,
@@ -290,23 +245,31 @@ class ProviderTransitionSession:
             with suppress(Exception):
                 await self._upstream.close()
         if self._attempt is not None:
+            command_summary = (
+                self._observer.command_summary(UUID(self._attempt.attempt.attempt_id))
+                if self._observer is not None
+                else None
+            )
+            with suppress(Exception):
+                await self._attempt.record_provider_usage(
+                    provider_ended_at=getattr(
+                        self._upstream,
+                        "provider_ended_at",
+                        None,
+                    )
+                )
             with suppress(Exception):
                 await self._attempt.release(
                     failed=self._failed,
                     reason=self._failure_reason if self._failed else "client_disconnected",
+                    command_summary=command_summary,
                 )
+            if self._observer is not None:
+                with suppress(Exception):
+                    await self._observer.flush_command_summary(
+                        UUID(self._attempt.attempt.attempt_id)
+                    )
             self._attempt = None
-        if (
-            self._automatic
-            and not self._failed
-            and self._compatibility_valid
-            and self._runtime_compatibility is not None
-        ):
-            with suppress(Exception):
-                await self._runtime_compatibility.record_session(
-                    self._session.session_id,
-                    self._compatibility.domains,
-                )
         await self._messages.put(_CLOSED)
 
     def _track_command(self, command: dict[str, Any]) -> None:
@@ -319,30 +282,9 @@ class ProviderTransitionSession:
             url = typed_params.get("url")
             parsed = urlsplit(url) if isinstance(url, str) else None
             if parsed is not None and parsed.hostname is not None:
-                hostname = (
-                    parsed.hostname.rstrip(".")
-                    .encode("idna")
-                    .decode("ascii")
-                    .lower()
-                )
+                hostname = parsed.hostname.rstrip(".").encode("idna").decode("ascii").lower()
                 self._domain = hostname
-                self._compatibility.navigate(hostname, method, typed_params)
                 return
-        self._compatibility.command(method, typed_params)
-
-    async def _suppress(self, provider: ProviderName, method: str) -> None:
-        if (
-            not self._automatic
-            or self._runtime_compatibility is None
-            or self._domain is None
-        ):
-            return
-        await self._runtime_compatibility.suppress(
-            session_id=self._session.session_id,
-            hostname=self._domain,
-            provider=provider,
-            method=method,
-        )
 
     async def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
         method = command["method"]
@@ -467,9 +409,7 @@ class ProviderTransitionSession:
 
         if self._attempt is None and self._automatic:
             if self._routing is None:
-                raise ProviderTransitionError(
-                    "Automatic provider planning is unavailable"
-                )
+                raise ProviderTransitionError("Automatic provider planning is unavailable")
             plan = await self._routing.plan(
                 self._domain,
                 required_commands=self._required_commands(),
@@ -495,6 +435,19 @@ class ProviderTransitionSession:
             raise _Transition("http_transport_failure") from error
         if len(response.content) > self._settings.http_max_response_bytes:
             raise _Transition("http_response_too_large")
+        if not 200 <= response.status_code < 300:
+            raise _Transition("unhealthy_http_status")
+        header_sanity = inspect_headers(dict(response.headers))
+        if header_sanity.state != "healthy":
+            raise _Transition(header_sanity.reason_codes[0])
+        content_sanity = inspect_content(response.text)
+        if content_sanity.state != "healthy":
+            trigger = (
+                content_sanity.reason_codes[0]
+                if content_sanity.reason_codes
+                else "http_content_check_failed"
+            )
+            raise _Transition(trigger)
 
         self._url = str(response.url)
         self._html = response.text
@@ -562,9 +515,7 @@ class ProviderTransitionSession:
         await self._emit_loaded_document(session_id, request_id, len(response.content))
         return {"frameId": self._frame_id, "loaderId": self._loader_id, "isDownload": False}
 
-    async def _acquire_http_attempt(
-        self, plan: ProviderPlan, candidate: ProviderCandidate
-    ) -> None:
+    async def _acquire_http_attempt(self, plan: ProviderPlan, candidate: ProviderCandidate) -> None:
         assert self._attempts is not None
         assert self._observer is not None
         self._attempt = await self._attempts.acquire(
@@ -604,16 +555,7 @@ class ProviderTransitionSession:
             else None
         )
         if self._upstream is not None:
-            if not self._materialization.can_materialize(
-                entry.command["method"] for entry in self._replay
-            ):
-                raise ProviderTransitionError(
-                    "Cannot transition after commands with non-replay-safe side effects"
-                )
-            if any(entry.response is None for entry in self._forwarded.values()):
-                raise ProviderTransitionError(
-                    "Cannot transition with unacknowledged provider commands"
-                )
+            raise ProviderTransitionError("Harbor does not transition between browser providers")
         if plan is None:
             if self._routing is not None and self._domain is not None:
                 plan = await self._routing.plan(
@@ -631,20 +573,13 @@ class ProviderTransitionSession:
                     settings.health_policy_version,
                 )
             else:
-                raise ProviderTransitionError(
-                    "Automatic provider planning is unavailable"
-                )
+                raise ProviderTransitionError("Automatic provider planning is unavailable")
         source_attempt = self._attempt
         source_upstream = self._upstream
         source_messages = self._upstream_messages
         source_pump = self._upstream_pump
-        source_forward_event_entry = self._forward_event_entry
-        source_forward_ids = {
-            kind: dict(values) for kind, values in self._forward_ids.items()
-        }
-        source_reverse_ids = {
-            kind: dict(values) for kind, values in self._reverse_ids.items()
-        }
+        source_forward_ids = {kind: dict(values) for kind, values in self._forward_ids.items()}
+        source_reverse_ids = {kind: dict(values) for kind, values in self._reverse_ids.items()}
         last_error: Exception | None = None
         assert self._attempts is not None
         assert self._observer is not None
@@ -661,19 +596,27 @@ class ProviderTransitionSession:
                     self._session,
                     target_settings,
                     replacement_for=(
-                        source_attempt.attempt.attempt_id
-                        if source_attempt is not None
-                        else None
+                        source_attempt.attempt.attempt_id if source_attempt is not None else None
                     ),
                 )
                 adapter = get_provider_adapter(
                     target,
                     endpoint=target_attempt.attempt.endpoint,
                 )
-                async with asyncio.timeout(
-                    self._settings.provider_acquisition_timeout_seconds
-                ):
+                async with asyncio.timeout(self._settings.provider_acquisition_timeout_seconds):
                     upstream = await adapter.acquire(self._session, target_settings)
+                await target_attempt.bind_provider_session(
+                    provider_session_id=getattr(
+                        upstream,
+                        "provider_session_id",
+                        None,
+                    ),
+                    provider_started_at=getattr(
+                        upstream,
+                        "provider_started_at",
+                        None,
+                    ),
+                )
                 await target_attempt.activate()
                 self._upstream = upstream
                 self._upstream_messages = upstream.messages().__aiter__()
@@ -698,10 +641,32 @@ class ProviderTransitionSession:
                     with suppress(Exception):
                         await source_upstream.close()
                 if source_attempt is not None:
+                    command_summary = (
+                        self._observer.command_summary(
+                            UUID(source_attempt.attempt.attempt_id)
+                        )
+                        if self._observer is not None
+                        else None
+                    )
+                    with suppress(Exception):
+                        await source_attempt.record_provider_usage(
+                            provider_ended_at=getattr(
+                                source_upstream,
+                                "provider_ended_at",
+                                None,
+                            )
+                        )
                     with suppress(Exception):
                         await source_attempt.release(
-                            failed=False, reason="provider_transitioned"
+                            failed=False,
+                            reason="provider_transitioned",
+                            command_summary=command_summary,
                         )
+                    if self._observer is not None:
+                        with suppress(Exception):
+                            await self._observer.flush_command_summary(
+                                UUID(source_attempt.attempt.attempt_id)
+                            )
                 self._upstream_pump = asyncio.create_task(self._pump_upstream())
                 if from_provider is not None:
                     with suppress(Exception):
@@ -723,6 +688,14 @@ class ProviderTransitionSession:
                         await upstream.close()
                 if target_attempt is not None:
                     with suppress(Exception):
+                        await target_attempt.record_provider_usage(
+                            provider_ended_at=getattr(
+                                upstream,
+                                "provider_ended_at",
+                                None,
+                            )
+                        )
+                    with suppress(Exception):
                         await target_attempt.release(
                             failed=True, reason="provider_transition_attempt_failed"
                         )
@@ -732,15 +705,13 @@ class ProviderTransitionSession:
                 self._upstream_pump = source_pump
                 self._forward_ids = defaultdict(dict, source_forward_ids)
                 self._reverse_ids = defaultdict(dict, source_reverse_ids)
-                self._forward_event_entry = source_forward_event_entry
         raise ProviderTransitionError("Supported provider plan exhausted") from last_error
 
     def _required_commands(
         self, pending: dict[str, Any] | None = None
     ) -> tuple[tuple[str, dict | None], ...]:
         commands = [
-            (entry.command["method"], entry.command.get("params"))
-            for entry in self._replay
+            (entry.command["method"], entry.command.get("params")) for entry in self._replay
         ]
         if pending is not None:
             commands.append((pending["method"], pending.get("params")))
@@ -783,9 +754,7 @@ class ProviderTransitionSession:
         response = None
         events: list[dict[str, Any]] = []
         method = command["method"]
-        async with asyncio.timeout(
-            self._settings.provider_transition_replay_timeout_seconds
-        ):
+        async with asyncio.timeout(self._settings.provider_transition_replay_timeout_seconds):
             while True:
                 raw = await anext(self._upstream_messages)
                 value = json.loads(raw)
@@ -809,42 +778,8 @@ class ProviderTransitionSession:
 
     async def _forward(self, command: dict[str, Any]) -> None:
         assert self._upstream is not None
-        provider = self._upstream.provider
-        if not self._capabilities.supports(
-            provider,
-            command["method"],
-            command.get("params"),
-        ):
-            self._compatibility_valid = False
-            await self._observer.command_unsupported(command["id"])
-            await self._put(
-                self._response(
-                    command,
-                    error={
-                        "code": -32601,
-                        "message": (
-                            f"{command['method']} is not supported by provider {provider.value}"
-                        ),
-                    },
-                )
-            )
-            return
-        entry = ReplayEntry(command=command)
-        self._replay.append(entry)
-        self._replay_bytes += len(json.dumps(command, separators=(",", ":")).encode())
-        self._forwarded[command["id"]] = entry
-        self._forward_event_entry = entry
         translated = self._rewrite(command, self._forward_ids)
-        try:
-            await self._upstream.send(json.dumps(translated, separators=(",", ":")))
-        except Exception:
-            self._replay.pop()
-            self._replay_bytes -= len(
-                json.dumps(command, separators=(",", ":")).encode()
-            )
-            self._forwarded.pop(command["id"], None)
-            self._forward_event_entry = None
-            raise
+        await self._upstream.send(json.dumps(translated, separators=(",", ":")))
 
     async def _pump_upstream(self) -> None:
         assert self._upstream_messages is not None
@@ -854,27 +789,14 @@ class ProviderTransitionSession:
                 if value.get("method") == "Runtime.executionContextsCleared":
                     self._clear_execution_context_mappings()
                 rewritten = self._rewrite(value, self._reverse_ids)
-                command_id = rewritten.get("id")
-                if isinstance(command_id, int):
-                    entry = self._forwarded.pop(command_id, None)
-                    if entry is not None:
-                        entry.response = rewritten
-                        self._forward_event_entry = entry
-                        if "error" in rewritten:
-                            self._compatibility_valid = False
-                            if self._is_unsupported_response(rewritten):
-                                await self._suppress(
-                                    self._upstream.provider,
-                                    entry.command["method"],
-                                )
-                elif (
-                    isinstance(rewritten.get("method"), str)
-                    and self._forward_event_entry is not None
-                ):
-                    self._forward_event_entry.events.append(rewritten)
                 await self._put(rewritten)
         finally:
             if not self._closed:
+                self._failed = True
+                self._failure_reason = (
+                    getattr(self._upstream, "disconnect_reason", None)
+                    or "provider_connection_lost"
+                )
                 await self._messages.put(_CLOSED)
 
     def _clear_execution_context_mappings(self) -> None:
@@ -882,22 +804,6 @@ class ProviderTransitionSession:
         for kind in ("execution", "object"):
             self._forward_ids.pop(kind, None)
             self._reverse_ids.pop(kind, None)
-
-    @staticmethod
-    def _is_unsupported_response(response: dict[str, Any]) -> bool:
-        error = response.get("error")
-        if not isinstance(error, dict):
-            return False
-        if error.get("code") == -32601:
-            return True
-        message = error.get("message")
-        if not isinstance(message, str):
-            return False
-        normalized = message.lower()
-        return any(
-            marker in normalized
-            for marker in ("not supported", "method not found", "unknown method")
-        )
 
     def _pair_identifiers(self, synthetic: Any, actual: Any, parent: str | None = None) -> None:
         if isinstance(synthetic, dict) and isinstance(actual, dict):
@@ -1105,12 +1011,10 @@ class ProviderTransitionSession:
 
     def _would_exceed_replay_budget(self, message: str) -> bool:
         return (
-            len(self._replay) + 1
-            > self._settings.provider_transition_replay_max_commands
+            len(self._replay) + 1 > self._settings.provider_transition_replay_max_commands
             or self._replay_bytes + len(message.encode())
             > self._settings.provider_transition_replay_max_bytes
         )
-
 
     def _target_info(self) -> dict[str, Any]:
         return {
@@ -1174,18 +1078,15 @@ class HttpCdpSession(ProviderTransitionSession):
         self,
         session: HarborSession,
         resolved: ResolvedSessionSettings,
-        capabilities: CapabilityRegistry,
         settings: Settings,
     ) -> None:
         super().__init__(
             session,
             resolved,
             None,
-            capabilities,
             None,
             None,
             settings,
-            None,
             None,
             automatic=False,
         )

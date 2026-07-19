@@ -5,11 +5,10 @@ import pytest
 from backend.db.models import (
     AcquisitionAttempt,
     Domain,
-    DomainCommandStat,
     DomainProviderCostStat,
     DomainProviderHealth,
-    DomainProviderRuntimeState,
     DomainProviderTransitionStat,
+    ExternalProviderLimit,
     GatewaySession,
     HealthProbe,
     ProviderRoutingProfile,
@@ -21,7 +20,7 @@ from backend.proxy.domains import DomainFilters, DomainQueryService
 pytestmark = pytest.mark.asyncio
 
 
-async def test_domain_queries_expose_health_runtime_state_and_ordered_plan(
+async def test_domain_queries_expose_health_and_ordered_plan(
     database_sessions,
 ) -> None:
     now = datetime.now(UTC)
@@ -29,7 +28,7 @@ async def test_domain_queries_expose_health_runtime_state_and_ordered_plan(
         database.add(
             RoutingConfiguration(
                 key="global",
-                default_provider="camoufox",
+                default_provider="browserless",
                 existing_domain_probe_rate_basis_points=100,
                 required_health_confirmations=1,
                 health_policy_version=1,
@@ -40,20 +39,35 @@ async def test_domain_queries_expose_health_runtime_state_and_ordered_plan(
         database.add_all(
             [
                 ProviderRoutingProfile(
-                    provider="lightpanda",
+                    provider="http",
                     automatic_enabled=True,
                     cost_units_per_second=4,
                     provider_contract_version=1,
                     updated_at=now,
                 ),
                 ProviderRoutingProfile(
-                    provider="camoufox",
+                    provider="browserless",
                     automatic_enabled=True,
                     cost_units_per_second=12,
                     provider_contract_version=1,
                     updated_at=now,
                 ),
+                ProviderRoutingProfile(
+                    provider="browserbase",
+                    automatic_enabled=True,
+                    cost_units_per_second=100,
+                    provider_contract_version=1,
+                    updated_at=now,
+                ),
             ]
+        )
+        database.add(
+            ExternalProviderLimit(
+                provider="browserbase",
+                enabled=True,
+                max_active_sessions=5,
+                max_queued_attempts=100,
+            )
         )
         domain = Domain(
             hostname="example.test",
@@ -68,7 +82,7 @@ async def test_domain_queries_expose_health_runtime_state_and_ordered_plan(
             [
                 DomainProviderHealth(
                     domain_id=domain.id,
-                    provider="lightpanda",
+                    provider="browserless",
                     health_state="healthy",
                     successful_probe_count=1,
                     navigation_state="healthy",
@@ -81,34 +95,19 @@ async def test_domain_queries_expose_health_runtime_state_and_ordered_plan(
                     health_policy_version=1,
                     provider_contract_version=1,
                 ),
-                DomainProviderRuntimeState(
-                    domain_id=domain.id,
-                    provider="lightpanda",
-                    state="eligible",
-                    last_evidence_at=now,
-                    provider_contract_version=1,
-                ),
                 DomainProviderCostStat(
                     domain_id=domain.id,
-                    provider="lightpanda",
+                    provider="browserless",
                     observed_attempt_count=2,
                     total_cost_units=6,
                 ),
                 DomainProviderTransitionStat(
                     domain_id=domain.id,
                     from_provider="http",
-                    to_provider="lightpanda",
+                    to_provider="browserless",
                     trigger="new_requirement",
                     transition_count=2,
                     last_trigger_method="Runtime.evaluate",
-                    first_seen_at=now - timedelta(hours=3),
-                    last_seen_at=now,
-                ),
-                DomainCommandStat(
-                    domain_id=domain.id,
-                    method="Runtime.evaluate",
-                    command_count=4,
-                    session_count=2,
                     first_seen_at=now - timedelta(hours=3),
                     last_seen_at=now,
                 ),
@@ -137,18 +136,18 @@ async def test_domain_queries_expose_health_runtime_state_and_ordered_plan(
                     id="00000000-0000-0000-0000-000000000002",
                     session_id=session.id,
                     ordinal=1,
-                    provider="lightpanda",
+                    provider="browserless",
                     resolved_settings={},
                     setting_sources={},
                     state="closed",
                     selection_reason="cheapest_eligible",
-                    actual_cost_units=3,
+                    modeled_cost_units=3,
                 ),
                 HealthProbe(
                     id="00000000-0000-0000-0000-000000000003",
                     domain_id=domain.id,
                     source_session_id=session.id,
-                    candidate_provider="lightpanda",
+                    candidate_provider="browserless",
                     trigger="new_domain",
                     target_url="https://example.test/",
                     state="completed",
@@ -177,15 +176,23 @@ async def test_domain_queries_expose_health_runtime_state_and_ordered_plan(
     assert page.domains[0]["expected_plan"] == {
         "reason": "cheapest_eligible",
         "candidates": [
-            {"provider": "lightpanda", "estimated_cost_units": 3},
+            {"provider": "browserless", "estimated_cost_units": 3},
+            {"provider": "browserbase", "estimated_cost_units": 100},
         ],
     }
     assert detail is not None
     assert detail["transition_count"] == 2
-    assert detail["providers"][0]["health_state"] == "healthy"
-    assert detail["providers"][0]["runtime_state"] == "eligible"
-    assert detail["providers"][0]["routing_eligible"] is True
-    assert set(detail["providers"][0]["checks"]) == {
+    browserless = next(
+        provider for provider in detail["providers"] if provider["provider"] == "browserless"
+    )
+    assert browserless["health_state"] == "healthy"
+    assert browserless["routing_eligible"] is True
+    browserbase = next(
+        provider for provider in detail["providers"] if provider["provider"] == "browserbase"
+    )
+    assert browserbase["health_state"] == "unknown"
+    assert browserbase["routing_eligible"] is True
+    assert set(browserless["checks"]) == {
         "navigation",
         "status",
         "headers",

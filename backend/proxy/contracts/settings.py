@@ -11,10 +11,8 @@ from backend.proxy.contracts.provider import ProviderName
 class ProviderSelection(StrEnum):
     AUTO = "auto"
     HTTP = ProviderName.HTTP
-    CHROMIUM = ProviderName.CHROMIUM
     BROWSERLESS = ProviderName.BROWSERLESS
-    LIGHTPANDA = ProviderName.LIGHTPANDA
-    CAMOUFOX = ProviderName.CAMOUFOX
+    BROWSERBASE = ProviderName.BROWSERBASE
 
 
 class SettingSource(StrEnum):

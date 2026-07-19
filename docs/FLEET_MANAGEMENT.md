@@ -1,218 +1,73 @@
-# Fleet Management
+# Fleet and Capacity Management
 
-Harbor owns the lifecycle and capacity of the browser fleets it uses. Infrastructure
-platforms provide compute primitives; Harbor decides how many browser workers should
-exist, observes which workers are usable, assigns sessions to them, and drains them
-before removal.
+Harbor manages Browserless as a horizontal fleet. Browserbase is externally hosted, so
+Harbor manages an admission quota rather than infrastructure. Direct HTTP work also
+uses an admission quota because it consumes Harbor process and network capacity
+without browser instances.
 
-Prometheus metrics remain operational and analytical signals. They are not the only
-mechanism by which browser capacity is managed.
+## Browserless
 
-## Terminology
-
-- A **provider** is a browser implementation such as Chromium, Browserless,
-  Lightpanda, or Camoufox.
-- A **fleet** is a group of compatible browser workers for one provider and one
-  process-level configuration.
-- An **instance** is one managed browser worker, normally a container or Pod containing
-  a browser process.
-- A **slot** is capacity for one concurrent Harbor acquisition attempt on an instance.
-- A **session** is one downstream CDP connection. A session can create one or more
-  owned browser contexts and targets while it occupies a slot.
-
-An instance may expose several slots. Harbor scales instances, while sessions consume
-slots within them:
+A Browserless instance is one worker process. Each instance exposes a configurable
+number of independent session slots:
 
 ```text
-fleet
-  ├── instance A: 4 slots, 4 occupied
-  └── instance B: 4 slots, 1 occupied
-
-total capacity:     8
-occupied capacity:  5
-available capacity: 3
+usable capacity = ready, healthy, non-draining instances × slots per instance
+desired instances = clamp(ceil(demand / slots per instance), minimum, maximum)
 ```
 
-Slot capacity is provider-specific. Managed Chromium defaults to four sessions per
-instance and Browserless defaults to five, matching its Compose `CONCURRENT` limit.
-Lightpanda and Camoufox each contribute exactly one slot per managed instance.
+Placement atomically assigns an acquisition attempt to a free slot. Sessions on the
+same worker remain separate upstream browser sessions. The fleet controller runs
+outside FastAPI and reconciles Docker or another compute platform from PostgreSQL.
+Browserless itself is not assumed to scale Harbor's worker fleet.
 
-## Ownership boundary
+Administrators control minimum and maximum instances, session slots per instance,
+maximum queued attempts, scale-down cooldown, and whether the fleet is enabled. Only
+current, ready, healthy, non-draining observations count as capacity.
 
-Harbor owns:
+The session-slots value has no Harbor-imposed upper bound. Five is only the initial
+database default. Startup inserts this default only when no Browserless fleet row
+exists and never overwrites a saved value. The fleet controller applies the stored
+session capacity to Browserless workers and reports observed concurrency back to
+PostgreSQL. A changed value is applied once the fleet has no live demand so existing
+browser sessions are not interrupted; admission continues to use observed worker
+capacity until reconfiguration completes.
 
-- Desired and observed fleet state.
-- Instance health, readiness, and draining state.
-- Slot capacity and attempt placement.
-- Scaling policy and safety limits.
-- Graceful removal of browser instances.
-- An audit trail and metrics for scaling activity.
+On Kubernetes and k3s, Harbor owns a Browserless StatefulSet generated from a
+GitOps-managed workload template. Harbor writes its replica count directly; KEDA and
+HPA must not target that StatefulSet. Deterministic StatefulSet ordinals let Harbor
+drain the instance Kubernetes will remove before lowering replicas. See
+[Kubernetes and k3s](KUBERNETES.md).
 
-The infrastructure platform owns:
+## Browserbase
 
-- Starting and stopping the requested compute resources.
-- Container or process isolation.
-- Networking and image distribution.
-- Node scheduling and infrastructure failure reporting.
+Browserbase supplies its own infrastructure. Harbor stores a durable external-provider
+limit with enabled state, maximum active sessions, maximum queued attempts, and an
+audited configuration version.
 
-Platform-specific controllers translate Harbor's desired state into Docker,
-Kubernetes, ECS, Nomad, or another runtime. The FastAPI process does not receive
-infrastructure credentials or execute platform commands.
+Admission checks and consumes this capacity transactionally. The limit can match a
+Browserbase subscription or sit below it as a cost ceiling. Credentials and project ID
+remain deployment secrets. Startup inserts a disabled product default only when no
+Browserbase limit row exists and never derives enablement or limits from environment
+variables. An operator cannot enable Browserbase without an API key; the
+administrative API returns a clear conflict instead of accepting an unusable provider
+configuration.
 
-The controller is split across two independent dimensions:
+## Direct HTTP
 
-- A provider definition describes how a runtime instance becomes a usable provider
-  endpoint and records provider constraints such as its connection port.
-- A runtime driver lists, scales, probes, and removes infrastructure units for a named
-  deployment.
+Harbor stores durable maximum-active and maximum-queued limits for direct HTTP work.
+Administrators configure both values, and can enable or disable HTTP admission, from
+the Fleets page. Admission applies changes to new acquisition attempts immediately;
+active requests are allowed to finish.
 
-The provider-neutral reconciler joins those definitions with PostgreSQL desired state.
-Docker Compose is the local runtime driver; Kubernetes and k3s can implement the same
-runtime contract without changing demand calculation, instance state, placement, or
-the public CDP endpoint.
+## Administrative boundary
 
-## Fleet configuration
+Fleet and external quota limits are administrative policy, not `harbor.*` session
+settings. Explicit downstream provider selection cannot bypass them.
 
-A Harbor administrator controls fleet policy. Initial configuration includes:
-
-```text
-provider
-minimum_instances
-maximum_instances
-session_capacity_per_instance
-scale_down_cooldown_seconds
-```
-
-Configuration is durable in PostgreSQL. Environment values may bootstrap the first
-configuration but are not the ongoing source of truth. Administrative changes record
-the previous value, new value, timestamp, actor, and configuration version.
-
-Administrative limits are not downstream session settings. A `harbor.*` connection
-query may request session behavior, but it cannot raise fleet limits, alter scaling
-policy, or bypass capacity safety.
-
-A later web UI uses the same administrative contract as other control-plane clients.
-It should show configured limits, desired and observed instances, slot usage, queue
-demand, health, and recent reconciliation results.
-
-## Fleet and instance state
-
-Harbor stores both desired fleet state and observed instance state in PostgreSQL.
-Instances follow this lifecycle:
-
-```text
-starting -> ready -> draining -> stopped
-    |         |
-    +---------+-> unhealthy
-```
-
-Only healthy, ready, non-draining instances contribute admission capacity. Observations
-have a lease or freshness deadline; stale instances stop contributing capacity.
-
-Fleet capacity is calculated from observed instances:
-
-```text
-total capacity = sum(slots on ready instances)
-available capacity = total capacity - assigned slots
-```
-
-Desired instance count is not treated as available capacity. A requested instance may
-still be starting, unhealthy, or terminating.
-
-## Placement and isolation
-
-Provider attempts remain in provider-level FIFO queues. When a slot becomes available,
-Harbor atomically assigns the attempt to a ready instance and records that instance on
-the attempt before opening its provider connection.
-
-Placement prefers an instance with available slots and must never exceed its recorded
-capacity. A fleet may later use a more specific packing strategy, but placement remains
-independent from the public CDP contract.
-
-Each Harbor session normally receives its own browser context. Sharing a browser
-process does not remove the need for session ownership: Harbor must identify and clean
-up every context and target created by a session without affecting neighboring
-sessions. Instance capacity may be raised only after isolation and cleanup have been
-tested at that concurrency.
-
-Sessions may share an instance only when their process-level requirements are
-compatible. Launch flags, extensions, browser identity, and process-level proxy
-configuration may eventually require separate fleets for the same provider.
-
-## Scaling policy
-
-The first policy is deliberately deterministic:
-
-```text
-demand = active attempts + queued attempts
-required instances = ceil(demand / slots per instance)
-desired instances = clamp(required instances, minimum instances, maximum instances)
-```
-
-Scale-up responds promptly to demand. Scale-down requires sustained spare capacity and
-a cooldown. Policy becomes smarter over time, but it always stays inside administrator
-limits and never trades correctness for lower cost.
-
-Harbor must not maintain two competing owners of replica count. A fleet managed by
-Harbor cannot simultaneously be controlled by Kubernetes HPA or another autoscaler.
-
-## Draining and scale-down
-
-Lowering a limit must not abruptly terminate active sessions:
-
-- Lowering maximum instances marks excess instances for draining.
-- Lowering slots per instance stops new assignments above the new limit while existing
-  sessions finish.
-- A draining instance receives no new attempts.
-- An instance is removed after its assignments reach zero or a bounded administrative
-  drain deadline is reached.
-- Forced removal fails affected sessions truthfully; it never reports successful
-  acquisition.
-
-The initial implementation may scale down only when the entire fleet is idle. Selective
-instance draining is added only when the platform driver can remove the intended
-instance safely.
-
-## Controller boundary
-
-Fleet control runs separately from the API:
-
-```text
-Harbor API and admission
-          |
-          v
-PostgreSQL desired and observed state
-          ^
-          |
-Harbor fleet controller
-          |
-          v
-Docker / Kubernetes / another platform
-```
-
-Reconciliation is idempotent. A controller observes desired state, observes the
-platform, applies the smallest required change, updates instance state, and repeats.
-Only one active controller may mutate a particular fleet.
-
-Controller failure stops scaling. Existing assigned sessions continue, while stale
-observations eventually stop contributing capacity for new attempts. PostgreSQL failure
-stops reconciliation and admission. Instance loss immediately removes its capacity and
-causes its assigned attempts to fail or disconnect normally.
-
-## Observability
-
-Fleet state and actions are exposed through bounded Prometheus metrics and the future
-administrative UI. DEBUG remains a factual stream about an individual session and does
-not contain scaling recommendations or controller decisions.
-
-Fleet observability includes:
-
-- Desired, observed, ready, unhealthy, and draining instance counts.
-- Total, occupied, and available slots.
-- Queue depth and oldest queued attempt age.
-- Reconciliation success, failure, and latency.
-- Scaling actions by provider, direction, and stable outcome.
-- Time of the last successful reconciliation.
-
-The Docker implementation for all four managed browser providers is specified in
-[Managed Fleets](roadmap/managed-fleets.md).
+PostgreSQL is authoritative for queues, leases, slot assignments, desired capacity,
+external quotas, routing policy, and configuration audit. API startup may create
+missing policy rows with product defaults, but a restart or redeploy never overwrites
+operator-saved values. Environment variables are reserved for credentials, endpoints,
+database and messaging connections, and process/runtime mechanics. Prometheus exposes
+bounded operational aggregates; session IDs, URLs, domains, and provider error text
+remain in durable observations instead of metric labels.

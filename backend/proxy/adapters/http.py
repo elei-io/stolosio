@@ -1,4 +1,3 @@
-from backend.proxy.capabilities import CapabilityRegistry, capability_registry
 from backend.proxy.contracts import (
     HarborSession,
     ProviderName,
@@ -15,10 +14,8 @@ class HttpAdapter:
     def __init__(
         self,
         *,
-        capabilities: CapabilityRegistry = capability_registry,
         runtime_settings: Settings = settings,
     ) -> None:
-        self._capabilities = capabilities
         self._settings = runtime_settings
 
     async def acquire(
@@ -29,6 +26,5 @@ class HttpAdapter:
         return HttpCdpSession(
             session,
             resolved,
-            self._capabilities,
             self._settings,
         )

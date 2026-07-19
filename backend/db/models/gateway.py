@@ -36,6 +36,46 @@ class ProviderState(Base):
     provider: Mapped[str] = mapped_column(String(32), primary_key=True)
 
 
+class ExternalProviderLimit(Base):
+    __tablename__ = "external_provider_limits"
+    __table_args__ = (
+        CheckConstraint("max_active_sessions >= 0", name="ck_external_limit_active_nonnegative"),
+        CheckConstraint("max_queued_attempts >= 0", name="ck_external_limit_queue_nonnegative"),
+    )
+
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    max_active_sessions: Mapped[int] = mapped_column(nullable=False)
+    max_queued_attempts: Mapped[int] = mapped_column(nullable=False)
+    configuration_version: Mapped[int] = mapped_column(
+        nullable=False, default=1, server_default="1"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExternalProviderLimitEvent(Base):
+    __tablename__ = "external_provider_limit_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    provider: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("external_provider_limits.provider", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    configuration_version: Mapped[int] = mapped_column(nullable=False)
+    previous_values: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    new_values: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ProviderFleet(Base):
     __tablename__ = "provider_fleets"
     __table_args__ = (
@@ -45,6 +85,7 @@ class ProviderFleet(Base):
         ),
         CheckConstraint("session_capacity_per_instance >= 1", name="ck_fleet_capacity_positive"),
         CheckConstraint("scale_down_cooldown_seconds > 0", name="ck_fleet_cooldown_positive"),
+        CheckConstraint("max_queued_attempts >= 0", name="ck_fleet_queue_nonnegative"),
     )
 
     provider: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -52,6 +93,7 @@ class ProviderFleet(Base):
     maximum_instances: Mapped[int] = mapped_column(nullable=False)
     session_capacity_per_instance: Mapped[int] = mapped_column(nullable=False)
     scale_down_cooldown_seconds: Mapped[int] = mapped_column(nullable=False)
+    max_queued_attempts: Mapped[int] = mapped_column(nullable=False)
     desired_instances: Mapped[int] = mapped_column(nullable=False)
     configuration_version: Mapped[int] = mapped_column(
         nullable=False, default=1, server_default="1"
@@ -145,6 +187,7 @@ class AcquisitionAttempt(Base):
     __table_args__ = (
         UniqueConstraint("session_id", "ordinal"),
         Index("ix_acquisition_attempts_provider_state", "provider", "state"),
+        Index("ix_acquisition_attempts_finished_provider", "finished_at", "provider"),
         Index("ix_acquisition_attempts_instance_state", "provider_instance_id", "state"),
         Index(
             "ix_acquisition_attempts_queue",
@@ -163,6 +206,7 @@ class AcquisitionAttempt(Base):
     provider_instance_id: Mapped[str | None] = mapped_column(
         String(128), ForeignKey("provider_instances.id", ondelete="SET NULL")
     )
+    provider_session_id: Mapped[str | None] = mapped_column(String(128))
     resolved_settings: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     setting_sources: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -179,6 +223,15 @@ class AcquisitionAttempt(Base):
     acquiring_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provider_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provider_ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    capacity_occupied_ms: Mapped[int | None] = mapped_column(BigInteger)
+    browser_connected_ms: Mapped[int | None] = mapped_column(BigInteger)
+    provider_reported_ms: Mapped[int | None] = mapped_column(BigInteger)
+    estimated_billable_ms: Mapped[int | None] = mapped_column(BigInteger)
+    chargeable_time_ms: Mapped[int | None] = mapped_column(BigInteger)
+    cost_basis: Mapped[str | None] = mapped_column(String(32))
+    cost_rate_units_per_second: Mapped[int | None] = mapped_column(BigInteger)
     terminal_reason: Mapped[str | None] = mapped_column(String(64))
     domain_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("domains.id", ondelete="SET NULL"), index=True
@@ -188,7 +241,13 @@ class AcquisitionAttempt(Base):
     plan_position: Mapped[int | None]
     transition_trigger: Mapped[str | None] = mapped_column(String(64))
     estimated_cost_units: Mapped[int | None] = mapped_column(BigInteger)
-    actual_cost_units: Mapped[int | None] = mapped_column(BigInteger)
+    modeled_cost_units: Mapped[int | None] = mapped_column(BigInteger)
+    command_summary: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    command_cost_projected: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     cost_projected: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )

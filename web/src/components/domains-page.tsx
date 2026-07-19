@@ -47,16 +47,13 @@ import type {
 
 const providerLabels: Record<ActivityProvider, string> = {
   http: "HTTP",
-  chromium: "Chromium",
+  browserbase: "Browserbase",
   browserless: "Browserless",
-  lightpanda: "Lightpanda",
-  camoufox: "Camoufox",
 }
 
 const eligibilityFilterLabels: Record<string, string> = {
   all: "All routing states",
   eligible: "Eligible",
-  suppressed: "Suppressed",
   checking: "Checking",
   unhealthy: "Unhealthy",
   inconclusive: "Inconclusive",
@@ -205,9 +202,6 @@ function HealthSummary({ domain }: { domain: DomainListItem }) {
   if (domain.health_counts.healthy) {
     parts.push(`${domain.health_counts.healthy} healthy`)
   }
-  if (domain.suppressed_provider_count) {
-    parts.push(`${domain.suppressed_provider_count} suppressed`)
-  }
   if (domain.health_counts.checking) {
     parts.push(`${domain.health_counts.checking} checking`)
   }
@@ -283,9 +277,9 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
           icon={ShieldCheck}
         />
         <SummaryCard
-          label="Suppressed"
-          value={page.summary.suppressed_domains}
-          detail="Runtime incompatibility observed"
+          label="Checking"
+          value={page.summary.checking_domains}
+          detail="Health verification in progress"
           icon={FlaskConical}
         />
         <SummaryCard
@@ -307,7 +301,7 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
           <div>
             <h2 className="font-semibold">Observed domains</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Health, runtime compatibility, and the resulting cheapest route.
+              Health evidence and the resulting cheapest route.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
@@ -336,7 +330,6 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
               <SelectContent>
                 <SelectItem value="all">All routing states</SelectItem>
                 <SelectItem value="eligible">Eligible</SelectItem>
-                <SelectItem value="suppressed">Suppressed</SelectItem>
                 <SelectItem value="checking">Checking</SelectItem>
                 <SelectItem value="unhealthy">Unhealthy</SelectItem>
                 <SelectItem value="inconclusive">Inconclusive</SelectItem>
@@ -363,7 +356,7 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
                 resetPagination()
               }}
             >
-              Provider transitions
+              Live escalations
             </Button>
           </div>
         </div>
@@ -375,7 +368,7 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
               <span>Expected plan</span>
               <span>Provider evidence</span>
               <span>Sessions</span>
-              <span>Provider transitions</span>
+              <span>Live escalations</span>
               <span />
             </div>
             <div className="divide-y">
@@ -529,11 +522,9 @@ function CheckCell({ check }: { check: DomainHealthCheck }) {
 function RoutingBadge({ evidence }: { evidence: DomainProviderEvidence }) {
   const label = evidence.routing_eligible
     ? "Eligible"
-    : evidence.runtime_state === "suppressed"
-      ? "Suppressed"
-      : evidence.health_state === "healthy"
-        ? "Disabled"
-        : evidence.health_state.replaceAll("_", " ")
+    : evidence.health_state === "healthy"
+      ? "Disabled"
+      : evidence.health_state.replaceAll("_", " ")
   return (
     <Badge
       variant="outline"
@@ -541,48 +532,11 @@ function RoutingBadge({ evidence }: { evidence: DomainProviderEvidence }) {
         "w-fit font-normal capitalize",
         evidence.routing_eligible &&
           "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-        evidence.runtime_state === "suppressed" &&
-          "border-destructive/30 bg-destructive/10 text-destructive",
-        evidence.health_state === "checking" &&
-          "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400",
-        !evidence.routing_eligible &&
-          evidence.runtime_state !== "suppressed" &&
-          "text-muted-foreground"
+        !evidence.routing_eligible && "text-muted-foreground"
       )}
     >
       {label}
     </Badge>
-  )
-}
-
-function RuntimeCell({ evidence }: { evidence: DomainProviderEvidence }) {
-  if (evidence.runtime_state === "eligible") {
-    return (
-      <div>
-        <p className="flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
-          <Check className="size-3" /> Compatible
-        </p>
-        <p className="mt-0.5 text-[0.6875rem] text-muted-foreground">Active</p>
-      </div>
-    )
-  }
-  return (
-    <div>
-      <p className="flex items-center gap-1 text-xs font-medium text-destructive">
-        <X className="size-3" /> Suppressed
-      </p>
-      <p
-        className="mt-0.5 max-w-28 truncate text-[0.6875rem] text-muted-foreground"
-        title={evidence.runtime.incompatible_method ?? undefined}
-      >
-        {evidence.runtime.incompatible_method ?? "Incompatible command"}
-      </p>
-      {evidence.runtime.suppressed_at && (
-        <p className="mt-0.5 text-[0.6875rem] text-muted-foreground">
-          Seen {relativeTime(evidence.runtime.suppressed_at)}
-        </p>
-      )}
-    </div>
   )
 }
 
@@ -596,7 +550,7 @@ function ProviderRow({
   onCheck: () => void
 }) {
   return (
-    <div className="grid min-w-[58rem] grid-cols-[minmax(7rem,1.15fr)_repeat(4,minmax(5rem,.8fr))_minmax(7rem,1fr)_minmax(6rem,.8fr)_auto] items-center gap-2 px-4 py-3">
+    <div className="grid min-w-[50rem] grid-cols-[minmax(7rem,1.15fr)_repeat(4,minmax(5rem,.8fr))_minmax(6rem,.8fr)_auto] items-center gap-2 px-4 py-3">
       <div>
         <div className="flex items-center gap-1.5">
           <p className="text-sm font-medium">
@@ -620,7 +574,6 @@ function ProviderRow({
       <CheckCell check={evidence.checks.status} />
       <CheckCell check={evidence.checks.headers} />
       <CheckCell check={evidence.checks.content} />
-      <RuntimeCell evidence={evidence} />
       <div>
         <RoutingBadge evidence={evidence} />
         {evidence.failure_reason_code && (
@@ -641,7 +594,13 @@ function ProviderRow({
         ) : (
           <FlaskConical className="size-3" aria-hidden />
         )}
-        {pending ? "Checking" : evidence.last_checked_at ? "Recheck" : "Check"}
+        {pending
+          ? "Checking"
+          : evidence.provider === "browserbase"
+            ? "Paid check"
+            : evidence.last_checked_at
+              ? "Recheck"
+              : "Check"}
       </Button>
     </div>
   )
@@ -768,7 +727,7 @@ function DomainDetailPage({
         </Card>
         <Card className="gap-0 rounded-lg p-4">
           <Fact
-            label="Runtime provider transitions"
+            label="Live provider escalations"
             value={formatNumber(domain.transition_count)}
           />
         </Card>
@@ -780,8 +739,8 @@ function DomainDetailPage({
             <h2 className="font-semibold">Provider eligibility</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Synchronized health checks establish safe acquisition and compare
-              primary content. Real sessions suppress or restore runtime
-              compatibility. Cost orders providers eligible on both.
+              primary content. Cost orders providers with current healthy
+              evidence; Browserbase remains the configured terminal fallback.
             </p>
           </div>
           <Button
@@ -796,17 +755,16 @@ function DomainDetailPage({
             ) : (
               <FlaskConical className="size-3.5" aria-hidden />
             )}
-            Check all providers
+            Check HTTP + Browserless
           </Button>
         </div>
         <div className="overflow-x-auto">
-          <div className="grid min-w-[58rem] grid-cols-[minmax(7rem,1.15fr)_repeat(4,minmax(5rem,.8fr))_minmax(7rem,1fr)_minmax(6rem,.8fr)_auto] gap-2 border-b bg-muted/35 px-4 py-2 font-mono text-[0.625rem] font-medium tracking-wider text-muted-foreground uppercase">
+          <div className="grid min-w-[50rem] grid-cols-[minmax(7rem,1.15fr)_repeat(4,minmax(5rem,.8fr))_minmax(6rem,.8fr)_auto] gap-2 border-b bg-muted/35 px-4 py-2 font-mono text-[0.625rem] font-medium tracking-wider text-muted-foreground uppercase">
             <span>Provider</span>
             <span>Navigation</span>
             <span>HTTP</span>
             <span>Headers</span>
             <span>Content</span>
-            <span>Runtime fit</span>
             <span>Routing</span>
             <span>Action</span>
           </div>
@@ -818,8 +776,11 @@ function DomainDetailPage({
                 pending={
                   evidence.checks.navigation.state === "checking" ||
                   (trigger.isPending &&
-                    (!trigger.variables?.providers ||
-                      trigger.variables.providers.includes(evidence.provider)))
+                    ((!trigger.variables?.providers &&
+                      evidence.provider !== "browserbase") ||
+                      trigger.variables?.providers?.includes(
+                        evidence.provider
+                      ) === true))
                 }
                 onCheck={() =>
                   trigger.mutate({
@@ -919,42 +880,13 @@ function DomainDetailPage({
           )}
         </section>
 
-        <section className="self-start overflow-hidden rounded-lg border bg-card">
-          <div className="border-b px-4 py-3">
-            <h2 className="font-semibold">Observed CDP methods</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Historical telemetry only. Runtime decisions use exact command
-              shapes from individual sessions.
-            </p>
-          </div>
-          {domain.commands.length ? (
-            <div className="divide-y">
-              {domain.commands.slice(0, 12).map((command) => (
-                <div
-                  key={command.method}
-                  className="flex items-center justify-between gap-3 px-4 py-2.5"
-                >
-                  <code className="truncate text-xs">{command.method}</code>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {formatNumber(command.command_count)} ·{" "}
-                    {formatNumber(command.session_count)} sessions
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="p-5 text-sm text-muted-foreground">
-              No CDP method observations recorded.
-            </div>
-          )}
-        </section>
       </div>
 
       <section className="mt-5 overflow-hidden rounded-lg border bg-card">
         <div className="border-b px-4 py-3">
           <h2 className="font-semibold">Recent sessions</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Actual provider paths; arrows show runtime transition.
+            Actual provider paths; arrows show live escalation.
           </p>
         </div>
         {sessions.isError ? (
@@ -1012,7 +944,7 @@ function DomainDetailPage({
                       </span>
                     </td>
                     <td className="px-4 py-2 text-right whitespace-nowrap text-muted-foreground">
-                      {formatNumber(session.actual_cost_units)} units
+                      {formatNumber(session.modeled_cost_units)} units
                     </td>
                   </tr>
                 ))}
@@ -1047,9 +979,8 @@ export function DomainsPage({
             Domains
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Harbor picks the cheapest healthy, runtime-compatible provider. A
-            live incompatibility suppresses that provider until one later
-            compatible session restores it.
+            Harbor picks the cheapest provider with current health evidence and
+            uses Browserbase as the configured terminal fallback.
           </p>
         </header>
       )}

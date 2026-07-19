@@ -5,29 +5,24 @@ from backend.proxy.contracts import ProviderName
 
 
 class FakeRepository:
+    def __init__(self) -> None:
+        self.values = None
+
     async def update_configuration(self, provider, values, *, actor):
-        raise AssertionError("invalid capacity must not reach the repository")
+        self.values = values
+        return "updated"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("provider", "capacity", "maximum"),
-    [
-        (ProviderName.BROWSERLESS, 6, 5),
-        (ProviderName.LIGHTPANDA, 2, 1),
-        (ProviderName.CAMOUFOX, 2, 1),
-    ],
-)
-async def test_provider_capacity_cannot_exceed_process_limit(
-    provider: ProviderName,
-    capacity: int,
-    maximum: int,
-) -> None:
-    service = FleetService(FakeRepository())  # type: ignore[arg-type]
+async def test_provider_capacity_is_operator_controlled() -> None:
+    repository = FakeRepository()
+    service = FleetService(repository)  # type: ignore[arg-type]
 
-    with pytest.raises(ValueError, match=rf"at most {maximum} session"):
-        await service.update(
-            provider,
-            {"session_capacity_per_instance": capacity},
-            actor="test",
-        )
+    result = await service.update(
+        ProviderName.BROWSERLESS,
+        {"session_capacity_per_instance": 37},
+        actor="test",
+    )
+
+    assert result == "updated"
+    assert repository.values == {"session_capacity_per_instance": 37}

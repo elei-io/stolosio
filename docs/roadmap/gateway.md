@@ -37,8 +37,8 @@ provider connection
 Global admission limits all live Harbor sessions. A session keeps its global slot from
 admission until the downstream connection terminates.
 
-Provider admission independently limits active and queued attempts for Chromium,
-Browserless, Lightpanda, and Camoufox. A full provider queue fails only that attempt;
+Provider admission independently limits active and queued attempts for HTTP,
+Browserless, and Browserbase. A full provider queue fails only that attempt;
 the gateway then terminates and releases the logical session cleanly.
 
 This separation allows a future session to perform an HTTP attempt and later acquire a

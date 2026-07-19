@@ -36,7 +36,7 @@ async def main() -> None:
 
     events = await asyncio.wait_for(debug, timeout=10)
     attempts = [
-        event["provider"] for event in events if event["event_type"] == "attempt.started"
+        event["provider"] for event in events if event["event_type"] == "attempt.connected"
     ]
     assert attempts == ["http"]
     assert all(event["event_type"] != "execution.transitioned" for event in events)

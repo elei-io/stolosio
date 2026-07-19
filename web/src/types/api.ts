@@ -21,8 +21,78 @@ export type ActivityEventPage = {
   next_cursor: string | null
 }
 
+export type CommandCostStat = {
+  provider: ActivityProvider
+  method: string
+  command_count: number
+  failed_count: number
+  interrupted_count: number
+  total_duration_ms: number
+  total_provider_latency_ms: number
+  total_harbor_queue_ms: number
+  attributed_browser_time_ms: number
+  attributed_cost_units: number
+  first_seen_at: string
+  last_seen_at: string
+}
+
+export type CostWindow = "24h" | "7d" | "30d" | "90d"
+
+export type CostTotals = {
+  session_count: number
+  attempt_count: number
+  failed_attempt_count: number
+  modeled_cost_units: number
+  chargeable_time_ms: number
+  browser_connected_time_ms: number
+  browserless_slot_time_ms: number
+  browserbase_billable_time_ms: number
+}
+
+export type ProviderCostSummary = {
+  provider: ActivityProvider
+  attempt_count: number
+  session_count: number
+  failed_attempt_count: number
+  modeled_cost_units: number
+  chargeable_time_ms: number
+  browser_connected_time_ms: number
+  capacity_occupied_time_ms: number
+  estimated_billable_time_ms: number
+}
+
+export type CostBucket = {
+  started_at: string
+  provider: ActivityProvider
+  attempt_count: number
+  modeled_cost_units: number
+  chargeable_time_ms: number
+}
+
+export type CostSession = {
+  session_id: string
+  client_reference: string | null
+  closed_at: string | null
+  providers: ActivityProvider[]
+  modeled_cost_units: number
+  chargeable_time_ms: number
+}
+
+export type CostOverview = {
+  window: CostWindow
+  starts_at: string
+  ends_at: string
+  finalized_through: string | null
+  totals: CostTotals
+  providers: ProviderCostSummary[]
+  buckets: CostBucket[]
+  recent_sessions: CostSession[]
+}
+
 export type ActivityProvider =
-  "http" | "chromium" | "browserless" | "lightpanda" | "camoufox"
+  | "http"
+  | "browserless"
+  | "browserbase"
 
 export type HarborSessionState =
   | "requested"
@@ -49,7 +119,10 @@ export type SessionListItem = {
   selection_mode: "automatic" | "explicit"
   selection_reason: string | null
   transition_triggers: string[]
-  actual_cost_units: number
+  modeled_cost_units: number
+  total_browser_time_ms: number
+  total_capacity_occupied_ms: number
+  estimated_billable_ms: number
   domains: SessionDomainSummary[]
 }
 
@@ -63,13 +136,17 @@ export type SessionAttempt = {
   ordinal: number
   provider: ActivityProvider
   provider_instance_id: string | null
+  provider_session_id: string | null
   state: string
   selection_reason: string | null
   transition_trigger: string | null
   plan_version: number | null
   plan_position: number | null
   estimated_cost_units: number | null
-  actual_cost_units: number | null
+  modeled_cost_units: number | null
+  chargeable_time_ms: number | null
+  cost_basis: string | null
+  cost_rate_units_per_second: number | null
   resolved_setting_keys: string[]
   setting_sources: Record<string, unknown>
   created_at: string
@@ -77,6 +154,12 @@ export type SessionAttempt = {
   acquiring_at: string | null
   active_at: string | null
   finished_at: string | null
+  provider_started_at: string | null
+  provider_ended_at: string | null
+  capacity_occupied_ms: number | null
+  browser_connected_ms: number | null
+  provider_reported_ms: number | null
+  estimated_billable_ms: number | null
   terminal_reason: string | null
 }
 
@@ -86,12 +169,10 @@ export type SessionDetail = SessionListItem & {
   opened_at: string | null
   closing_at: string | null
   lease_expires_at: string | null
-  command_count: number
   attempts: SessionAttempt[]
 }
 
-export type ManagedProvider =
-  "chromium" | "browserless" | "lightpanda" | "camoufox"
+export type ManagedProvider = "browserless"
 
 export type GatewayFleetSnapshot = {
   active_sessions: number
@@ -119,6 +200,7 @@ export type FleetConfiguration = {
   maximum_instances: number
   session_capacity_per_instance: number
   scale_down_cooldown_seconds: number
+  max_queued_attempts: number
   desired_instances: number
   configuration_version: number
   enabled: boolean
@@ -130,7 +212,22 @@ export type FleetConfigurationUpdate = {
   maximum_instances?: number
   session_capacity_per_instance?: number
   scale_down_cooldown_seconds?: number
+  max_queued_attempts?: number
   enabled?: boolean
+}
+
+export type ExternalProviderCapacity = {
+  provider: "http" | "browserbase"
+  enabled: boolean
+  max_active_sessions: number
+  max_queued_attempts: number
+  configuration_version: number
+}
+
+export type ExternalProviderCapacityUpdate = {
+  enabled?: boolean
+  max_active_sessions?: number
+  max_queued_attempts?: number
 }
 
 export type RoutingConfiguration = {
@@ -160,9 +257,7 @@ export type ProviderRoutingUpdate = {
 }
 
 export type DomainHealthState =
-  "unknown" | "checking" | "healthy" | "unhealthy" | "inconclusive"
-
-export type DomainRuntimeState = "eligible" | "suppressed"
+  "unknown" | "healthy" | "unhealthy" | "inconclusive"
 
 export type DomainPlanCandidate = {
   provider: ActivityProvider
@@ -182,7 +277,6 @@ export type DomainSummary = {
   healthy_domains: number
   checking_domains: number
   unhealthy_domains: number
-  suppressed_domains: number
   no_evidence_domains: number
   transitioned_domains: number
 }
@@ -203,7 +297,6 @@ export type DomainListItem = {
     unhealthy: number
     inconclusive: number
   }
-  suppressed_provider_count: number
   expected_plan: DomainPlan
 }
 
@@ -217,7 +310,6 @@ export type DomainProviderEvidence = {
   provider: ActivityProvider
   automatic_enabled: boolean
   health_state: DomainHealthState
-  runtime_state: DomainRuntimeState
   routing_eligible: boolean
   successful_probe_count: number
   failed_probe_count: number
@@ -232,15 +324,6 @@ export type DomainProviderEvidence = {
   failure_reason_code: string | null
   health_policy_version: number | null
   provider_contract_version: number
-  runtime: {
-    state: DomainRuntimeState
-    suppressed_at: string | null
-    suppressed_session_id: string | null
-    incompatible_method: string | null
-    restored_at: string | null
-    restored_session_id: string | null
-    last_evidence_at: string | null
-  }
   checks: {
     navigation: DomainHealthCheck
     status: DomainHealthCheck
@@ -257,14 +340,6 @@ export type DomainHealthCheck = {
   checked_at: string | null
 }
 
-export type DomainCommandStat = {
-  method: string
-  command_count: number
-  session_count: number
-  first_seen_at: string
-  last_seen_at: string
-}
-
 export type DomainDetail = {
   id: number
   hostname: string
@@ -276,7 +351,6 @@ export type DomainDetail = {
   transition_count: number
   expected_plan: DomainPlan
   providers: DomainProviderEvidence[]
-  commands: DomainCommandStat[]
 }
 
 export type DomainProbe = {
@@ -323,7 +397,7 @@ export type DomainSession = {
   providers: ActivityProvider[]
   selection_reason: string | null
   transition_triggers: string[]
-  actual_cost_units: number
+  modeled_cost_units: number
   created_at: string
   closed_at: string | null
   terminal_reason: string | null

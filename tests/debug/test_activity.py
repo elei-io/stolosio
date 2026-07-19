@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -58,18 +58,18 @@ async def test_activity_history_filters_and_pages_events(
         SessionEvent.create(
             EventType.SESSION_OPEN,
             session_id,
-            provider=ProviderName.CHROMIUM,
+            provider=ProviderName.BROWSERLESS,
         ),
         SessionEvent.create(
             EventType.COMMAND_FAILED,
             session_id,
-            provider=ProviderName.CHROMIUM,
+            provider=ProviderName.BROWSERLESS,
             payload={"command_id": 1, "method": "Page.printToPDF", "reason": "unsupported"},
         ),
         SessionEvent.create(
             EventType.SESSION_CLOSED,
             session_id,
-            provider=ProviderName.CHROMIUM,
+            provider=ProviderName.BROWSERLESS,
         ),
     ]
     await _record_events(database_sessions, *events)
@@ -91,7 +91,7 @@ async def test_activity_history_filters_and_pages_events(
 
     failures = await history.events(
         ActivityEventFilters(
-            providers=(ProviderName.CHROMIUM,),
+            providers=(ProviderName.BROWSERLESS,),
             families=(ActivityEventFamily.COMMAND,),
             outcomes=(ActivityEventOutcome.FAILURE,),
         )
@@ -100,40 +100,14 @@ async def test_activity_history_filters_and_pages_events(
     assert failures.events[0]["outcome"] == "failure"
     assert failures.events[0]["session_id"] == str(session_id)
 
-
-@pytest.mark.asyncio
-async def test_activity_history_treats_retired_unknown_provider_as_unbound(
-    database_sessions: async_sessionmaker[AsyncSession],
-) -> None:
-    session_id = uuid4()
-    event = SessionEvent.create(EventType.SESSION_REQUESTED, session_id)
-    async with database_sessions.begin() as database:
-        database.add(
-            GatewaySession(
-                id=str(session_id),
-                owner_id="test",
-                lease_token=str(uuid4()),
-                requested_settings={},
-                state="closed",
-            )
-        )
-        database.add(
-            SessionEventRecord(
-                event_id=event.event_id,
-                schema_version=event.schema_version,
-                session_id=str(session_id),
-                event_type=event.event_type,
-                provider="unknown",
-                occurred_at=event.occurred_at,
-                payload=event.payload,
-            )
-        )
-
-    page = await ActivityHistoryService(database_sessions).events(
-        ActivityEventFilters()
+    after_first = await history.events(
+        ActivityEventFilters(),
+        occurred_after=events[1].occurred_at - timedelta(microseconds=1),
     )
-
-    assert page.events[0]["provider"] is None
+    assert [event["event_type"] for event in after_first.events] == [
+        "command.failed",
+        "session.closed",
+    ]
 
 
 @pytest.mark.asyncio
@@ -142,12 +116,12 @@ async def test_activity_stream_filters_events_without_losing_sequence_position()
     ignored = SessionEvent.create(
         EventType.SESSION_OPEN,
         session_id,
-        provider=ProviderName.CAMOUFOX,
+        provider=ProviderName.BROWSERBASE,
     )
     matched = SessionEvent.create(
         EventType.ATTEMPT_FAILED,
         session_id,
-        provider=ProviderName.CHROMIUM,
+        provider=ProviderName.BROWSERLESS,
         payload={"reason": "provider_connection_failed"},
     )
 
@@ -172,9 +146,7 @@ async def test_activity_stream_filters_events_without_losing_sequence_position()
                 await receive(
                     SimpleNamespace(
                         data=event.to_json(),
-                        metadata=SimpleNamespace(
-                            sequence=SimpleNamespace(stream=sequence)
-                        ),
+                        metadata=SimpleNamespace(sequence=SimpleNamespace(stream=sequence)),
                     )
                 )
             return FakeSubscription()
@@ -185,7 +157,7 @@ async def test_activity_stream_filters_events_without_losing_sequence_position()
         max_pending_bytes=10_000,
         heartbeat_seconds=60,
     ).events(
-        ActivityEventFilters(providers=(ProviderName.CHROMIUM,)),
+        ActivityEventFilters(providers=(ProviderName.BROWSERLESS,)),
     )
     try:
         event_frame = await anext(stream)
@@ -202,9 +174,7 @@ async def test_activity_stream_filters_events_without_losing_sequence_position()
 async def test_activity_stream_reports_an_expired_resume_cursor() -> None:
     class FakeJetStream:
         async def stream_info(self, stream):
-            return SimpleNamespace(
-                state=SimpleNamespace(messages=10, first_seq=50, last_seq=59)
-            )
+            return SimpleNamespace(state=SimpleNamespace(messages=10, first_seq=50, last_seq=59))
 
     class FakeClient:
         def jetstream(self):
@@ -227,15 +197,15 @@ def test_activity_filters_match_registered_event_contract() -> None:
     event = SessionEvent.create(
         EventType.NAVIGATION_FAILED,
         uuid4(),
-        provider=ProviderName.LIGHTPANDA,
+        provider=ProviderName.BROWSERBASE,
         occurred_at=datetime.now(UTC),
     )
 
     assert ActivityEventFilters(
-        providers=(ProviderName.LIGHTPANDA,),
+        providers=(ProviderName.BROWSERBASE,),
         families=(ActivityEventFamily.NAVIGATION,),
         outcomes=(ActivityEventOutcome.FAILURE,),
     ).matches(event)
     assert not ActivityEventFilters(
-        providers=(ProviderName.CHROMIUM,),
+        providers=(ProviderName.BROWSERLESS,),
     ).matches(event)

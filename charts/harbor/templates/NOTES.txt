@@ -1,0 +1,12 @@
+Harbor is installed.
+
+The platform can read the API and UI load-balancer addresses with:
+
+  kubectl get service {{ include "harbor.fullname" . }}-api -n {{ .Release.Namespace }}
+  kubectl get service {{ include "harbor.fullname" . }}-web -n {{ .Release.Namespace }}
+
+CDP endpoint:
+
+  ws://<API-ADDRESS>:{{ .Values.api.service.port }}/v1/connect
+
+PostgreSQL, NATS, DNS, TLS, and ingress remain platform-managed.

@@ -1,0 +1,92 @@
+{{- define "harbor.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "harbor.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else if contains (include "harbor.name" .) .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name (include "harbor.name" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+
+{{- define "harbor.labels" -}}
+app.kubernetes.io/name: {{ include "harbor.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
+{{- end }}
+
+{{- define "harbor.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "harbor.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "harbor.extraPodLabels" -}}
+{{- $labels := omit .Values.podLabels
+  "app.kubernetes.io/name"
+  "app.kubernetes.io/instance"
+  "app.kubernetes.io/component" }}
+{{- with $labels }}
+{{- toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "harbor.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{- default (printf "%s-fleet-controller" (include "harbor.fullname" .)) .Values.serviceAccount.name }}
+{{- else }}
+{{- required "serviceAccount.name is required when serviceAccount.create=false" .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{- define "harbor.connectionEnv" -}}
+- name: DATABASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ required "database.existingSecret is required" .Values.database.existingSecret }}
+      key: {{ .Values.database.urlSecretKey }}
+- name: NATS_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ required "nats.existingSecret is required" .Values.nats.existingSecret }}
+      key: {{ .Values.nats.urlSecretKey }}
+{{- end }}
+
+{{- define "harbor.browserbaseEnv" -}}
+- name: BROWSERBASE_API_URL
+  value: {{ .Values.browserbase.apiUrl | quote }}
+{{- with .Values.browserbase.existingSecret }}
+- name: BROWSERBASE_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: {{ $.Values.browserbase.apiKeySecretKey }}
+- name: BROWSERBASE_PROJECT_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: {{ $.Values.browserbase.projectIdSecretKey }}
+{{- end }}
+{{- end }}
+
+{{- define "harbor.commonPodSpec" -}}
+{{- with .Values.imagePullSecrets }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.nodeSelector }}
+nodeSelector:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.affinity }}
+affinity:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.tolerations }}
+tolerations:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}

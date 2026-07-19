@@ -11,7 +11,7 @@ class ProviderFleetDefinition:
     provider: ProviderName
     connection_port: int
     connection_path: str = ""
-    maximum_session_capacity: int | None = None
+    default_session_capacity: int = 1
 
     def endpoint(self, instance: RuntimeInstance) -> str:
         return f"ws://{instance.address}:{self.connection_port}{self.connection_path}"

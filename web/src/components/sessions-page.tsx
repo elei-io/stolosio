@@ -10,7 +10,6 @@ import {
   LoaderCircle,
   Search,
   Settings2,
-  Terminal,
   XCircle,
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
@@ -27,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { extractApiError } from "@/lib/api"
+import { summarizeCommandMethods } from "@/lib/events"
 import { cn } from "@/lib/utils"
 import type {
   ActivityEvent,
@@ -39,10 +39,8 @@ import type {
 
 const providerLabels: Record<ActivityProvider, string> = {
   http: "HTTP",
-  chromium: "Chromium",
+  browserbase: "Browserbase",
   browserless: "Browserless",
-  lightpanda: "Lightpanda",
-  camoufox: "Camoufox",
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
@@ -69,6 +67,12 @@ function formatDuration(seconds: number | null) {
   const minutes = Math.floor(seconds / 60)
   const remainder = Math.round(seconds % 60)
   return `${minutes}m ${remainder}s`
+}
+
+function formatMilliseconds(milliseconds: number | null) {
+  if (milliseconds === null) return "—"
+  if (milliseconds < 1_000) return `${milliseconds}ms`
+  return formatDuration(milliseconds / 1_000)
 }
 
 function humanize(value: string | null) {
@@ -251,7 +255,7 @@ function SessionList({ navigate }: { navigate: (href: string) => void }) {
                 </p>
                 <StateBadge state={session.state} />
                 <p className="text-sm font-medium md:text-right">
-                  {session.actual_cost_units} units
+                  {session.modeled_cost_units} units
                 </p>
               </button>
             ))}
@@ -315,12 +319,22 @@ function EventTimeline({ events }: { events: ActivityEvent[] }) {
                 {humanize(event.event_type)}
               </p>
               <p className="mt-1 font-mono text-xs break-all text-muted-foreground">
-                {typeof event.payload.method === "string"
-                  ? event.payload.method
-                  : typeof event.payload.reason === "string"
-                    ? humanize(event.payload.reason)
-                    : (event.attempt_id ?? "Session event")}
+                {summarizeCommandMethods(event.payload) ??
+                  (typeof event.payload.method === "string"
+                    ? event.payload.method
+                    : typeof event.payload.reason === "string"
+                      ? humanize(event.payload.reason)
+                      : (event.attempt_id ?? "Session event"))}
               </p>
+              {typeof event.payload.duration_ms === "number" && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {formatMilliseconds(event.payload.duration_ms)} total
+                  {typeof event.payload.provider_latency_ms === "number" &&
+                    ` · ${formatMilliseconds(event.payload.provider_latency_ms)} provider`}
+                  {typeof event.payload.harbor_queue_ms === "number" &&
+                    ` · ${formatMilliseconds(event.payload.harbor_queue_ms)} Harbor`}
+                </p>
+              )}
             </div>
             {event.provider && (
               <Badge variant="secondary">
@@ -420,18 +434,28 @@ function SessionDetailView({
         />
         <MetricCard
           icon={Coins}
-          label="Actual cost"
-          value={`${session.actual_cost_units} units`}
-        />
-        <MetricCard
-          icon={Terminal}
-          label="Observed methods"
-          value={String(session.command_count)}
+          label="Modeled cost"
+          value={`${session.modeled_cost_units} units`}
         />
         <MetricCard
           icon={Settings2}
           label="Selection"
           value={`${session.selection_mode} · ${humanize(session.selection_reason)}`}
+        />
+        <MetricCard
+          icon={Clock3}
+          label="Browser time"
+          value={formatMilliseconds(session.total_browser_time_ms)}
+        />
+        <MetricCard
+          icon={Clock3}
+          label="Capacity occupied"
+          value={formatMilliseconds(session.total_capacity_occupied_ms)}
+        />
+        <MetricCard
+          icon={Coins}
+          label="Estimated billable"
+          value={formatMilliseconds(session.estimated_billable_ms)}
         />
       </div>
 
@@ -486,7 +510,7 @@ function SessionDetailView({
                         {attempt.state}
                       </Badge>
                     </div>
-                    <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
+                    <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
                       <div>
                         <p className="text-xs text-muted-foreground">
                           Selection
@@ -504,9 +528,64 @@ function SessionDetailView({
                         </p>
                       </div>
                       <div>
-                        <p className="text-xs text-muted-foreground">Cost</p>
+                        <p className="text-xs text-muted-foreground">
+                          Modeled cost
+                        </p>
                         <p className="mt-1">
-                          {attempt.actual_cost_units ?? 0} units
+                          {attempt.modeled_cost_units ?? 0} units
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Browser time
+                        </p>
+                        <p className="mt-1">
+                          {formatMilliseconds(
+                            attempt.provider_reported_ms ??
+                              attempt.browser_connected_ms
+                          )}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Capacity occupied
+                        </p>
+                        <p className="mt-1">
+                          {formatMilliseconds(attempt.capacity_occupied_ms)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Chargeable time
+                        </p>
+                        <p className="mt-1">
+                          {formatMilliseconds(attempt.chargeable_time_ms)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Cost basis
+                        </p>
+                        <p className="mt-1 capitalize">
+                          {humanize(attempt.cost_basis)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Cost rate
+                        </p>
+                        <p className="mt-1">
+                          {attempt.cost_rate_units_per_second === null
+                            ? "—"
+                            : `${attempt.cost_rate_units_per_second} units/s`}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Estimated billable
+                        </p>
+                        <p className="mt-1">
+                          {formatMilliseconds(attempt.estimated_billable_ms)}
                         </p>
                       </div>
                     </div>

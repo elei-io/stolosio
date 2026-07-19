@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Boxes,
   CircleAlert,
+  Cloud,
   Clock3,
   LoaderCircle,
   RefreshCw,
@@ -23,6 +24,8 @@ import { cn } from "@/lib/utils"
 import type {
   FleetConfiguration,
   FleetConfigurationUpdate,
+  ExternalProviderCapacity,
+  ExternalProviderCapacityUpdate,
   ManagedProvider,
   ProviderFleetSnapshot,
 } from "@/types/api"
@@ -38,10 +41,15 @@ type FleetRow = {
 }
 
 const providerLabels: Record<ManagedProvider, string> = {
-  chromium: "Chromium",
   browserless: "Browserless",
-  lightpanda: "Lightpanda",
-  camoufox: "Camoufox",
+}
+
+const admissionProviderLabels: Record<
+  ExternalProviderCapacity["provider"],
+  string
+> = {
+  http: "Direct HTTP",
+  browserbase: "Browserbase",
 }
 
 const numberFormatter = new Intl.NumberFormat()
@@ -61,6 +69,26 @@ function fetchFleetSnapshots() {
 
 function fetchFleetConfigurations() {
   return apiRequest<FleetConfiguration[]>("/v1/admin/fleets")
+}
+
+function fetchExternalCapacities() {
+  return apiRequest<ExternalProviderCapacity[]>(
+    "/v1/admin/providers/capacity"
+  )
+}
+
+function updateExternalCapacity(
+  provider: ExternalProviderCapacity["provider"],
+  update: ExternalProviderCapacityUpdate
+) {
+  return apiRequest<ExternalProviderCapacity>(
+    `/v1/admin/providers/${provider}/capacity`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(update),
+    }
+  )
 }
 
 function updateFleetConfiguration(
@@ -221,9 +249,13 @@ function ErrorState({ error, retry }: { error: unknown; retry: () => void }) {
 
 function FleetList({
   rows,
+  admissionCapacities,
+  snapshots,
   navigate,
 }: {
   rows: FleetRow[]
+  admissionCapacities: ExternalProviderCapacity[]
+  snapshots: ProviderFleetSnapshot[]
   navigate: (href: string) => void
 }) {
   const totals = useMemo(
@@ -398,6 +430,77 @@ function FleetList({
           })}
         </div>
       </section>
+
+      {admissionCapacities.length > 0 && (
+        <section className="mt-5 overflow-hidden rounded-lg border bg-card">
+          <div className="border-b px-4 py-3">
+            <h2 className="font-semibold">Admission-controlled providers</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Concurrency and queue limits enforced by Harbor admission.
+            </p>
+          </div>
+          <div className="divide-y">
+            {admissionCapacities.map((capacity) => {
+              const snapshot = snapshots.find(
+                (candidate) => candidate.provider === capacity.provider
+              )
+              const href = `/fleets/${capacity.provider}`
+              return (
+                <a
+                  key={capacity.provider}
+                  href={href}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    navigate(href)
+                  }}
+                  className="group block px-4 py-4 transition-colors hover:bg-muted/25 md:grid md:grid-cols-[1.35fr_1fr_1fr_1fr_2rem] md:items-center md:gap-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="flex size-8 items-center justify-center rounded-md border bg-background">
+                      <Cloud className="size-4 text-muted-foreground" aria-hidden />
+                    </span>
+                    <div>
+                      <p className="font-medium">
+                        {admissionProviderLabels[capacity.provider]}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {capacity.enabled
+                          ? "Admission enabled"
+                          : "Admission disabled"}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm md:mt-0">
+                    <span className="font-medium">
+                      {snapshot?.active_attempts ?? 0}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {" "}
+                      / {capacity.max_active_sessions} concurrent
+                    </span>
+                  </p>
+                  <p className="mt-3 text-sm md:mt-0">
+                    <span className="font-medium">
+                      {snapshot?.queued_attempts ?? 0}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {" "}
+                      / {capacity.max_queued_attempts} queued
+                    </span>
+                  </p>
+                  <p className="mt-3 text-sm text-muted-foreground md:mt-0">
+                    Version {capacity.configuration_version}
+                  </p>
+                  <ArrowRight
+                    className="hidden size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 md:block"
+                    aria-hidden
+                  />
+                </a>
+              )
+            })}
+          </div>
+        </section>
+      )}
     </>
   )
 }
@@ -485,6 +588,7 @@ function ConfigurationForm({
     maximum_instances: configuration.maximum_instances,
     session_capacity_per_instance: configuration.session_capacity_per_instance,
     scale_down_cooldown_seconds: configuration.scale_down_cooldown_seconds,
+    max_queued_attempts: configuration.max_queued_attempts,
   })
 
   const mutation = useMutation({
@@ -506,7 +610,8 @@ function ConfigurationForm({
     values.session_capacity_per_instance !==
       configuration.session_capacity_per_instance ||
     values.scale_down_cooldown_seconds !==
-      configuration.scale_down_cooldown_seconds
+      configuration.scale_down_cooldown_seconds ||
+    values.max_queued_attempts !== configuration.max_queued_attempts
 
   const updateNumber = (
     name: keyof FleetConfigurationUpdate,
@@ -583,8 +688,7 @@ function ConfigurationForm({
             name="session_capacity_per_instance"
             value={values.session_capacity_per_instance ?? 1}
             min={1}
-            max={100}
-            help="Concurrent acquisition slots on each instance."
+            help="Concurrent sessions configured on each Browserless worker."
             onChange={updateNumber}
           />
           <NumberField
@@ -593,6 +697,14 @@ function ConfigurationForm({
             value={values.scale_down_cooldown_seconds ?? 1}
             min={1}
             help="Idle seconds before Harbor reduces capacity."
+            onChange={updateNumber}
+          />
+          <NumberField
+            label="Maximum queued attempts"
+            name="max_queued_attempts"
+            value={values.max_queued_attempts ?? 0}
+            min={0}
+            help="Attempts Harbor may queue while all Browserless slots are occupied."
             onChange={updateNumber}
           />
         </div>
@@ -751,6 +863,234 @@ function FleetDetail({
   )
 }
 
+function ExternalCapacityForm({
+  capacity,
+}: {
+  capacity: ExternalProviderCapacity
+}) {
+  const queryClient = useQueryClient()
+  const [values, setValues] = useState<ExternalProviderCapacityUpdate>({
+    enabled: capacity.enabled,
+    max_active_sessions: capacity.max_active_sessions,
+    max_queued_attempts: capacity.max_queued_attempts,
+  })
+  const mutation = useMutation({
+    mutationFn: (update: ExternalProviderCapacityUpdate) =>
+      updateExternalCapacity(capacity.provider, update),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["external-provider-capacities"],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["fleet-snapshots"] }),
+      ])
+      toast.success(
+        `${admissionProviderLabels[capacity.provider]} capacity updated`
+      )
+    },
+    onError: (error) => toast.error(extractApiError(error)),
+  })
+  const dirty =
+    values.enabled !== capacity.enabled ||
+    values.max_active_sessions !== capacity.max_active_sessions ||
+    values.max_queued_attempts !== capacity.max_queued_attempts
+
+  const updateNumber = (
+    name: "max_active_sessions" | "max_queued_attempts",
+    value: number
+  ) => {
+    setValues((current) => ({
+      ...current,
+      [name]: Number.isNaN(value) ? 0 : value,
+    }))
+  }
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault()
+        mutation.mutate(values)
+      }}
+      className="rounded-lg border bg-card"
+    >
+      <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+        <div>
+          <h2 className="font-semibold">Admission limits</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Version {capacity.configuration_version}
+          </p>
+        </div>
+        <Settings2 className="size-4 text-muted-foreground" aria-hidden />
+      </div>
+      <div className="p-5">
+        <label className="flex items-center justify-between gap-4 rounded-lg border bg-muted/20 p-4">
+          <span>
+            <span className="block text-sm font-medium">
+              {admissionProviderLabels[capacity.provider]} enabled
+            </span>
+            <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+              Allow automatic and explicit sessions to consume this capacity.
+            </span>
+          </span>
+          <Switch
+            checked={values.enabled ?? false}
+            onCheckedChange={(enabled) =>
+              setValues((current) => ({ ...current, enabled }))
+            }
+          />
+        </label>
+        <div className="mt-5 grid gap-5 sm:grid-cols-2">
+          <label className="block">
+            <span className="text-sm font-medium">
+              Maximum concurrent sessions
+            </span>
+            <Input
+              type="number"
+              min={0}
+              value={values.max_active_sessions ?? 0}
+              onChange={(event) =>
+                updateNumber(
+                  "max_active_sessions",
+                  event.target.valueAsNumber
+                )
+              }
+              className="mt-2 h-10 bg-background"
+            />
+            <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
+              Hard Harbor admission ceiling for this provider.
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium">
+              Maximum queued attempts
+            </span>
+            <Input
+              type="number"
+              min={0}
+              value={values.max_queued_attempts ?? 0}
+              onChange={(event) =>
+                updateNumber(
+                  "max_queued_attempts",
+                  event.target.valueAsNumber
+                )
+              }
+              className="mt-2 h-10 bg-background"
+            />
+            <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
+              Requests beyond this waiting limit fail admission immediately.
+            </span>
+          </label>
+        </div>
+        <div className="mt-6 flex items-center justify-between border-t pt-5">
+          <p className="text-xs text-muted-foreground">
+            {capacity.provider === "browserbase"
+              ? "Harbor controls admission only; Browserbase controls instances."
+              : "Harbor enforces this limit before starting direct HTTP work."}
+          </p>
+          <Button
+            type="submit"
+            disabled={!dirty || mutation.isPending}
+            className="gap-2"
+          >
+            {mutation.isPending ? (
+              <LoaderCircle className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <Save className="size-4" aria-hidden />
+            )}
+            Save limits
+          </Button>
+        </div>
+      </div>
+    </form>
+  )
+}
+
+function ExternalCapacityDetail({
+  capacity,
+  snapshot,
+  navigate,
+}: {
+  capacity: ExternalProviderCapacity
+  snapshot?: ProviderFleetSnapshot
+  navigate: (href: string) => void
+}) {
+  const available = Math.max(
+    0,
+    capacity.max_active_sessions - (snapshot?.active_attempts ?? 0)
+  )
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        type="button"
+        onClick={() => navigate("/fleets")}
+        className="mb-5 -ml-3 gap-2 text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="size-4" aria-hidden />
+        All capacity
+      </Button>
+      <header className="border-b pb-4">
+        <div className="mb-3 flex items-center gap-2">
+          <span
+            className={cn(
+              "size-2 rounded-full",
+              capacity.enabled ? "bg-emerald-500" : "bg-muted-foreground"
+            )}
+          />
+          <span className="text-xs font-medium text-muted-foreground">
+            {capacity.enabled ? "Admission enabled" : "Admission disabled"}
+          </span>
+        </div>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+          {admissionProviderLabels[capacity.provider]}
+        </h1>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          {capacity.provider === "browserbase"
+            ? "External browser concurrency and Harbor admission limits. There are no Harbor-managed instances for this provider."
+            : "Direct HTTP concurrency and queue limits enforced by Harbor admission."}
+        </p>
+      </header>
+      <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          label="Active sessions"
+          value={snapshot?.active_attempts ?? 0}
+          detail={`${capacity.max_active_sessions} maximum concurrent`}
+          icon={Activity}
+        />
+        <MetricCard
+          label="Available admission"
+          value={available}
+          detail="Concurrent sessions remaining"
+          icon={Cloud}
+        />
+        <MetricCard
+          label="Queued attempts"
+          value={snapshot?.queued_attempts ?? 0}
+          detail={`${capacity.max_queued_attempts} maximum queued`}
+          icon={Clock3}
+        />
+        <MetricCard
+          label="Configured limit"
+          value={capacity.max_active_sessions}
+          detail={
+            capacity.provider === "browserbase"
+              ? "Subscription or cost ceiling"
+              : "Direct request ceiling"
+          }
+          icon={Settings2}
+        />
+      </section>
+      <div className="mt-5 max-w-3xl">
+        <ExternalCapacityForm
+          key={capacity.configuration_version}
+          capacity={capacity}
+        />
+      </div>
+    </>
+  )
+}
+
 export function FleetsPage({ provider, navigate }: FleetPageProps) {
   const snapshots = useQuery({
     queryKey: ["fleet-snapshots"],
@@ -760,6 +1100,10 @@ export function FleetsPage({ provider, navigate }: FleetPageProps) {
   const configurations = useQuery({
     queryKey: ["fleet-configurations"],
     queryFn: fetchFleetConfigurations,
+  })
+  const externalCapacities = useQuery({
+    queryKey: ["external-provider-capacities"],
+    queryFn: fetchExternalCapacities,
   })
 
   const rows = useMemo(() => {
@@ -773,13 +1117,29 @@ export function FleetsPage({ provider, navigate }: FleetPageProps) {
   }, [configurations.data, snapshots.data])
 
   const selected = rows.find((row) => row.configuration.provider === provider)
+  const admissionCapacities = externalCapacities.data ?? []
+  const selectedExternal = admissionCapacities.find(
+    (capacity) => capacity.provider === provider
+  )
+  const selectedExternalSnapshot = snapshots.data?.find(
+    (snapshot) => snapshot.provider === selectedExternal?.provider
+  )
   const invalidProvider =
-    provider !== undefined && configurations.isSuccess && selected === undefined
-  const loading = snapshots.isPending || configurations.isPending
-  const error = snapshots.error ?? configurations.error
+    provider !== undefined &&
+    configurations.isSuccess &&
+    externalCapacities.isSuccess &&
+    selected === undefined &&
+    selectedExternal === undefined
+  const loading =
+    snapshots.isPending ||
+    configurations.isPending ||
+    externalCapacities.isPending
+  const error =
+    snapshots.error ?? configurations.error ?? externalCapacities.error
   const retry = () => {
     void snapshots.refetch()
     void configurations.refetch()
+    void externalCapacities.refetch()
   }
 
   return (
@@ -821,10 +1181,22 @@ export function FleetsPage({ provider, navigate }: FleetPageProps) {
       {loading && <LoadingState />}
       {!loading && error && <ErrorState error={error} retry={retry} />}
       {!loading && !error && !provider && (
-        <FleetList rows={rows} navigate={navigate} />
+        <FleetList
+          rows={rows}
+          admissionCapacities={admissionCapacities}
+          snapshots={snapshots.data ?? []}
+          navigate={navigate}
+        />
       )}
       {!loading && !error && selected && (
         <FleetDetail row={selected} navigate={navigate} />
+      )}
+      {!loading && !error && selectedExternal && (
+        <ExternalCapacityDetail
+          capacity={selectedExternal}
+          snapshot={selectedExternalSnapshot}
+          navigate={navigate}
+        />
       )}
       {!loading && !error && invalidProvider && (
         <div className="flex min-h-96 items-center justify-center rounded-lg border bg-card px-6 text-center">

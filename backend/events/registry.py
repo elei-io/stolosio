@@ -1,32 +1,26 @@
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+COMMAND_SUMMARY_METHOD_LIMIT = 256
+OTHER_COMMAND_METHOD = "__other__"
+
 
 class EventType(StrEnum):
-    SESSION_REQUESTED = "session.requested"
-    SESSION_ADMITTED = "session.admitted"
     SESSION_OPEN = "session.open"
-    SESSION_CLOSING = "session.closing"
     SESSION_CLOSED = "session.closed"
     SESSION_FAILED = "session.failed"
-    ATTEMPT_STARTED = "attempt.started"
-    ATTEMPT_QUEUED = "attempt.queued"
-    ATTEMPT_ACQUIRING = "attempt.acquiring"
     ATTEMPT_CONNECTED = "attempt.connected"
     ATTEMPT_FAILED = "attempt.failed"
     ATTEMPT_CLOSED = "attempt.closed"
-    COMMAND_RECEIVED = "command.received"
-    COMMAND_SUCCEEDED = "command.succeeded"
+    COMMAND_SUMMARY = "command.summary"
     COMMAND_FAILED = "command.failed"
     COMMAND_INTERRUPTED = "command.interrupted"
     NAVIGATION_REQUESTED = "navigation.requested"
     NAVIGATION_REDIRECTED = "navigation.redirected"
     NAVIGATION_RESPONSE = "navigation.response"
     NAVIGATION_FAILED = "navigation.failed"
-    PAGE_DOM_CONTENT_LOADED = "page.dom_content_loaded"
-    PAGE_LOADED = "page.loaded"
     PAGE_CONTENT_OBSERVED = "page.content_observed"
     PAGE_CRASHED = "page.crashed"
     CONSOLE_MESSAGE = "console.message"
@@ -40,9 +34,6 @@ class _Payload(BaseModel):
 
 
 class LifecyclePayload(_Payload):
-    requested_settings: dict[str, Any] | None = None
-    resolved_settings: dict[str, Any] | None = None
-    setting_sources: dict[str, str] | None = None
     reason: str | None = Field(default=None, max_length=64)
 
 
@@ -50,17 +41,34 @@ class AttemptPayload(_Payload):
     duration_ms: int | None = None
     cost_units: int | None = None
     reason: str | None = Field(default=None, max_length=64)
-    resolved_settings: dict[str, Any] | None = None
-    setting_sources: dict[str, str] | None = None
 
 
 class CommandPayload(_Payload):
     command_id: int
+    command_sequence: int | None = None
     method: str = Field(max_length=128)
     domain: str | None = Field(default=None, max_length=253)
     duration_ms: int | None = None
+    provider_latency_ms: int | None = None
+    harbor_queue_ms: int | None = None
     reason: str | None = Field(default=None, max_length=64)
     cdp_error_code: int | None = None
+
+
+class CommandUsagePayload(_Payload):
+    count: int = Field(ge=1)
+    failed_count: int = Field(ge=0)
+    interrupted_count: int = Field(default=0, ge=0)
+    duration_ms: int = Field(ge=0)
+    provider_latency_ms: int = Field(ge=0)
+    harbor_queue_ms: int = Field(ge=0)
+
+
+class CommandSummaryPayload(_Payload):
+    methods: dict[
+        Annotated[str, Field(max_length=128)],
+        CommandUsagePayload,
+    ] = Field(max_length=COMMAND_SUMMARY_METHOD_LIMIT)
 
 
 class ObservationPayload(_Payload):
@@ -86,24 +94,17 @@ class ProviderTransitionPayload(_Payload):
 
 
 _LIFECYCLE = {
-    EventType.SESSION_REQUESTED,
-    EventType.SESSION_ADMITTED,
     EventType.SESSION_OPEN,
-    EventType.SESSION_CLOSING,
     EventType.SESSION_CLOSED,
     EventType.SESSION_FAILED,
 }
 _ATTEMPTS = {
-    EventType.ATTEMPT_STARTED,
-    EventType.ATTEMPT_QUEUED,
-    EventType.ATTEMPT_ACQUIRING,
     EventType.ATTEMPT_CONNECTED,
     EventType.ATTEMPT_FAILED,
     EventType.ATTEMPT_CLOSED,
 }
 _COMMANDS = {
-    EventType.COMMAND_RECEIVED,
-    EventType.COMMAND_SUCCEEDED,
+    EventType.COMMAND_SUMMARY,
     EventType.COMMAND_FAILED,
     EventType.COMMAND_INTERRUPTED,
 }
@@ -115,6 +116,7 @@ _MODELS: dict[EventType, type[_Payload]] = {
     **dict.fromkeys(_COMMANDS, CommandPayload),
     **dict.fromkeys(_OBSERVATIONS, ObservationPayload),
     EventType.EXECUTION_TRANSITIONED: ProviderTransitionPayload,
+    EventType.COMMAND_SUMMARY: CommandSummaryPayload,
 }
 
 

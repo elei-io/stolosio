@@ -1,147 +1,67 @@
-# Browser Providers
+# Providers
 
-Harbor initially supports four browser providers plus the no-browser HTTP path. They do
-not offer identical engines or protocols. This document records known differences that
-matter when implementing Harbor's common downstream contract.
+Harbor has three active acquisition providers:
 
-The matrix separates documented provider behavior from behavior verified by Harbor's
-own end-to-end examples. It should be updated as compatibility tests grow.
+| Provider | Role | Capacity owner |
+| --- | --- | --- |
+| HTTP | Bounded no-browser navigation and HTML retrieval | Harbor admission |
+| Browserless | Default browser path and Harbor-managed horizontal fleet | Harbor instances and slots |
+| Browserbase | Premium external browser path for difficult sites | Harbor's configured external quota |
 
-Provider routing profiles assign operator-configurable cost units per session-second.
-These are relative policy values rather than universal pricing claims. Historical cost
-orders providers only after navigation, HTTP, header, and content health checks pass
-and runtime compatibility is eligible. Content health includes absolute rejection plus
-relative primary-content completeness inside synchronized provider cohorts. The
-configured default only bootstraps domains without current health evidence; it is not
-a behavioral baseline.
+Browserless and Browserbase expose Chrome DevTools Protocol. Harbor treats their CDP
+traffic as opaque protocol transport: it preserves command IDs, session IDs, event
+order, backpressure, and close behavior, but does not maintain a method-by-method
+capability list or translate command semantics.
 
-## Summary matrix
+A provider that needs a CDP translation layer is not an active Harbor provider.
 
-| Provider | Engine | Native control | Rendering | Primary advantage | Primary limitation |
-| --- | --- | --- | --- | --- | --- |
-| HTTP | Async HTTP client | Harbor-emulated CDP subset | No | Lowest possible cost | Initially limited to navigation and content retrieval |
-| Plain Chromium | Chrome Headless Shell | CDP | Yes | Reference CDP behavior without another service layer | Resource-heavy and no built-in queue or session manager |
-| Browserless Chromium | Chromium managed by Browserless | CDP plus Browserless lifecycle | Yes | Built-in concurrency, queueing, timeouts, and crash isolation | Adds provider behavior and has licensing implications |
-| Lightpanda | Custom Zig browser with V8 | CDP subset | No graphical renderer | Very low startup and resource cost | Incomplete Web Platform and CDP coverage |
-| Camoufox | Modified Firefox | Playwright Firefox/Juggler | Yes | Fingerprint rotation and anti-detection patches | Not CDP; remote serving and current releases are experimental |
+## Session ownership
 
-## Capability matrix
+One Harbor browser attempt owns one upstream browser session. Several Harbor sessions
+may occupy independent slots on one Browserless worker, but Harbor does not share one
+upstream browser session between them.
 
-`Yes` means the capability is expected from the provider. `Partial` means coverage is
-provider-specific or incomplete. `No` means it is outside the provider's design. A
-blank cell has not yet been established by Harbor tests.
+Browserless capacity is instances multiplied by configured session slots per instance.
+Harbor assigns slots and its separate fleet controller scales workers. Browserless is
+not assumed to own Harbor's horizontal scaling policy.
 
-| Capability | HTTP | Plain Chromium | Browserless | Lightpanda | Camoufox |
-| --- | --- | --- | --- | --- | --- |
-| Playwright `connect_over_cdp` | Yes, bounded facade | Yes | Yes | Yes, subset | No, requires Harbor mapping |
-| JavaScript execution | No | Yes | Yes | Yes | Yes |
-| DOM access | No; full HTML only | Yes | Yes | Yes, partial Web APIs | Yes |
-| Click and form interaction | No | Yes | Yes | Yes, supported subset | Yes |
-| Graphical layout | No | Yes | Yes | No | Yes |
-| Screenshots | No | Yes | Yes | No | Yes |
-| PDF generation | No | Yes | Yes | No | Provider/Firefox dependent |
-| Multiple browser contexts | No | Yes | Yes | No, currently one | Playwright-native; remote server is one browser instance |
-| Multiple page targets | No | Yes | Yes | No, currently one | Yes within the browser instance |
-| Request interception | Native HTTP request only | Yes | Yes | Supported subset | Yes through Playwright |
-| Browser fingerprint rotation | No | Default browser identity | Default browser identity unless separately configured | Not its primary purpose | Yes, per browser instance |
-| Built-in queueing | No | No | Yes | No | No |
-| Built-in session lifecycle | No | No | Yes | No | Experimental remote server |
-| Native Harbor transport today | Yes, bounded facade | Yes | Yes | Yes | Mapped subset |
+The development Browserless fleet permits a browser job to run for 10 minutes, while
+Harbor permits 30 seconds for browser acquisition and startup. An upstream close at
+the configured session deadline is recorded as `provider_timeout`; unexpected early
+closes remain `provider_connection_lost`.
 
-## Locally verified common behavior
+Browserbase capacity is an administrator-controlled concurrent-session limit. It can
+mirror a subscription allowance or be set lower as a cost guardrail. Harbor applies
+the limit transactionally before creating a Browserbase session.
 
-On 2026-07-16, the same unmodified Playwright clients connected through Harbor and
-passed against Plain Chromium, Browserless Chromium, Lightpanda, and Harbor's bounded
-Camoufox mapping for:
+## Promotion and escalation
 
-- Navigation followed by page content retrieval.
-- Navigation followed by a link interaction.
-- Navigation followed by JavaScript evaluation.
+Background promotion probes HTTP and Browserless and uses their navigation, status,
+header, and content results to improve future domain plans. Browserbase is never
+probed automatically; it is assumed to work as the terminal provider. An operator may
+explicitly run a Browserbase probe from the domain UI when the diagnostic value
+justifies its cost. A generic "probe all" action remains limited to HTTP and
+Browserless.
 
-The tests also established a current Lightpanda boundary:
+Automatic sessions may begin on HTTP. An unsupported command or failed HTTP transport,
+status, header, response-size, or content check causes immediate live escalation to
+Browserless or Browserbase. Once a browser has been acquired, Harbor forwards all CDP
+commands to it and does not escalate again.
 
-- Creating a second browser context returns `Cannot have more than one browser context
-  at a time`.
-- Creating a second page target returns `TargetAlreadyLoaded`.
+Explicit HTTP sessions return a protocol error for unsupported commands. Browser
+providers return their own CDP success or error without Harbor claiming support.
 
-These are provider observations, not assumptions Harbor should hide in the passthrough
-layer. Compatibility mapping may address them later if real downstream usage requires
-it.
+## Time and cost observations
 
-## Provider notes
-
-### HTTP
-
-HTTP is treated as a normal provider selection even though no browser is acquired.
-Initially, only `page.goto` and `page.content` remain on this path. Explicit
-`harbor.provider.slug=http` never changes provider and returns a protocol error for
-unsupported commands. Automatic sessions may use HTTP and later perform an ordered
-provider transition as described in [Adaptive HTTP Execution](NO_BROWSER.md).
-
-### Plain Chromium
-
-The local `chromedp/headless-shell` image runs Chrome Headless Shell. This is the
-standalone form of Chrome's old headless implementation, not modern unified headless
-Chrome. It provides the broadest direct CDP reference in Harbor's current local stack,
-including graphical output, multiple targets, and multiple contexts.
-
-Harbor is responsible for acquisition, queueing, isolation, timeouts, and cleanup when
-using this provider.
-
-### Browserless Chromium
-
-Browserless wraps Chromium with concurrency control, request queueing, configurable
-timeouts, crash isolation, and debugging features. Its CDP traffic can pass through
-Harbor, but its connection lifecycle and queue state are provider-specific inputs to
-Harbor's session and metrics abstractions.
-
-Browserless is licensed under SSPL-1.0 or a commercial license. The upstream project
-states that proprietary commercial or CI use requires a commercial license. This must
-be resolved before treating it as a production provider.
-
-### Lightpanda
-
-Lightpanda is built from scratch for machine-driven browsing and exposes a CDP endpoint
-for Playwright and Puppeteer. It executes JavaScript and supports DOM interaction, but
-it intentionally has no graphical rendering engine. Screenshots, graphical layout, and
-other rendering-dependent behavior cannot be assumed.
-
-Lightpanda describes itself as beta software with growing Web API coverage. Harbor must
-measure command compatibility rather than infer full support from the presence of a CDP
-endpoint.
-
-Harbor forwards `Target.closeTarget`, which Lightpanda supports for a valid target.
-Lightpanda does not implement `Emulation.setScriptExecutionDisabled`; Harbor maps the
-Playwright setup request with `value: false` to a no-op because Lightpanda always has
-script execution enabled. A request with `value: true` still returns an explicit
-provider error rather than pretending that scripts were disabled.
-
-Lightpanda is a managed fleet provider with one slot per instance. Its assigned instance
-endpoint is passed to the direct-CDP adapter, and the provider-neutral reconciler scales
-instances from Lightpanda queue demand. Docker Compose is the first runtime driver;
-future Kubernetes or k3s support does not require different Lightpanda admission or
-scaling policy.
-
-### Camoufox
-
-Camoufox is a modified Firefox browser focused on anti-detection. It changes fingerprint
-properties inside the browser implementation and uses Playwright's Firefox/Juggler
-protocol rather than CDP.
-
-Its remote server is explicitly experimental and uses undocumented Playwright methods.
-The server hosts one browser instance, so fingerprints do not rotate merely because a
-new client session connects; the browser instance must be rotated. Current 2026 releases
-are also described upstream as highly experimental. Harbor currently maps only the
-commands and events proven by its initial navigation, interaction, and evaluation
-conformance cases. The mapping must grow one explicitly tested behavior at a time.
-
-## Sources
-
-- [Chrome Headless mode](https://developer.chrome.com/docs/chromium/headless)
-- [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/)
-- [Browserless repository and licensing](https://github.com/browserless/browserless)
-- [Lightpanda documentation](https://lightpanda.io/docs/)
-- [Lightpanda repository and implementation status](https://github.com/lightpanda-io/browser)
-- [Camoufox introduction](https://camoufox.com/)
-- [Camoufox remote server](https://camoufox.com/python/remote-server/)
-- [Camoufox stealth design](https://camoufox.com/stealth/)
+Harbor records slot occupancy, upstream browser-connected time, provider-reported
+browser time, estimated billable time, and aggregated per-method
+end-to-end/provider latency where available. It does not retain completed commands
+individually. Browserless modeled cost uses slot occupancy; Browserbase modeled cost
+uses estimated billable time including its minimum. The rate and basis are captured
+on the finalized attempt. One bounded method summary is stored transactionally when
+each attempt ends and folded into cumulative
+provider-and-method counts, failures, interruptions, latency, attributed browser
+time, and attributed cost. Retained method identity is capped per provider and excess
+identities fold into `__other__`.
+Concurrent command durations are capped by the attempt's measured browser time, with
+unattributed connect, idle, and shutdown time recorded as session overhead.

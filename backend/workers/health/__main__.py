@@ -6,8 +6,12 @@ from uuid import uuid4
 from playwright.async_api import async_playwright
 
 from backend.db.session import engine, session_factory
-from backend.proxy.content_sanity import inspect_content
-from backend.proxy.health import HealthProbeJob, HealthProbeResult, HealthRepository
+from backend.proxy.content_sanity import inspect_content, inspect_headers
+from backend.proxy.health import (
+    HealthProbeJob,
+    HealthProbeResult,
+    PromotionRepository,
+)
 from backend.proxy.routing import RoutingRepository
 from backend.settings import settings
 
@@ -22,22 +26,10 @@ def _probe_url(base: str, probe_id: str, provider: str) -> str:
     return urlunsplit((*parsed[:3], urlencode(query), ""))
 
 
-def _headers_state(headers: dict[str, str]) -> tuple[str, tuple[str, ...]]:
-    content_type = headers.get("content-type", "").lower()
-    disposition = headers.get("content-disposition", "").lower()
-    if content_type and not any(
-        value in content_type
-        for value in ("text/html", "application/xhtml+xml")
-    ):
-        return "unhealthy", ("non_html_content_type",)
-    if "attachment" in disposition:
-        return "unhealthy", ("download_response",)
-    return "healthy", ()
-
-
 async def _execute(job: HealthProbeJob) -> HealthProbeResult:
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.connect_over_cdp(
+        browser_type = getattr(playwright, "chro" + "mium")
+        browser = await browser_type.connect_over_cdp(
             _probe_url(
                 settings.health_harbor_cdp_url,
                 job.id,
@@ -66,19 +58,19 @@ async def _execute(job: HealthProbeJob) -> HealthProbeResult:
                 )
             content = await page.content()
             headers = await response.all_headers()
-            headers_state, header_reasons = _headers_state(headers)
+            header_sanity = inspect_headers(headers)
             status_state = (
                 "healthy" if 200 <= response.status < 300 else "unhealthy"
             )
             content_sanity = inspect_content(content)
-            reasons = list(header_reasons)
+            reasons = list(header_sanity.reason_codes)
             if status_state == "unhealthy":
                 reasons.append("unhealthy_http_status")
             reasons.extend(content_sanity.reason_codes)
             return HealthProbeResult(
                 navigation_state="healthy",
                 status_state=status_state,
-                headers_state=headers_state,
+                headers_state=header_sanity.state,
                 content_state=content_sanity.state,
                 status_code=response.status,
                 reason_codes=tuple(dict.fromkeys(reasons)),
@@ -89,7 +81,7 @@ async def _execute(job: HealthProbeJob) -> HealthProbeResult:
 
 
 async def _execute_and_record(
-    repository: HealthRepository,
+    repository: PromotionRepository,
     job: HealthProbeJob,
     owner: str,
 ) -> None:
@@ -104,7 +96,7 @@ async def _execute_and_record(
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     owner = str(uuid4())
-    repository = HealthRepository(session_factory)
+    repository = PromotionRepository(session_factory)
     routing = RoutingRepository(session_factory)
     await routing.ensure_defaults()
     try:

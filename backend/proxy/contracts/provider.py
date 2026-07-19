@@ -8,15 +8,28 @@ if TYPE_CHECKING:
 
 
 class ProviderName(StrEnum):
-    CHROMIUM = "chromium"
-    BROWSERLESS = "browserless"
-    LIGHTPANDA = "lightpanda"
-    CAMOUFOX = "camoufox"
     HTTP = "http"
+    BROWSERLESS = "browserless"
+    BROWSERBASE = "browserbase"
+
+
+ACTIVE_PROVIDERS = (
+    ProviderName.HTTP,
+    ProviderName.BROWSERLESS,
+    ProviderName.BROWSERBASE,
+)
+
+# Browserbase is never probed automatically. Operators may explicitly request a
+# manual Browserbase probe when they accept the associated cost.
+PROMOTION_PROVIDERS = (
+    ProviderName.HTTP,
+    ProviderName.BROWSERLESS,
+)
 
 
 class ProviderSession(Protocol):
     provider: ProviderName | None
+    disconnect_reason: str | None
 
     async def send(self, message: str) -> None: ...
     def messages(self) -> AsyncIterator[str]: ...
