@@ -754,16 +754,24 @@ class ProviderTransitionSession:
         response = None
         events: list[dict[str, Any]] = []
         method = command["method"]
-        async with asyncio.timeout(self._settings.provider_transition_replay_timeout_seconds):
-            while True:
-                raw = await anext(self._upstream_messages)
-                value = json.loads(raw)
-                if value.get("id") == command["id"]:
-                    response = value
-                elif isinstance(value.get("method"), str):
-                    events.append(value)
-                if response is not None and self._replay_boundary_reached(method, events):
-                    return response, events
+        try:
+            async with asyncio.timeout(
+                self._settings.provider_transition_replay_timeout_seconds
+            ):
+                while True:
+                    raw = await anext(self._upstream_messages)
+                    value = json.loads(raw)
+                    if value.get("id") == command["id"]:
+                        response = value
+                    elif isinstance(value.get("method"), str):
+                        events.append(value)
+                    if response is not None and (
+                        "error" in response
+                        or self._replay_boundary_reached(method, events)
+                    ):
+                        return response, events
+        except TimeoutError as error:
+            raise ProviderTransitionError(f"Replay timed out for {method}") from error
 
     @staticmethod
     def _replay_boundary_reached(method: str, events: list[dict[str, Any]]) -> bool:
@@ -773,7 +781,13 @@ class ProviderTransitionSession:
         if method == "Runtime.enable":
             return "Runtime.executionContextCreated" in event_methods
         if method == "Page.navigate":
-            return "Page.loadEventFired" in event_methods
+            return bool(
+                {
+                    "Page.domContentEventFired",
+                    "Page.loadEventFired",
+                }
+                & event_methods
+            )
         return True
 
     async def _forward(self, command: dict[str, Any]) -> None:

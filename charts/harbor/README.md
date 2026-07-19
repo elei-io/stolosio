@@ -5,7 +5,7 @@ namespace-scoped RBAC, API and UI Services, and the static Browserless workload
 template.
 
 It deliberately does not install PostgreSQL, NATS, Ingress, Gateway API, DNS, TLS,
-cert-manager, KEDA, or an HPA.
+cert-manager, Prometheus, a Prometheus Operator, monitoring CRDs, KEDA, or an HPA.
 
 Released charts are available at:
 
@@ -57,6 +57,12 @@ and `tolerations` apply to Harbor application Pods. Browserless has correspondin
 settings under `browserless.*`. `browserless.timeoutMilliseconds` configures the
 worker-side maximum session lifetime; fleet limits and per-instance concurrency still
 come from PostgreSQL.
+
+Set `monitoring.enabled=true` to create annotated ClusterIP metrics Services for the
+API and fleet controller. The Services expose `/metrics` and carry standard
+`prometheus.io/*` discovery annotations. If the platform has already installed the
+Prometheus Operator CRDs, `monitoring.serviceMonitor.enabled=true` additionally creates
+a `ServiceMonitor`. Harbor never installs the operator, Prometheus, or its CRDs.
 
 The chart creates no Ingress. API and UI Services default to `LoadBalancer`, and can
 be changed to `ClusterIP` when the platform supplies its own exposure layer. Keep all

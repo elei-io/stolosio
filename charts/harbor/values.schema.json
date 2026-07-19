@@ -26,6 +26,31 @@
       "properties": {
         "ttlSecondsAfterFinished": {"type": "integer", "minimum": 0}
       }
+    },
+    "monitoring": {
+      "type": "object",
+      "required": ["enabled", "service", "serviceMonitor"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "service": {
+          "type": "object",
+          "required": ["annotations", "labels"],
+          "properties": {
+            "annotations": {"type": "object"},
+            "labels": {"type": "object"}
+          }
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "required": ["enabled", "interval", "scrapeTimeout", "labels"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "interval": {"type": "string", "minLength": 1},
+            "scrapeTimeout": {"type": "string", "minLength": 1},
+            "labels": {"type": "object"}
+          }
+        }
+      }
     }
   }
 }
