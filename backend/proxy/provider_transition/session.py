@@ -757,7 +757,10 @@ class ProviderTransitionSession:
         for entry in self._replay:
             translated = self._rewrite(entry.command, self._forward_ids)
             await self._upstream.send(json.dumps(translated, separators=(",", ":")))
-            response, events = await self._replay_response(entry.command)
+            response, events = await self._replay_response(
+                entry.command,
+                expected_events=entry.events,
+            )
             if "error" in response:
                 raise ProviderTransitionError(
                     f"Replay failed for {entry.command['method']}: provider command error"
@@ -783,6 +786,8 @@ class ProviderTransitionSession:
     async def _replay_response(
         self,
         command: dict[str, Any],
+        *,
+        expected_events: list[dict[str, Any]],
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         assert self._upstream_messages is not None
         response = None
@@ -798,26 +803,70 @@ class ProviderTransitionSession:
                     elif isinstance(value.get("method"), str):
                         events.append(value)
                     if response is not None and (
-                        "error" in response or self._replay_boundary_reached(method, events)
+                        "error" in response
+                        or self._replay_boundary_reached(
+                            method,
+                            response,
+                            events,
+                            expected_events,
+                        )
                     ):
                         return response, events
         except TimeoutError as error:
             raise ProviderTransitionError(f"Replay timed out for {method}") from error
 
     @staticmethod
-    def _replay_boundary_reached(method: str, events: list[dict[str, Any]]) -> bool:
+    def _replay_boundary_reached(
+        method: str,
+        response: dict[str, Any],
+        events: list[dict[str, Any]],
+        expected_events: list[dict[str, Any]],
+    ) -> bool:
         event_methods = {event.get("method") for event in events}
         if method == "Target.createTarget":
             return "Target.attachedToTarget" in event_methods
         if method == "Runtime.enable":
             return "Runtime.executionContextCreated" in event_methods
         if method == "Page.navigate":
-            return bool(
-                {
-                    "Page.domContentEventFired",
-                    "Page.loadEventFired",
-                }
-                & event_methods
+            result = response.get("result")
+            frame_id = result.get("frameId") if isinstance(result, dict) else None
+            if not isinstance(frame_id, str):
+                return False
+            expected_contexts: Counter[bool] = Counter()
+            for event in expected_events:
+                if event.get("method") != "Runtime.executionContextCreated":
+                    continue
+                params = event.get("params")
+                context = params.get("context") if isinstance(params, dict) else None
+                aux_data = context.get("auxData") if isinstance(context, dict) else None
+                if isinstance(aux_data, dict) and isinstance(
+                    aux_data.get("isDefault"),
+                    bool,
+                ):
+                    expected_contexts[aux_data["isDefault"]] += 1
+            if not expected_contexts:
+                return bool(
+                    {
+                        "Page.domContentEventFired",
+                        "Page.loadEventFired",
+                    }
+                    & event_methods
+                )
+            actual_contexts: Counter[bool] = Counter()
+            for event in events:
+                if event.get("method") != "Runtime.executionContextCreated":
+                    continue
+                params = event.get("params")
+                context = params.get("context") if isinstance(params, dict) else None
+                aux_data = context.get("auxData") if isinstance(context, dict) else None
+                is_default = aux_data.get("isDefault") if isinstance(aux_data, dict) else None
+                if not isinstance(is_default, bool):
+                    continue
+                if aux_data.get("frameId") == frame_id:
+                    actual_contexts[is_default] += 1
+            return all(
+                actual_contexts[is_default] >= count
+                for is_default, count in expected_contexts.items()
             )
         return True
 
@@ -828,6 +877,7 @@ class ProviderTransitionSession:
 
     async def _pump_upstream(self) -> None:
         assert self._upstream_messages is not None
+        failure_reason = None
         try:
             async for raw in self._upstream_messages:
                 value = json.loads(raw)
@@ -835,11 +885,22 @@ class ProviderTransitionSession:
                     self._clear_execution_context_mappings()
                 rewritten = self._rewrite(value, self._reverse_ids)
                 await self._put(rewritten)
+        except Exception as error:
+            failure_reason = getattr(error, "reason", None)
+            if failure_reason is None:
+                failure_reason = getattr(self._upstream, "disconnect_reason", None)
+            logger.warning(
+                "Provider upstream ended unexpectedly: %s",
+                failure_reason or "provider_connection_lost",
+                exc_info=True,
+            )
         finally:
             if not self._closed:
                 self._failed = True
                 self._failure_reason = (
-                    getattr(self._upstream, "disconnect_reason", None) or "provider_connection_lost"
+                    failure_reason
+                    or getattr(self._upstream, "disconnect_reason", None)
+                    or "provider_connection_lost"
                 )
                 await self._messages.put(_CLOSED)
 

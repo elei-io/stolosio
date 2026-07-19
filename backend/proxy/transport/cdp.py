@@ -7,6 +7,7 @@ from websockets.exceptions import ConnectionClosed
 from backend.events.cdp import CdpEventObserver
 from backend.proxy.contracts import ProviderSession
 from backend.proxy.errors import (
+    DomainBlockingUnavailable,
     InvalidCdpMessage,
     ProviderConnectionLost,
     ProviderTimeout,
@@ -14,8 +15,11 @@ from backend.proxy.errors import (
 
 
 def _provider_disconnect_error(upstream: ProviderSession) -> Exception:
-    if getattr(upstream, "disconnect_reason", None) == ProviderTimeout.reason:
+    reason = getattr(upstream, "disconnect_reason", None)
+    if reason == ProviderTimeout.reason:
         return ProviderTimeout()
+    if reason == DomainBlockingUnavailable.reason:
+        return DomainBlockingUnavailable()
     return ProviderConnectionLost()
 
 
@@ -81,10 +85,25 @@ async def _upstream_to_downstream(
     downstream: WebSocket,
     observer: CdpEventObserver | None = None,
 ) -> None:
-    async for message in upstream.messages():
+    messages = upstream.messages().__aiter__()
+    while True:
+        try:
+            message = await anext(messages)
+        except StopAsyncIteration:
+            break
+        except Exception:
+            if observer is not None:
+                await observer.provider_disconnected(
+                    getattr(upstream, "disconnect_reason", None)
+                    or ProviderConnectionLost.reason
+                )
+            raise
         if observer is not None:
             await observer.upstream_message(message)
         await downstream.send_text(message)
     if observer is not None:
-        await observer.provider_disconnected()
+        await observer.provider_disconnected(
+            getattr(upstream, "disconnect_reason", None)
+            or ProviderConnectionLost.reason
+        )
     raise _provider_disconnect_error(upstream)

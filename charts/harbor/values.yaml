@@ -1,11 +1,11 @@
 image:
   repository: ghcr.io/ekkuleivonen/harbor
-  tag: "0.1.10"
+  tag: "0.1.11"
   pullPolicy: IfNotPresent
 
 webImage:
   repository: ghcr.io/ekkuleivonen/harbor-web
-  tag: "0.1.10"
+  tag: "0.1.11"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []

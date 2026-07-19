@@ -74,6 +74,17 @@ def test_transition_event_records_the_factual_transition() -> None:
     assert SessionEvent.from_json(event.to_json()) == event
 
 
+def test_historic_provider_disconnect_without_reason_remains_readable() -> None:
+    event = SessionEvent.create(
+        EventType.PROVIDER_DISCONNECTED,
+        uuid4(),
+        provider=ProviderName.BROWSERLESS,
+    )
+
+    assert event.payload == {}
+    assert SessionEvent.from_json(event.to_json()) == event
+
+
 def test_event_contract_bounds_database_fields_and_requires_timezone() -> None:
     with pytest.raises(ValueError):
         SessionEvent.create(

@@ -303,8 +303,8 @@ class CdpEventObserver:
             },
         )
 
-    async def provider_disconnected(self) -> None:
-        await self._emit(EventType.PROVIDER_DISCONNECTED, {})
+    async def provider_disconnected(self, reason: str) -> None:
+        await self._emit(EventType.PROVIDER_DISCONNECTED, {"reason": reason})
 
     async def interrupt_pending(self, reason: str) -> None:
         for session_id, command_id in list(self._pending):
