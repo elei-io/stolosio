@@ -3,7 +3,7 @@
 This directory consumes Harbor's released OCI Helm chart from GHCR. It assumes:
 
 - Flux source-controller and helm-controller are installed;
-- a `v0.1.2` (or compatible) Harbor release has published the chart and images;
+- a `v0.1.3` (or compatible) Harbor release has published the chart and images;
 - PostgreSQL and NATS are reachable from the cluster;
 - `harbor-connections` and, while GHCR packages are private, `ghcr-auth` exist in
   the `harbor` namespace.
