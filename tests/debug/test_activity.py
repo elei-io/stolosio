@@ -193,6 +193,31 @@ async def test_activity_stream_reports_an_expired_resume_cursor() -> None:
         await anext(stream)
 
 
+@pytest.mark.asyncio
+async def test_activity_stream_reports_a_cursor_from_a_replaced_stream() -> None:
+    class FakeJetStream:
+        async def stream_info(self, stream):
+            return SimpleNamespace(
+                state=SimpleNamespace(messages=10, first_seq=1, last_seq=10)
+            )
+
+    class FakeClient:
+        def jetstream(self):
+            return FakeJetStream()
+
+    stream = ActivityStreamService(
+        FakeClient(),  # type: ignore[arg-type]
+        max_pending_events=10,
+        max_pending_bytes=10_000,
+    ).events(ActivityEventFilters(), after_sequence=59)
+
+    assert await anext(stream) == (
+        'event: replay-unavailable\ndata: {"reason":"stream_recreated"}\n\n'
+    )
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+
+
 def test_activity_filters_match_registered_event_contract() -> None:
     event = SessionEvent.create(
         EventType.NAVIGATION_FAILED,

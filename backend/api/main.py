@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import nats
 from fastapi import FastAPI
@@ -24,14 +24,17 @@ from backend.api.routes.metrics import router as metrics_router
 from backend.api.routes.proxy import router as proxy_router
 from backend.db.session import engine, session_factory
 from backend.debug import ActivityHistoryService, ActivityStreamService, DebugStreamService
+from backend.events import DynamicEventPublisher
 from backend.fleet import FleetRepository, FleetService
 from backend.fleet.bootstrap import ensure_managed_fleets
-from backend.messaging import NatsCapacityNotifier, PollingNotifier, nats_auth_options
-from backend.messaging.jetstream import (
-    EventStreamSettings,
-    JetStreamEventPublisher,
+from backend.messaging import (
+    DynamicCapacityNotifier,
+    NatsCapacityNotifier,
+    nats_auth_options,
 )
+from backend.messaging.jetstream import EVENT_STREAM, JetStreamEventPublisher
 from backend.metrics import FleetSnapshotService, InstrumentedEventPublisher
+from backend.metrics.definitions import JETSTREAM_TOPOLOGY_READY, NATS_CONNECTED
 from backend.proxy.attempts import AttemptAdmission
 from backend.proxy.command_costs import CommandCostQueryService
 from backend.proxy.contracts import ProviderName
@@ -53,6 +56,97 @@ from backend.proxy.sessions import SessionAdmission
 from backend.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _clear_nats_event_services(
+    app: FastAPI,
+    event_publisher: DynamicEventPublisher,
+) -> None:
+    event_publisher.replace(None)
+    app.state.activity_stream = None
+    app.state.debug_stream = None
+    app.state.nats_topology_ready = False
+    JETSTREAM_TOPOLOGY_READY.set(0)
+
+
+async def _nats_runtime(
+    app: FastAPI,
+    notifier: DynamicCapacityNotifier,
+    event_publisher: DynamicEventPublisher,
+    stopped: asyncio.Event,
+) -> None:
+    while not stopped.is_set():
+        client = None
+        try:
+            async with asyncio.timeout(settings.nats_connect_timeout_seconds):
+                client = await nats.connect(
+                    str(settings.nats_url),
+                    connect_timeout=settings.nats_connect_timeout_seconds,
+                    max_reconnect_attempts=-1,
+                    **nats_auth_options(settings.nats_seed),
+                )
+                await client.flush(timeout=settings.nats_connect_timeout_seconds)
+            await notifier.replace(await NatsCapacityNotifier.start(client))
+            app.state.nats_connected = True
+            NATS_CONNECTED.set(1)
+            topology_ready = False
+            while not stopped.is_set() and not client.is_closed:
+                connected = client.is_connected
+                app.state.nats_connected = connected
+                NATS_CONNECTED.set(int(connected))
+                if connected:
+                    try:
+                        await client.jetstream().stream_info(EVENT_STREAM)
+                    except Exception:
+                        if topology_ready:
+                            _clear_nats_event_services(app, event_publisher)
+                            topology_ready = False
+                    else:
+                        if not topology_ready:
+                            publisher = InstrumentedEventPublisher(
+                                JetStreamEventPublisher.connected(client)
+                            )
+                            event_publisher.replace(publisher)
+                            app.state.activity_stream = ActivityStreamService(
+                                client,
+                                max_pending_events=settings.debug_stream_max_pending_events,
+                                max_pending_bytes=settings.debug_stream_max_pending_bytes,
+                            )
+                            app.state.debug_stream = DebugStreamService(
+                                session_factory,
+                                client,
+                                reference_wait_seconds=settings.debug_reference_wait_seconds,
+                                max_pending_events=settings.debug_stream_max_pending_events,
+                                max_pending_bytes=settings.debug_stream_max_pending_bytes,
+                            )
+                            app.state.nats_topology_ready = True
+                            JETSTREAM_TOPOLOGY_READY.set(1)
+                            topology_ready = True
+                elif topology_ready:
+                    _clear_nats_event_services(app, event_publisher)
+                    topology_ready = False
+                try:
+                    await asyncio.wait_for(stopped.wait(), timeout=1)
+                except TimeoutError:
+                    pass
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("NATS unavailable; Harbor remains in PostgreSQL mode", exc_info=True)
+        finally:
+            app.state.nats_connected = False
+            NATS_CONNECTED.set(0)
+            _clear_nats_event_services(app, event_publisher)
+            with suppress(Exception):
+                await notifier.replace(None)
+            if client is not None:
+                with suppress(Exception):
+                    await client.close()
+        if not stopped.is_set():
+            try:
+                await asyncio.wait_for(stopped.wait(), timeout=1)
+            except TimeoutError:
+                pass
 
 
 @asynccontextmanager
@@ -86,34 +180,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await routing.ensure_defaults()
     network_policy = NetworkPolicyRepository(session_factory)
     await network_policy.ensure_defaults()
-    nats_client = None
-    try:
-        async with asyncio.timeout(settings.nats_connect_timeout_seconds):
-            nats_client = await nats.connect(
-                str(settings.nats_url),
-                connect_timeout=settings.nats_connect_timeout_seconds,
-                max_reconnect_attempts=-1,
-                **nats_auth_options(settings.nats_seed),
-            )
-        notifier = await NatsCapacityNotifier.start(nats_client)
-        event_publisher = InstrumentedEventPublisher(
-            await JetStreamEventPublisher.start(
-                nats_client,
-                EventStreamSettings(
-                    max_age_seconds=settings.jetstream_event_max_age_seconds,
-                    max_bytes=settings.jetstream_event_max_bytes,
-                    max_message_bytes=settings.jetstream_event_max_message_bytes,
-                    duplicate_window_seconds=(settings.jetstream_event_duplicate_window_seconds),
-                    replicas=settings.jetstream_event_replicas,
-                ),
-            )
-        )
-    except Exception:
-        logger.warning("NATS unavailable; capacity waiters will use polling", exc_info=True)
-        if nats_client is not None:
-            await nats_client.close()
-            nats_client = None
-        notifier = PollingNotifier()
+    notifier = DynamicCapacityNotifier()
+    event_publisher = DynamicEventPublisher()
+    app.state.nats_connected = False
+    app.state.nats_topology_ready = False
+    app.state.activity_stream = None
+    app.state.debug_stream = None
+    nats_stopped = asyncio.Event()
+    nats_task = asyncio.create_task(_nats_runtime(app, notifier, event_publisher, nats_stopped))
     sessions = SessionAdmission(repository, settings)
     attempts = AttemptAdmission(
         attempt_repository,
@@ -131,31 +205,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.costs = CostQueryService(session_factory)
     app.state.health = PromotionRepository(session_factory)
     app.state.activity_history = ActivityHistoryService(session_factory)
-    app.state.activity_stream = (
-        ActivityStreamService(
-            nats_client,
-            max_pending_events=settings.debug_stream_max_pending_events,
-            max_pending_bytes=settings.debug_stream_max_pending_bytes,
-        )
-        if nats_client is not None
-        else None
-    )
-    app.state.debug_stream = (
-        DebugStreamService(
-            session_factory,
-            nats_client,
-            reference_wait_seconds=settings.debug_reference_wait_seconds,
-            max_pending_events=settings.debug_stream_max_pending_events,
-            max_pending_bytes=settings.debug_stream_max_pending_bytes,
-        )
-        if nats_client is not None
-        else None
-    )
     app.state.gateway = Gateway(
         sessions,
         attempts,
         settings,
-        event_publisher if nats_client is not None else None,
+        event_publisher,
         transition_repository=ProviderTransitionRepository(session_factory),
         routing=routing,
         network_policy=network_policy,
@@ -163,13 +217,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        nats_stopped.set()
+        await nats_task
         await notifier.close()
-        if nats_client is not None:
-            await nats_client.drain()
         await engine.dispose()
 
 
-app = FastAPI(title=settings.app_name, version="0.1.12", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.1.13", lifespan=lifespan)
 app.include_router(admin_command_costs_router)
 app.include_router(admin_costs_router)
 app.include_router(admin_events_router)

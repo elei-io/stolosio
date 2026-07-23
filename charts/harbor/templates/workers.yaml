@@ -2,6 +2,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "harbor.fullname" . }}-maintenance
+  {{- with .Values.workloadAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   labels:
     {{- include "harbor.labels" . | nindent 4 }}
     app.kubernetes.io/component: maintenance
@@ -28,6 +32,17 @@ spec:
           command: ["/app/.venv/bin/python", "-m", "backend.workers.maintenance"]
           env:
             {{- include "harbor.connectionEnv" . | nindent 12 }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.maintenance.metricsPort }}
+          startupProbe:
+            tcpSocket:
+              port: metrics
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: metrics
           resources:
             {{- toYaml .Values.maintenance.resources | nindent 12 }}
 ---
@@ -35,6 +50,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "harbor.fullname" . }}-health
+  {{- with .Values.workloadAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   labels:
     {{- include "harbor.labels" . | nindent 4 }}
     app.kubernetes.io/component: health

@@ -81,7 +81,7 @@ async def test_debug_stream_replays_jetstream_events_in_order_until_session_clos
         client,
         EventStreamSettings(
             max_age_seconds=settings.jetstream_event_max_age_seconds,
-            max_bytes=settings.jetstream_event_max_bytes,
+            max_bytes=10 * 1024 * 1024,
             max_message_bytes=settings.jetstream_event_max_message_bytes,
             duplicate_window_seconds=settings.jetstream_event_duplicate_window_seconds,
             replicas=settings.jetstream_event_replicas,

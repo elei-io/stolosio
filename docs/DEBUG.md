@@ -172,6 +172,11 @@ opaque pagination cursor. SSE event IDs are JetStream stream sequences, so the b
 can resume through `Last-Event-ID`; filtered connections receive bounded cursor
 heartbeats so their resume position continues to advance.
 
+Replacing NATS resets stream sequences. Harbor reports `replay-unavailable` with
+`stream_recreated` when a supplied sequence belongs to the previous stream generation;
+the client then reloads retained history from PostgreSQL before following the new live
+tail.
+
 The activity feed does not introduce a richer or less-redacted event source. It exposes
 the same validated `SessionEvent` facts with derived family and outcome fields for
 display. History and live delivery are bounded independently, slow consumers never

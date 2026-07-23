@@ -86,6 +86,11 @@ Operational entities and factual projections retain their own product state. The
 transactional attempt command summary is cleared after its bounded aggregate has
 been projected.
 
+PostgreSQL is the reconstruction source when NATS is replaced. Harbor owns and
+continuously reconciles its JetStream streams and consumers. Creating a fresh event
+stream triggers a bounded replay of PostgreSQL records that still fall inside the
+configured JetStream retention window.
+
 ## Evidence and projections
 
 The recorder maintains factual projections for:

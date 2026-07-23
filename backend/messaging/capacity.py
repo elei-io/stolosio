@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 from collections import defaultdict
 from typing import Protocol
@@ -28,6 +30,35 @@ class PollingNotifier:
         return None
 
 
+class DynamicCapacityNotifier:
+    def __init__(self) -> None:
+        self._notifier: NatsCapacityNotifier | None = None
+
+    async def replace(self, notifier: NatsCapacityNotifier | None) -> None:
+        previous = self._notifier
+        self._notifier = notifier
+        if previous is not None and previous is not notifier:
+            await previous.close()
+
+    async def wait(self, provider: ProviderName, wait_seconds: float) -> None:
+        notifier = self._notifier
+        if notifier is None:
+            await asyncio.sleep(wait_seconds)
+            return
+        await notifier.wait(provider, wait_seconds)
+
+    async def notify(self, provider: ProviderName) -> None:
+        notifier = self._notifier
+        if notifier is not None:
+            try:
+                await notifier.notify(provider)
+            except Exception:
+                return None
+
+    async def close(self) -> None:
+        await self.replace(None)
+
+
 class NatsCapacityNotifier:
     def __init__(self, client: NatsClient, *, owns_client: bool) -> None:
         self._client = client
@@ -42,7 +73,7 @@ class NatsCapacityNotifier:
         client: NatsClient,
         *,
         owns_client: bool = False,
-    ) -> "NatsCapacityNotifier":
+    ) -> NatsCapacityNotifier:
         notifier = cls(client, owns_client=owns_client)
         notifier._subscription = await client.subscribe(
             f"{_CAPACITY_SUBJECT}.*", cb=notifier._receive
@@ -57,7 +88,7 @@ class NatsCapacityNotifier:
         *,
         connect_timeout_seconds: float,
         seed: str = "",
-    ) -> "NatsCapacityNotifier":
+    ) -> NatsCapacityNotifier:
         async with asyncio.timeout(connect_timeout_seconds):
             client = await nats.connect(
                 servers=[url],

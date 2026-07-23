@@ -250,6 +250,13 @@ class ActivityStreamService:
     ) -> AsyncIterator[str]:
         if after_sequence is not None:
             stream = await self._client.jetstream().stream_info(EVENT_STREAM)
+            if after_sequence > stream.state.last_seq:
+                yield self._sse(
+                    "replay-unavailable",
+                    {"reason": "stream_recreated"},
+                    event_id=None,
+                )
+                return
             if stream.state.messages > 0 and after_sequence < stream.state.first_seq - 1:
                 yield self._sse(
                     "replay-unavailable",

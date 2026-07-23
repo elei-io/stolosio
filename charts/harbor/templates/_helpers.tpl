@@ -60,6 +60,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
       name: {{ $.Values.nats.existingSecret }}
       key: {{ . }}
 {{- end }}
+- name: JETSTREAM_EVENT_REPLICAS
+  value: {{ .Values.nats.jetstreamReplicas | quote }}
 {{- end }}
 
 {{- define "harbor.browserbaseEnv" -}}

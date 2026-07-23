@@ -12,10 +12,15 @@ It does not call Docker, containerd, or a distribution-specific CLI.
 ## Platform prerequisites
 
 The platform must provide reachable PostgreSQL and NATS installations and put their
-connection URLs in a Kubernetes Secret. Harbor does not install, operate, size, back
+connection details in namespace-scoped Kubernetes Secrets. Harbor does not install, operate, size, back
 up, or upgrade either service. The PostgreSQL identity must be allowed to run Harbor's
 schema migrations. The NATS identity must be allowed to create and update Harbor's
-own JetStream stream and consumers.
+own JetStream streams and consumers. The platform does not create or delete those
+resources.
+
+NATS is a disposable delivery layer for Harbor. PostgreSQL is authoritative. Harbor's
+maintenance worker continuously reconciles its streams and consumers and reconstructs
+the retained event window from PostgreSQL whenever it creates a fresh event stream.
 
 The Helm chart does not create Ingress, Gateway API, DNS, or TLS resources. It creates
 separate API and UI Services. They default to `LoadBalancer`; a platform may instead
@@ -87,19 +92,28 @@ an unreleased application build with the chart checked out from Git.
 
 ## Helm installation
 
-Create a Secret containing the two connection URLs:
+Create separate Secrets for the PostgreSQL connection and the platform-issued Harbor
+NATS namespace credential:
 
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: harbor-connections
+  name: harbor-database
   namespace: harbor
 type: Opaque
 stringData:
-  database-url: postgresql+asyncpg://harbor:password@postgres.example:5432/harbor
-  nats-url: tls://nats.example:4222
-  nats-seed: SU...
+  DATABASE_URL: postgresql+asyncpg://harbor:password@postgres.example:5432/harbor
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nats-harbor
+  namespace: harbor
+type: Opaque
+stringData:
+  NATS_URL: tls://nats.example:4222
+  NATS_SEED: SU...
 ```
 
 Install Harbor:
@@ -110,9 +124,12 @@ helm upgrade --install harbor \
   --version 0.1.12 \
   --namespace harbor \
   --create-namespace \
-  --set database.existingSecret=harbor-connections \
-  --set nats.existingSecret=harbor-connections \
-  --set nats.seedSecretKey=nats-seed
+  --set database.existingSecret=harbor-database \
+  --set database.urlSecretKey=DATABASE_URL \
+  --set nats.existingSecret=nats-harbor \
+  --set nats.urlSecretKey=NATS_URL \
+  --set nats.seedSecretKey=NATS_SEED \
+  --set nats.jetstreamReplicas=3
 ```
 
 The release chart defaults to matching Harbor and web image versions and a pinned
@@ -172,7 +189,7 @@ clients.
 
 The example under [`deploy/flux`](../deploy/flux) uses a Flux `OCIRepository` and
 `HelmRelease` to consume the versioned chart directly from GHCR. Copy that directory
-into the cluster GitOps repository, provide `harbor-connections`, and provide
+into the cluster GitOps repository, provide `harbor-database` and `nats-harbor`, and provide
 `ghcr-auth` while the packages are private.
 
 Keep credentials out of plaintext Git. Encrypt the Secrets with SOPS or source them

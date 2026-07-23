@@ -22,16 +22,17 @@ republish it.
 
 ```yaml
 database:
-  existingSecret: harbor-connections
-  urlSecretKey: database-url
+  existingSecret: harbor-database
+  urlSecretKey: DATABASE_URL
 
 nats:
-  existingSecret: harbor-connections
-  urlSecretKey: nats-url
-  seedSecretKey: nats-seed
+  existingSecret: nats-harbor
+  urlSecretKey: NATS_URL
+  seedSecretKey: NATS_SEED
+  jetstreamReplicas: 3
 ```
 
-The Secret must already exist in the release namespace.
+The Secrets must already exist in the release namespace.
 `nats.seedSecretKey` is optional for password or token authenticated NATS
 deployments. Set it for an NKey seed stored in the same Secret.
 
@@ -41,7 +42,9 @@ stored in PostgreSQL. They are not Helm values.
 The PostgreSQL identity must be able to apply Harbor's schema migrations. The NATS
 identity must be able to manage Harbor's own JetStream resources. The chart runs
 migrations as a pre-install and pre-upgrade Helm Job and retains a successful Job for
-`migration.ttlSecondsAfterFinished`; it never provisions PostgreSQL or NATS.
+`migration.ttlSecondsAfterFinished`; it never provisions PostgreSQL or NATS. Harbor
+creates and continuously reconciles its own streams and consumers. When it creates a
+fresh event stream, it reconstructs the retained event window from PostgreSQL.
 
 Optional Browserbase credentials are also read from an existing Secret:
 
@@ -53,13 +56,15 @@ browserbase:
 ```
 
 Global `imagePullSecrets`, `podAnnotations`, `podLabels`, `nodeSelector`, `affinity`,
-and `tolerations` apply to Harbor application Pods. Browserless has corresponding
+and `tolerations` apply to Harbor application Pods. `workloadAnnotations` applies to
+Deployment metadata and can be used by secret operators that restart workloads after
+credential rotation. Browserless has corresponding
 settings under `browserless.*`. `browserless.timeoutMilliseconds` configures the
 worker-side maximum session lifetime; fleet limits and per-instance concurrency still
 come from PostgreSQL.
 
 Set `monitoring.enabled=true` to create annotated ClusterIP metrics Services for the
-API and fleet controller. The Services expose `/metrics` and carry standard
+API, maintenance worker, and fleet controller. The Services expose `/metrics` and carry standard
 `prometheus.io/*` discovery annotations. If the platform has already installed the
 Prometheus Operator CRDs, `monitoring.serviceMonitor.enabled=true` additionally creates
 a `ServiceMonitor`. Harbor never installs the operator, Prometheus, or its CRDs.

@@ -128,6 +128,21 @@ EVENT_PUBLICATION_FAILURES = Counter(
     ("event_type",),
     registry=REGISTRY,
 )
+NATS_CONNECTED = Gauge(
+    "harbor_nats_connected",
+    "Whether this Harbor process currently has a usable NATS connection.",
+    registry=REGISTRY,
+)
+JETSTREAM_TOPOLOGY_READY = Gauge(
+    "harbor_jetstream_topology_ready",
+    "Whether Harbor's application-owned JetStream topology is available.",
+    registry=REGISTRY,
+)
+JETSTREAM_REHYDRATED_EVENTS = Counter(
+    "harbor_jetstream_rehydrated_events",
+    "PostgreSQL event records republished after recreating Harbor's event stream.",
+    registry=REGISTRY,
+)
 EVENT_RECORDER_EVENTS = Counter(
     "harbor_event_recorder_events",
     "Recorder inputs by persistence outcome.",
