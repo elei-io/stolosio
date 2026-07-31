@@ -62,8 +62,9 @@ async function apiRequest<T>(url: string): Promise<T> {
 function formatDuration(seconds: number) {
   if (seconds <= 0) return "None"
   if (seconds < 60) return `${Math.round(seconds)}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainder = Math.round(seconds % 60)
+  const roundedSeconds = Math.round(seconds)
+  const minutes = Math.floor(roundedSeconds / 60)
+  const remainder = roundedSeconds % 60
   return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`
 }
 
@@ -831,7 +832,7 @@ export function OverviewPage({ navigate }: OverviewPageProps) {
                     <td className="max-w-md px-4 py-3">
                       <code className="text-xs">
                         {row.method === "__session_overhead__"
-                          ? "Session overhead"
+                          ? "Unattributed session"
                           : row.method === "__other__"
                             ? "Other methods"
                             : row.method}

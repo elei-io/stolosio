@@ -27,10 +27,16 @@ async def test_attempt_release_retries_a_transient_database_failure() -> None:
     notifier = AsyncMock()
     lease = AttemptLease(attempt(), repository, notifier)
 
-    await lease.release(command_summary={"methods": {}})
+    await lease.release(
+        command_summary={"methods": {}},
+        phase_summary={"measurement_version": 1},
+    )
     await lease.release()
 
     assert repository.finish.await_count == 2
+    assert repository.finish.await_args.kwargs["phase_summary"] == {
+        "measurement_version": 1
+    }
     notifier.notify.assert_awaited_once_with(ProviderName.HTTP)
 
 

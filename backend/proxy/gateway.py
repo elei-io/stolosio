@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from contextlib import suppress
 from dataclasses import replace
 from uuid import UUID
@@ -207,10 +208,28 @@ class Gateway:
                 if failed and hasattr(provider_session, "fail"):
                     with suppress(Exception):
                         await provider_session.fail(reason)
+                close_started_at = time.monotonic()
                 await self._bounded_cleanup(provider_session.close(), "provider session")
+                if observer is not None and attempt is not None:
+                    attempt_id = UUID(attempt.attempt.attempt_id)
+                    observer.record_attempt_phase(
+                        attempt_id,
+                        "provider_close_ms",
+                        round((time.monotonic() - close_started_at) * 1000),
+                    )
+                    observer.record_attempt_phases(
+                        attempt_id,
+                        getattr(provider_session, "provider_phase_summary", None),
+                    )
             if attempt is not None:
+                attempt_id = UUID(attempt.attempt.attempt_id)
                 command_summary = (
-                    observer.command_summary(UUID(attempt.attempt.attempt_id))
+                    observer.command_summary(attempt_id)
+                    if observer is not None
+                    else None
+                )
+                phase_summary = (
+                    observer.phase_summary(attempt_id)
                     if observer is not None
                     else None
                 )
@@ -229,12 +248,13 @@ class Gateway:
                         failed=failed,
                         reason=reason,
                         command_summary=command_summary,
+                        phase_summary=phase_summary,
                     ),
                     "attempt",
                 )
                 if observer is not None:
                     await self._bounded_cleanup(
-                        observer.flush_command_summary(UUID(attempt.attempt.attempt_id)),
+                        observer.flush_command_summary(attempt_id),
                         "command summary",
                     )
             if session is not None:

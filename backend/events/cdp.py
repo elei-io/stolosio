@@ -1,6 +1,7 @@
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -37,6 +38,70 @@ class _CommandUsage:
     harbor_queue_ms: int = 0
 
 
+@dataclass(slots=True)
+class _AttemptPhaseUsage:
+    started_at: float
+    first_command_at: float | None = None
+    last_command_at: float | None = None
+    active_started_at: float | None = None
+    active_command_count: int = 0
+    command_active_seconds: float = 0
+    transition_replay_ms: int = 0
+    provider_bootstrap_ms: int = 0
+    provider_close_ms: int = 0
+
+    def command_started(self, observed_at: float) -> None:
+        if self.first_command_at is None:
+            self.first_command_at = observed_at
+        if self.active_command_count == 0:
+            self.active_started_at = observed_at
+        self.active_command_count += 1
+
+    def command_finished(self, observed_at: float) -> None:
+        if self.active_command_count <= 0:
+            return
+        self.active_command_count -= 1
+        self.last_command_at = observed_at
+        if self.active_command_count == 0 and self.active_started_at is not None:
+            self.command_active_seconds += max(0, observed_at - self.active_started_at)
+            self.active_started_at = None
+
+    def snapshot(self, observed_at: float) -> dict[str, object]:
+        observed_ms = max(0, round((observed_at - self.started_at) * 1000))
+        active_seconds = self.command_active_seconds
+        if self.active_command_count and self.active_started_at is not None:
+            active_seconds += max(0, observed_at - self.active_started_at)
+        command_active_ms = min(observed_ms, max(0, round(active_seconds * 1000)))
+        return {
+            "measurement_version": 1,
+            "observed_session_ms": observed_ms,
+            "command_active_ms": command_active_ms,
+            "no_command_in_flight_ms": max(0, observed_ms - command_active_ms),
+            "pre_first_command_ms": (
+                max(0, round((self.first_command_at - self.started_at) * 1000))
+                if self.first_command_at is not None
+                else None
+            ),
+            "post_last_command_ms": (
+                max(0, round((observed_at - self.last_command_at) * 1000))
+                if self.last_command_at is not None
+                else None
+            ),
+            "transition_replay_ms": self.transition_replay_ms,
+            "provider_bootstrap_ms": self.provider_bootstrap_ms,
+            "provider_close_ms": self.provider_close_ms,
+        }
+
+
+_ATTEMPT_PHASE_NAMES = frozenset(
+    {
+        "transition_replay_ms",
+        "provider_bootstrap_ms",
+        "provider_close_ms",
+    }
+)
+
+
 _CONTENT_EXPRESSION = """() => {
         let retVal = "";
         if (document.doctype)
@@ -66,11 +131,14 @@ class CdpEventObserver:
         attempt_id: UUID | None,
         provider: ProviderName | None,
         publisher: EventPublisher,
+        *,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._session_id = session_id
         self._attempt_id = attempt_id
         self._provider = provider
         self._publisher = publisher
+        self._clock = clock
         self._pending: dict[tuple[str | None, int], _PendingCommand] = {}
         self._domain: str | None = None
         self._command_sequence = 0
@@ -78,10 +146,75 @@ class CdpEventObserver:
             tuple[ProviderName, UUID],
             dict[str, _CommandUsage],
         ] = {}
+        self._attempt_phases: dict[
+            tuple[ProviderName, UUID],
+            _AttemptPhaseUsage,
+        ] = {}
+        self._pending_phase_keys: dict[
+            tuple[str | None, int],
+            tuple[ProviderName, UUID],
+        ] = {}
+        if provider is not None and attempt_id is not None:
+            self.start_attempt_phase(provider, attempt_id)
 
     def bind_attempt(self, provider: ProviderName, attempt_id: UUID | None) -> None:
+        previous = self._attempt_key()
         self._provider = provider
         self._attempt_id = attempt_id
+        current = self._attempt_key()
+        if current is None:
+            return
+        observed_at = self._clock()
+        self._attempt_phases.setdefault(current, _AttemptPhaseUsage(observed_at))
+        if previous == current:
+            return
+        for pending_key, phase_key in list(self._pending_phase_keys.items()):
+            if phase_key != previous:
+                continue
+            self._finish_phase_command(phase_key, observed_at)
+            self._start_phase_command(current, observed_at)
+            self._pending_phase_keys[pending_key] = current
+
+    def start_attempt_phase(self, provider: ProviderName, attempt_id: UUID) -> None:
+        self._attempt_phases.setdefault(
+            (provider, attempt_id),
+            _AttemptPhaseUsage(self._clock()),
+        )
+
+    def record_attempt_phase(
+        self,
+        attempt_id: UUID,
+        phase: str,
+        duration_ms: int,
+    ) -> None:
+        if phase not in _ATTEMPT_PHASE_NAMES:
+            raise ValueError(f"Unknown attempt phase {phase}")
+        match = self._phase_match(attempt_id)
+        if match is None:
+            return
+        usage = self._attempt_phases[match]
+        setattr(usage, phase, getattr(usage, phase) + max(0, duration_ms))
+
+    def record_attempt_phases(
+        self,
+        attempt_id: UUID,
+        phases: object,
+    ) -> None:
+        if not isinstance(phases, dict):
+            return
+        for phase, duration_ms in phases.items():
+            if (
+                isinstance(phase, str)
+                and phase in _ATTEMPT_PHASE_NAMES
+                and isinstance(duration_ms, int)
+            ):
+                self.record_attempt_phase(attempt_id, phase, duration_ms)
+
+    def phase_summary(self, attempt_id: UUID) -> dict[str, object] | None:
+        match = self._phase_match(attempt_id)
+        if match is None:
+            return None
+        return self._attempt_phases[match].snapshot(self._clock())
 
     async def command_received(self, command: dict) -> None:
         command_id = command["id"]
@@ -117,7 +250,7 @@ class CdpEventObserver:
             self._command_sequence,
             method,
             domain,
-            time.monotonic(),
+            self._clock(),
             None,
             _captures_page_content(method, params),
         )
@@ -132,7 +265,12 @@ class CdpEventObserver:
         key = (session_id, command_id)
         pending = self._pending.get(key)
         if pending is not None:
-            self._pending[key] = replace(pending, forwarded_at=time.monotonic())
+            observed_at = self._clock()
+            self._pending[key] = replace(pending, forwarded_at=observed_at)
+            phase_key = self._attempt_key()
+            if phase_key is not None and key not in self._pending_phase_keys:
+                self._start_phase_command(phase_key, observed_at)
+                self._pending_phase_keys[key] = phase_key
 
     async def command_unsupported(self, command_id: int) -> None:
         await self._finish_command(
@@ -329,7 +467,12 @@ class CdpEventObserver:
             pending = self._pop_pending_for_id(command_id)
         if pending is None:
             return
-        finished_at = time.monotonic()
+        finished_at = self._clock()
+        phase_key = self._pending_phase_keys.pop((session_id, command_id), None)
+        if phase_key is None and session_id is None:
+            phase_key = self._pop_pending_phase_for_id(command_id)
+        if phase_key is not None:
+            self._finish_phase_command(phase_key, finished_at)
         duration_ms = round((finished_at - pending.started_at) * 1000)
         provider_latency_ms = (
             round((finished_at - pending.forwarded_at) * 1000)
@@ -412,6 +555,9 @@ class CdpEventObserver:
                     }
                 },
             )
+        phase_matches = [key for key in self._attempt_phases if key[1] == attempt_id]
+        for key in phase_matches:
+            del self._attempt_phases[key]
 
     def command_summary(self, attempt_id: UUID) -> dict[str, object] | None:
         matches = [
@@ -437,9 +583,50 @@ class CdpEventObserver:
         }
 
     async def flush_command_summaries(self) -> None:
-        attempt_ids = {attempt_id for _, attempt_id in self._command_usage}
+        attempt_ids = {
+            attempt_id
+            for _, attempt_id in (*self._command_usage, *self._attempt_phases)
+        }
         for attempt_id in attempt_ids:
             await self.flush_command_summary(attempt_id)
+
+    def _attempt_key(self) -> tuple[ProviderName, UUID] | None:
+        if self._provider is None or self._attempt_id is None:
+            return None
+        return self._provider, self._attempt_id
+
+    def _phase_match(self, attempt_id: UUID) -> tuple[ProviderName, UUID] | None:
+        matches = [key for key in self._attempt_phases if key[1] == attempt_id]
+        return matches[0] if len(matches) == 1 else None
+
+    def _start_phase_command(
+        self,
+        phase_key: tuple[ProviderName, UUID],
+        observed_at: float,
+    ) -> None:
+        usage = self._attempt_phases.setdefault(
+            phase_key,
+            _AttemptPhaseUsage(observed_at),
+        )
+        usage.command_started(observed_at)
+
+    def _finish_phase_command(
+        self,
+        phase_key: tuple[ProviderName, UUID],
+        observed_at: float,
+    ) -> None:
+        usage = self._attempt_phases.get(phase_key)
+        if usage is not None:
+            usage.command_finished(observed_at)
+
+    def _pop_pending_phase_for_id(
+        self,
+        command_id: int,
+    ) -> tuple[ProviderName, UUID] | None:
+        matches = [key for key in self._pending_phase_keys if key[1] == command_id]
+        if len(matches) != 1:
+            return None
+        return self._pending_phase_keys.pop(matches[0])
 
     def _pending_for_id(self, command_id: int) -> _PendingCommand | None:
         matches = [

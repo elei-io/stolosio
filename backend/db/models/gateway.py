@@ -266,6 +266,9 @@ class AcquisitionAttempt(Base):
     command_summary: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB(none_as_null=True)
     )
+    phase_summary: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
     command_cost_projected: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )

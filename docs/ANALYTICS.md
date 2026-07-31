@@ -89,9 +89,18 @@ The projection records counts, failures, interruptions, end-to-end time, provide
 latency, Harbor queue time, attributed browser time, and attributed cost. Because commands can
 overlap, raw command durations are not summed as browser cost. Instead, Harbor
 distributes at most the attempt's measured browser-connected time in proportion to
-provider latency and records idle/connect/disconnect time as `__session_overhead__`.
+provider latency and records the remaining unattributed time as
+`__session_overhead__`.
 The aggregate therefore answers which commands account for the most browser time
 without retaining individual commands or arbitrary parameters.
+
+Each finalized attempt also retains one bounded, versioned `phase_summary`. The
+shadow measurement records observed session time, the union of intervals with one or
+more downstream commands in flight, time with no command in flight, time before the
+first and after the last command, internal transition replay, provider bootstrap, and
+provider close. These measurements do not change command attribution or routing.
+Internal phase totals may overlap command-active or no-command intervals and are
+therefore explanatory submeasurements rather than additive billing buckets.
 
 Method identity is globally capped at 512 rows per provider, including an `__other__`
 overflow row; session overhead is stored separately. The recorder folds each attempt

@@ -489,7 +489,7 @@ export function CostPage({ navigate }: CostPageProps) {
           </div>
           <CardDescription>
             Cumulative bounded attribution. Connect, idle, disconnect, and
-            billing-minimum cost is retained as session overhead.
+            billing-minimum cost is retained as unattributed session cost.
           </CardDescription>
         </CardHeader>
         <CardContent className="mt-4 pb-5">
@@ -510,7 +510,7 @@ export function CostPage({ navigate }: CostPageProps) {
                   <div className="min-w-0">
                     <p className="truncate font-mono text-xs">
                       {row.method === "__session_overhead__"
-                        ? "Session overhead"
+                        ? "Unattributed session"
                         : row.method === "__other__"
                           ? "Other bounded methods"
                           : row.method}

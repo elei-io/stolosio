@@ -78,7 +78,14 @@ class FakeSessionLease:
     async def wait_lost(self) -> None:
         await asyncio.Future()
 
-    async def release(self, *, failed: bool, reason: str) -> None:
+    async def release(
+        self,
+        *,
+        failed: bool,
+        reason: str,
+        command_summary=None,
+        phase_summary=None,
+    ) -> None:
         self.released.append((failed, reason))
 
 

@@ -205,6 +205,7 @@ class SessionQueryService:
                     "browser_connected_ms": attempt.browser_connected_ms,
                     "provider_reported_ms": attempt.provider_reported_ms,
                     "estimated_billable_ms": attempt.estimated_billable_ms,
+                    "phase_summary": attempt.phase_summary,
                     "terminal_reason": attempt.terminal_reason,
                 }
                 for attempt in attempts

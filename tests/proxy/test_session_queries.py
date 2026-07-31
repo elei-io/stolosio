@@ -48,6 +48,12 @@ async def test_session_queries_return_summaries_and_redacted_detail(
             state="closed",
             selection_reason="cheapest_eligible",
             modeled_cost_units=2,
+            phase_summary={
+                "measurement_version": 1,
+                "observed_session_ms": 8_000,
+                "command_active_ms": 5_000,
+                "no_command_in_flight_ms": 3_000,
+            },
             created_at=now - timedelta(seconds=9),
             finished_at=now,
         )
@@ -73,6 +79,7 @@ async def test_session_queries_return_summaries_and_redacted_detail(
     assert detail is not None
     assert detail["requested_setting_keys"] == ["locale", "proxy"]
     assert detail["attempts"][0]["resolved_setting_keys"] == ["proxy"]
+    assert detail["attempts"][0]["phase_summary"]["no_command_in_flight_ms"] == 3_000
     assert "requested_settings" not in detail
     assert "resolved_settings" not in detail["attempts"][0]
 

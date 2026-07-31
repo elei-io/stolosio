@@ -277,6 +277,7 @@ class PostgresAttemptRepository:
         failed: bool,
         reason: str,
         command_summary: dict[str, object] | None = None,
+        phase_summary: dict[str, object] | None = None,
     ) -> bool:
         async with self._sessions.begin() as database:
             now = await self._now(database)
@@ -290,6 +291,7 @@ class PostgresAttemptRepository:
             row.finished_at = now
             await finalize_attempt_usage(database, row, now)
             row.command_summary = command_summary
+            row.phase_summary = phase_summary
             row.terminal_reason = reason
             self._event(
                 database,

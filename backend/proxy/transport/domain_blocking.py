@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import suppress
@@ -50,6 +51,7 @@ class DomainBlockingProviderSession:
         self._disconnect_reason: str | None = None
         self._closed = False
         self._terminal_enqueued = False
+        self._provider_bootstrap_ms = 0
 
     @property
     def provider(self):
@@ -61,6 +63,10 @@ class DomainBlockingProviderSession:
 
     def __getattr__(self, name: str):
         return getattr(self._upstream, name)
+
+    @property
+    def provider_phase_summary(self) -> dict[str, int]:
+        return {"provider_bootstrap_ms": self._provider_bootstrap_ms}
 
     async def send(self, message: str) -> None:
         if self._disconnect_reason is not None:
@@ -182,6 +188,7 @@ class DomainBlockingProviderSession:
         )
 
     async def _configure_target(self, session_id: str) -> None:
+        started_at = time.monotonic()
         key: tuple[str, int] | None = None
         async with self._command_id_condition:
             command_id = self._internal_command_id
@@ -214,6 +221,10 @@ class DomainBlockingProviderSession:
         except Exception as error:
             await self._fail_closed(error)
         finally:
+            self._provider_bootstrap_ms += max(
+                0,
+                round((time.monotonic() - started_at) * 1000),
+            )
             async with self._command_id_condition:
                 if key is not None:
                     self._internal_responses.pop(key, None)

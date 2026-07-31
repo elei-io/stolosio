@@ -86,7 +86,9 @@ and interruptions produce individual command events.
 
 PostgreSQL folds attempt summaries into a cumulative provider-and-method cost
 aggregate, with browser-connected time capped at the attempt total and residual time
-assigned to session overhead. It does not retain individual command executions.
+assigned to an unattributed-session row. Attempts separately retain a bounded shadow
+summary of command-active union time and fixed internal lifecycle phases. Harbor does
+not retain individual successful command executions.
 DEBUG events contain normalized, redacted observations rather than arbitrary
 parameters, page data, credentials, or diagnoses.
 

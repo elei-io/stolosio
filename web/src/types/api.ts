@@ -131,6 +131,18 @@ export type SessionPage = {
   next_cursor: string | null
 }
 
+export type AttemptPhaseSummary = {
+  measurement_version: number
+  observed_session_ms: number
+  command_active_ms: number
+  no_command_in_flight_ms: number
+  pre_first_command_ms: number | null
+  post_last_command_ms: number | null
+  transition_replay_ms: number
+  provider_bootstrap_ms: number
+  provider_close_ms: number
+}
+
 export type SessionAttempt = {
   id: string
   ordinal: number
@@ -160,6 +172,7 @@ export type SessionAttempt = {
   browser_connected_ms: number | null
   provider_reported_ms: number | null
   estimated_billable_ms: number | null
+  phase_summary: AttemptPhaseSummary | null
   terminal_reason: string | null
 }
 

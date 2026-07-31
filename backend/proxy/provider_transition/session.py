@@ -258,13 +258,34 @@ class ProviderTransitionSession:
         if self._upstream_pump is not None:
             self._upstream_pump.cancel()
             await asyncio.gather(self._upstream_pump, return_exceptions=True)
+        attempt_id = (
+            UUID(self._attempt.attempt.attempt_id)
+            if self._attempt is not None
+            else None
+        )
         if self._upstream is not None:
+            close_started_at = time.monotonic()
             with suppress(Exception):
                 await self._upstream.close()
+            if self._observer is not None and attempt_id is not None:
+                self._observer.record_attempt_phase(
+                    attempt_id,
+                    "provider_close_ms",
+                    round((time.monotonic() - close_started_at) * 1000),
+                )
+                self._observer.record_attempt_phases(
+                    attempt_id,
+                    getattr(self._upstream, "provider_phase_summary", None),
+                )
         if self._attempt is not None:
             await self._record_final_routing_evidence()
             command_summary = (
-                self._observer.command_summary(UUID(self._attempt.attempt.attempt_id))
+                self._observer.command_summary(attempt_id)
+                if self._observer is not None
+                else None
+            )
+            phase_summary = (
+                self._observer.phase_summary(attempt_id)
                 if self._observer is not None
                 else None
             )
@@ -281,12 +302,11 @@ class ProviderTransitionSession:
                     failed=self._failed,
                     reason=self._failure_reason if self._failed else "client_disconnected",
                     command_summary=command_summary,
+                    phase_summary=phase_summary,
                 )
             if self._observer is not None:
                 with suppress(Exception):
-                    await self._observer.flush_command_summary(
-                        UUID(self._attempt.attempt.attempt_id)
-                    )
+                    await self._observer.flush_command_summary(attempt_id)
             self._attempt = None
         await self._messages.put(_CLOSED)
 
@@ -651,11 +671,21 @@ class ProviderTransitionSession:
                     ),
                 )
                 await target_attempt.activate()
+                target_attempt_id = UUID(target_attempt.attempt.attempt_id)
+                self._observer.start_attempt_phase(target, target_attempt_id)
                 self._upstream = upstream
                 self._upstream_messages = upstream.messages().__aiter__()
                 self._forward_ids.clear()
                 self._reverse_ids.clear()
-                await self._replay_history()
+                replay_started_at = time.monotonic()
+                try:
+                    await self._replay_history()
+                finally:
+                    self._observer.record_attempt_phase(
+                        target_attempt_id,
+                        "transition_replay_ms",
+                        round((time.monotonic() - replay_started_at) * 1000),
+                    )
                 if self._routing is not None and self._domain is not None:
                     await self._routing.record_selection(
                         target_attempt.attempt.attempt_id,
@@ -664,9 +694,17 @@ class ProviderTransitionSession:
                         selected,
                         transition_trigger=trigger if from_provider is not None else None,
                     )
-                await self._wait_for_replay_contexts(pending)
+                replay_context_started_at = time.monotonic()
+                try:
+                    await self._wait_for_replay_contexts(pending)
+                finally:
+                    self._observer.record_attempt_phase(
+                        target_attempt_id,
+                        "transition_replay_ms",
+                        round((time.monotonic() - replay_context_started_at) * 1000),
+                    )
                 await self._forward(pending)
-                self._observer.bind_attempt(target, UUID(target_attempt.attempt.attempt_id))
+                self._observer.bind_attempt(target, target_attempt_id)
                 self._attempt = target_attempt
                 if source_pump is not None:
                     source_pump.cancel()
@@ -675,8 +713,14 @@ class ProviderTransitionSession:
                     with suppress(Exception):
                         await source_upstream.close()
                 if source_attempt is not None:
+                    source_attempt_id = UUID(source_attempt.attempt.attempt_id)
                     command_summary = (
-                        self._observer.command_summary(UUID(source_attempt.attempt.attempt_id))
+                        self._observer.command_summary(source_attempt_id)
+                        if self._observer is not None
+                        else None
+                    )
+                    phase_summary = (
+                        self._observer.phase_summary(source_attempt_id)
                         if self._observer is not None
                         else None
                     )
@@ -693,11 +737,12 @@ class ProviderTransitionSession:
                             failed=False,
                             reason="provider_transitioned",
                             command_summary=command_summary,
+                            phase_summary=phase_summary,
                         )
                     if self._observer is not None:
                         with suppress(Exception):
                             await self._observer.flush_command_summary(
-                                UUID(source_attempt.attempt.attempt_id)
+                                source_attempt_id
                             )
                 self._upstream_pump = asyncio.create_task(self._pump_upstream())
                 if from_provider is not None:
@@ -728,9 +773,22 @@ class ProviderTransitionSession:
                     exc_info=True,
                 )
                 if upstream is not None:
+                    close_started_at = time.monotonic()
                     with suppress(Exception):
                         await upstream.close()
+                    if target_attempt is not None:
+                        target_attempt_id = UUID(target_attempt.attempt.attempt_id)
+                        self._observer.record_attempt_phase(
+                            target_attempt_id,
+                            "provider_close_ms",
+                            round((time.monotonic() - close_started_at) * 1000),
+                        )
+                        self._observer.record_attempt_phases(
+                            target_attempt_id,
+                            getattr(upstream, "provider_phase_summary", None),
+                        )
                 if target_attempt is not None:
+                    target_attempt_id = UUID(target_attempt.attempt.attempt_id)
                     with suppress(Exception):
                         await target_attempt.record_provider_usage(
                             provider_ended_at=getattr(
@@ -741,8 +799,12 @@ class ProviderTransitionSession:
                         )
                     with suppress(Exception):
                         await target_attempt.release(
-                            failed=True, reason="provider_transition_attempt_failed"
+                            failed=True,
+                            reason="provider_transition_attempt_failed",
+                            phase_summary=self._observer.phase_summary(target_attempt_id),
                         )
+                    with suppress(Exception):
+                        await self._observer.flush_command_summary(target_attempt_id)
                 self._attempt = source_attempt
                 self._upstream = source_upstream
                 self._upstream_messages = source_messages

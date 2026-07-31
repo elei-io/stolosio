@@ -64,8 +64,9 @@ function formatDuration(seconds: number | null) {
   if (seconds === null) return "In progress"
   if (seconds < 1) return "<1s"
   if (seconds < 60) return `${Math.round(seconds)}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainder = Math.round(seconds % 60)
+  const roundedSeconds = Math.round(seconds)
+  const minutes = Math.floor(roundedSeconds / 60)
+  const remainder = roundedSeconds % 60
   return `${minutes}m ${remainder}s`
 }
 
@@ -600,6 +601,64 @@ function SessionDetailView({
                             {key}
                           </Badge>
                         ))}
+                      </div>
+                    )}
+                    {attempt.phase_summary && (
+                      <div className="mt-4 rounded-md border bg-muted/20 p-3">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          Shadow phase measurements
+                        </p>
+                        <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                          {[
+                            {
+                              label: "Observed",
+                              value:
+                                attempt.phase_summary.observed_session_ms,
+                            },
+                            {
+                              label: "Command active",
+                              value: attempt.phase_summary.command_active_ms,
+                            },
+                            {
+                              label: "No command in flight",
+                              value:
+                                attempt.phase_summary.no_command_in_flight_ms,
+                            },
+                            {
+                              label: "Before first command",
+                              value:
+                                attempt.phase_summary.pre_first_command_ms,
+                            },
+                            {
+                              label: "After last command",
+                              value:
+                                attempt.phase_summary.post_last_command_ms,
+                            },
+                            {
+                              label: "Transition replay",
+                              value:
+                                attempt.phase_summary.transition_replay_ms,
+                            },
+                            {
+                              label: "Provider bootstrap",
+                              value:
+                                attempt.phase_summary.provider_bootstrap_ms,
+                            },
+                            {
+                              label: "Provider close",
+                              value: attempt.phase_summary.provider_close_ms,
+                            },
+                          ].map(({ label, value }) => (
+                            <div key={label}>
+                              <p className="text-xs text-muted-foreground">
+                                {label}
+                              </p>
+                              <p className="mt-1">
+                                {formatMilliseconds(value)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>

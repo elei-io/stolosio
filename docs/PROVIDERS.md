@@ -83,4 +83,6 @@ provider-and-method counts, failures, interruptions, latency, attributed browser
 time, and attributed cost. Retained method identity is capped per provider and excess
 identities fold into `__other__`.
 Concurrent command durations are capped by the attempt's measured browser time, with
-unattributed connect, idle, and shutdown time recorded as session overhead.
+the residual recorded as unattributed session time. A separate bounded attempt phase
+summary measures command-active union time and fixed internal lifecycle phases without
+changing provider behavior or the cumulative attribution.

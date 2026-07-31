@@ -795,6 +795,7 @@ async def test_transition_tries_the_full_plan_before_releasing_the_source(
             failed: bool,
             reason: str,
             command_summary: dict[str, object] | None = None,
+            phase_summary: dict[str, object] | None = None,
         ) -> None:
             timeline.append(f"release:{self.attempt.provider.value}:{reason}")
 

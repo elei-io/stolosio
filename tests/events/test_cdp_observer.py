@@ -89,6 +89,69 @@ async def test_unsupported_and_interrupted_commands_get_terminal_events() -> Non
 
 
 @pytest.mark.asyncio
+async def test_attempt_phase_summary_measures_command_union_without_retaining_commands(
+) -> None:
+    observed_times = iter((0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0))
+    publisher = CapturingPublisher()
+    attempt_id = uuid4()
+    observer = CdpEventObserver(
+        uuid4(),
+        attempt_id,
+        ProviderName.BROWSERLESS,
+        publisher,
+        clock=lambda: next(observed_times),
+    )
+
+    await observer.command_received({"id": 1, "method": "Runtime.evaluate"})
+    observer.command_forwarded({"id": 1, "method": "Runtime.evaluate"})
+    await observer.command_received({"id": 2, "method": "Runtime.callFunctionOn"})
+    observer.command_forwarded({"id": 2, "method": "Runtime.callFunctionOn"})
+    await observer.upstream_message('{"id":1,"result":{}}')
+    await observer.upstream_message('{"id":2,"result":{}}')
+
+    assert observer.phase_summary(attempt_id) == {
+        "measurement_version": 1,
+        "observed_session_ms": 10_000,
+        "command_active_ms": 6_000,
+        "no_command_in_flight_ms": 4_000,
+        "pre_first_command_ms": 2_000,
+        "post_last_command_ms": 2_000,
+        "transition_replay_ms": 0,
+        "provider_bootstrap_ms": 0,
+        "provider_close_ms": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_attempt_phase_summary_moves_pending_command_to_transition_target(
+) -> None:
+    observed_times = iter((0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 7.0))
+    publisher = CapturingPublisher()
+    source_attempt_id = uuid4()
+    target_attempt_id = uuid4()
+    observer = CdpEventObserver(
+        uuid4(),
+        source_attempt_id,
+        ProviderName.HTTP,
+        publisher,
+        clock=lambda: next(observed_times),
+    )
+
+    await observer.command_received({"id": 1, "method": "Runtime.callFunctionOn"})
+    observer.command_forwarded({"id": 1, "method": "Runtime.callFunctionOn"})
+    observer.start_attempt_phase(ProviderName.BROWSERLESS, target_attempt_id)
+    observer.record_attempt_phase(target_attempt_id, "transition_replay_ms", 1_000)
+    observer.bind_attempt(ProviderName.BROWSERLESS, target_attempt_id)
+    await observer.upstream_message('{"id":1,"result":{}}')
+
+    target = observer.phase_summary(target_attempt_id)
+    assert target is not None
+    assert target["observed_session_ms"] == 4_000
+    assert target["command_active_ms"] == 2_000
+    assert target["transition_replay_ms"] == 1_000
+
+
+@pytest.mark.asyncio
 async def test_provider_disconnect_records_the_stable_reason() -> None:
     publisher = CapturingPublisher()
     observer = CdpEventObserver(uuid4(), uuid4(), ProviderName.BROWSERLESS, publisher)

@@ -84,6 +84,7 @@ class AttemptLease:
         failed: bool = False,
         reason: str = "client_disconnected",
         command_summary: dict[str, object] | None = None,
+        phase_summary: dict[str, object] | None = None,
     ) -> None:
         if self._released:
             return
@@ -94,6 +95,7 @@ class AttemptLease:
                     failed=failed,
                     reason=reason,
                     command_summary=command_summary,
+                    phase_summary=phase_summary,
                 )
                 break
             except Exception as error:
