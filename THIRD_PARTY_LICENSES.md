@@ -19,7 +19,7 @@ the upstream terms; do not assume that a separate container removes those obliga
 ## Packages and assets
 
 Python dependencies are recorded in `uv.lock`; frontend dependencies are recorded in
-`web/package-lock.json`. Their license files and notices remain authoritative.
+`admin/package-lock.json`. Their license files and notices remain authoritative.
 The initial metadata review found mainly MIT, BSD, ISC, and Apache licenses, plus
 MPL-2.0 dependencies, OFL-1.1 fonts, and CC-BY-4.0 material.
 

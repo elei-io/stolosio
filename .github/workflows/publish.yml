@@ -38,16 +38,16 @@ jobs:
           app_version="$(awk '$1 == "appVersion:" {gsub(/"/, "", $2); print $2}' charts/stolosio/Chart.yaml)"
           project_version="$(awk -F '"' '$1 ~ /^version = / {print $2; exit}' pyproject.toml)"
           image_tag="$(awk '$1 == "image:" {section = "image"; next} section == "image" && $1 == "tag:" {gsub(/"/, "", $2); print $2; exit}' charts/stolosio/values.yaml)"
-          web_image_tag="$(awk '$1 == "webImage:" {section = "web"; next} section == "web" && $1 == "tag:" {gsub(/"/, "", $2); print $2; exit}' charts/stolosio/values.yaml)"
+          admin_image_tag="$(awk '$1 == "adminImage:" {section = "admin"; next} section == "admin" && $1 == "tag:" {gsub(/"/, "", $2); print $2; exit}' charts/stolosio/values.yaml)"
 
           if [ "${release_version}" != "${chart_version}" ] \
             || [ "${release_version}" != "${app_version}" ] \
             || [ "${release_version}" != "${project_version}" ] \
             || [ "${release_version}" != "${image_tag}" ] \
-            || [ "${release_version}" != "${web_image_tag}" ]; then
+            || [ "${release_version}" != "${admin_image_tag}" ]; then
             echo "Git tag, project, chart, and default Stolosio image versions must match."
             echo "tag=${release_version} project=${project_version} chart=${chart_version}"
-            echo "appVersion=${app_version} image=${image_tag} webImage=${web_image_tag}"
+            echo "appVersion=${app_version} image=${image_tag} adminImage=${admin_image_tag}"
             exit 1
           fi
 
@@ -62,8 +62,8 @@ jobs:
         include:
           - name: stolosio
             context: .
-          - name: stolosio-web
-            context: ./web
+          - name: stolosio-admin
+            context: ./admin
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

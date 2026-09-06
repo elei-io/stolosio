@@ -1,34 +1,34 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "stolosio.fullname" . }}-web
+  name: {{ include "stolosio.fullname" . }}-admin
   {{- with .Values.workloadAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   labels:
     {{- include "stolosio.labels" . | nindent 4 }}
-    app.kubernetes.io/component: web
+    app.kubernetes.io/component: admin
 spec:
-  replicas: {{ .Values.web.replicas }}
+  replicas: {{ .Values.admin.replicas }}
   selector:
     matchLabels:
       {{- include "stolosio.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: web
+      app.kubernetes.io/component: admin
   template:
     metadata:
       annotations:
         {{- toYaml .Values.podAnnotations | nindent 8 }}
       labels:
         {{- include "stolosio.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: web
+        app.kubernetes.io/component: admin
         {{- include "stolosio.extraPodLabels" . | nindent 8 }}
     spec:
       {{- include "stolosio.commonPodSpec" . | nindent 6 }}
       containers:
-        - name: web
-          image: "{{ .Values.webImage.repository }}:{{ .Values.webImage.tag }}"
-          imagePullPolicy: {{ .Values.webImage.pullPolicy }}
+        - name: admin
+          image: "{{ .Values.adminImage.repository }}:{{ .Values.adminImage.tag }}"
+          imagePullPolicy: {{ .Values.adminImage.pullPolicy }}
           env:
             - name: STOLOSIO_API_PROXY_TARGET
               value: http://{{ include "stolosio.fullname" . }}-api:{{ .Values.api.service.port }}
@@ -40,26 +40,26 @@ spec:
               path: /
               port: http
           resources:
-            {{- toYaml .Values.web.resources | nindent 12 }}
+            {{- toYaml .Values.admin.resources | nindent 12 }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "stolosio.fullname" . }}-web
+  name: {{ include "stolosio.fullname" . }}-admin
   labels:
     {{- include "stolosio.labels" . | nindent 4 }}
-    app.kubernetes.io/component: web
+    app.kubernetes.io/component: admin
   annotations:
-    {{- toYaml .Values.web.service.annotations | nindent 4 }}
+    {{- toYaml .Values.admin.service.annotations | nindent 4 }}
 spec:
-  type: {{ .Values.web.service.type }}
-  {{- with .Values.web.service.loadBalancerClass }}
+  type: {{ .Values.admin.service.type }}
+  {{- with .Values.admin.service.loadBalancerClass }}
   loadBalancerClass: {{ . }}
   {{- end }}
   selector:
     {{- include "stolosio.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: web
+    app.kubernetes.io/component: admin
   ports:
     - name: http
-      port: {{ .Values.web.service.port }}
+      port: {{ .Values.admin.service.port }}
       targetPort: http

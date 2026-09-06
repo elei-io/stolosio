@@ -76,7 +76,7 @@ GitHub Actions publishes:
 
 ```text
 ghcr.io/elei-io/stolosio
-ghcr.io/elei-io/stolosio-web
+ghcr.io/elei-io/stolosio-admin
 oci://ghcr.io/elei-io/charts/stolosio
 ```
 
@@ -132,7 +132,7 @@ helm upgrade --install stolosio \
   --set nats.jetstreamReplicas=3
 ```
 
-The release chart defaults to matching Stolosio and web image versions and a pinned
+The release chart defaults to matching Stolosio and admin image versions and a pinned
 Browserless version. Keep all image tags pinned when overriding those defaults.
 
 For private GHCR packages, log Helm in before a direct installation and configure an
@@ -171,7 +171,7 @@ browserbase:
 Read the platform-assigned endpoints:
 
 ```bash
-kubectl get service stolosio-api stolosio-web --namespace stolosio
+kubectl get service stolosio-api stolosio-admin --namespace stolosio
 ```
 
 The public CDP endpoint is:

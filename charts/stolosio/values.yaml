@@ -3,8 +3,8 @@ image:
   tag: "0.1.14"
   pullPolicy: IfNotPresent
 
-webImage:
-  repository: ghcr.io/elei-io/stolosio-web
+adminImage:
+  repository: ghcr.io/elei-io/stolosio-admin
   tag: "0.1.14"
   pullPolicy: IfNotPresent
 
@@ -38,7 +38,7 @@ api:
     loadBalancerClass: ""
   resources: {}
 
-web:
+admin:
   replicas: 2
   service:
     type: LoadBalancer

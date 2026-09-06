@@ -11,5 +11,5 @@ htmlcov/
 dist/
 build/
 *.egg-info/
-web/node_modules/
-web/dist/
+admin/node_modules/
+admin/dist/

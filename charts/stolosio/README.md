@@ -14,7 +14,7 @@ oci://ghcr.io/elei-io/charts/stolosio
 ```
 
 The chart defaults to the matching version of `ghcr.io/elei-io/stolosio` and
-`ghcr.io/elei-io/stolosio-web`. Browserless is pulled directly from
+`ghcr.io/elei-io/stolosio-admin`. Browserless is pulled directly from
 `ghcr.io/browserless/chromium` at the version pinned in `values.yaml`; Stolosio does not
 republish it.
 
@@ -71,7 +71,7 @@ a `ServiceMonitor`. Stolosio never installs the operator, Prometheus, or its CRD
 
 The chart creates no Ingress. API and UI Services default to `LoadBalancer`, and can
 be changed to `ClusterIP` when the platform supplies its own exposure layer. Keep all
-image tags pinned when overriding the chart defaults. The web service proxies the
+image tags pinned when overriding the chart defaults. The admin service proxies the
 dashboard's HTTP API requests, but intentionally returns `404` for the
 `/v1/connect` route family; CDP clients must use the API service.
 

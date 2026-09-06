@@ -36,17 +36,17 @@ services:
       timeout: 3s
       retries: 20
 
-  web:
+  admin:
     build:
-      context: web
+      context: admin
       target: development
     environment:
       STOLOSIO_API_PROXY_TARGET: http://api:8000
     ports:
-      - "127.0.0.1:${STOLOSIO_WEB_PORT:-5173}:5173"
+      - "127.0.0.1:${STOLOSIO_ADMIN_PORT:-5173}:5173"
     volumes:
-      - ./web:/app
-      - web_node_modules:/app/node_modules
+      - ./admin:/app
+      - admin_node_modules:/app/node_modules
     depends_on:
       api:
         condition: service_healthy
@@ -139,4 +139,4 @@ services:
 volumes:
   postgres_data:
   nats_data:
-  web_node_modules:
+  admin_node_modules:

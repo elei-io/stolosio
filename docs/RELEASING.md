@@ -12,7 +12,7 @@ The published Stolosio artifacts are:
 
 ```text
 ghcr.io/elei-io/stolosio
-ghcr.io/elei-io/stolosio-web
+ghcr.io/elei-io/stolosio-admin
 oci://ghcr.io/elei-io/charts/stolosio
 ```
 

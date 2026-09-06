@@ -125,13 +125,13 @@ them free of Stolosio-specific SDK code.
 ## Frontend
 
 - Build the frontend with React, TypeScript, Vite, and shadcn/ui components.
-- Use React Query for server state. Keep shared API types under `web/src/types/`.
-- Prefer named exports throughout `web/src/`; `App.tsx` is the sole default-export
+- Use React Query for server state. Keep shared API types under `admin/src/types/`.
+- Prefer named exports throughout `admin/src/`; `App.tsx` is the sole default-export
   exception.
 - Every mutation error must be passed through `extractApiError` and surfaced with
   `toast.error()`.
 
-Run frontend checks from `web/`:
+Run frontend checks from `admin/`:
 
 ```bash
 npm run lint

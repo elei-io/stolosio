@@ -19,7 +19,7 @@ For browser changes, also run `STOLOSIO_E2E=1 uv run pytest -m e2e` with the ful
 Compose stack and fleet controller running. Browserbase checks require credentials
 and may incur charges; the local provider tests do not require a paid account.
 
-For frontend changes, run from `web/`:
+For frontend changes, run from `admin/`:
 
 ```bash
 npm ci

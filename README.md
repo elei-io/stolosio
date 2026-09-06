@@ -52,8 +52,8 @@ No paid credentials are needed for the local HTTP and Browserless paths. `.env` 
 optional; use [.env.example](.env.example) for supported overrides. Fleet limits and
 routing policy are managed in the UI, not environment variables.
 
-The Stolosio UI is available at `http://localhost:5173` by default. Set
-`STOLOSIO_WEB_PORT` to publish it on a different host port.
+The Stolosio admin UI is available at `http://localhost:5173` by default. Set
+`STOLOSIO_ADMIN_PORT` to publish it on a different host port.
 
 Run the development fleet controller in another terminal. It reconciles Browserless
 workers and their configured session slots through Docker Compose:
@@ -107,7 +107,7 @@ those dependencies, ingress, DNS, or TLS. See
 [Kubernetes and k3s](docs/KUBERNETES.md).
 
 The publishing workflow targets `ghcr.io/elei-io/stolosio` and
-`ghcr.io/elei-io/stolosio-web`; the chart is published as
+`ghcr.io/elei-io/stolosio-admin`; the chart is published as
 `oci://ghcr.io/elei-io/charts/stolosio`. A ready-to-copy Flux example lives under
 [`deploy/flux`](deploy/flux).
 
@@ -132,3 +132,6 @@ See [Contributing](CONTRIBUTING.md) for checks and pull request expectations.
 Stolosio's original code is licensed under the [MIT License](LICENSE), copyright
 2026 elei.io. Dependencies retain their own licenses; see
 [Third-party licensing](THIRD_PARTY_LICENSES.md), especially the Browserless terms.
+
+The `admin/` package is the operator interface, published as `stolosio-admin`.
+It is separate from the future public marketing/documentation site.
