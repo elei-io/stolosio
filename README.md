@@ -129,7 +129,6 @@ The publishing workflow targets `ghcr.io/elei-io/stolosio` and
 ## Contributing and licensing
 
 See [Contributing](CONTRIBUTING.md) for checks and pull request expectations.
-The project license is pending; do not assume this repository grants an open-source
-license yet. Browserless is a separate dependency with its own
-[license](https://github.com/browserless/browserless/blob/main/LICENSE); review the
-terms for the exact image version you use.
+Stolosio's original code is licensed under the [MIT License](LICENSE), copyright
+2026 elei.io. Dependencies retain their own licenses; see
+[Third-party licensing](THIRD_PARTY_LICENSES.md), especially the Browserless terms.

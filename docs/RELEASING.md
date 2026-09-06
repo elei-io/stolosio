@@ -57,6 +57,6 @@ Document breaking changes in release notes. Before declaring a deployment suppor
 stop rewriting its applied migrations and provide forward migrations for retained data.
 A public repository alone does not make a release production-supported.
 
-Before making the repository public, choose the project license, review dependency
-licenses, enable private vulnerability reporting, and review Git history and published
+Before making the repository public, review dependency licenses and redistribution notices, enable private vulnerability
+reporting, and review Git history and published
 artifacts for secrets or private data. Automated scans supplement that review.
