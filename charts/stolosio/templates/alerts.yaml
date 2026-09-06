@@ -1,0 +1,69 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.prometheusRule.enabled }}
+{{- $name := include "stolosio.fullname" . }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "stolosio.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  - name: {{ $name }}.availability
+    rules:
+    - alert: StolosioAPIUnavailable
+      expr: (max(up{namespace="{{ .Release.Namespace }}",service="{{ $name }}-api-metrics"}) or vector(0)) == 0
+      for: 2m
+      labels:
+        severity: critical
+        namespace: {{ .Release.Namespace }}
+        release: {{ $name }}
+      annotations:
+        summary: No Stolosio API metrics endpoint is healthy
+        description: All API scrapes have failed or disappeared for two minutes. Check API pods, PostgreSQL connectivity and metrics discovery.
+    - alert: StolosioFleetReconciliationStalled
+      expr: |
+        (time() - max(stolosio_provider_last_successful_reconcile_timestamp{namespace="{{ .Release.Namespace }}",service="{{ $name }}-fleet-controller-metrics"}) > 120)
+        or absent(stolosio_provider_last_successful_reconcile_timestamp{namespace="{{ .Release.Namespace }}",service="{{ $name }}-fleet-controller-metrics"})
+      for: 5m
+      labels:
+        severity: warning
+        namespace: {{ .Release.Namespace }}
+        release: {{ $name }}
+      annotations:
+        summary: Stolosio fleet reconciliation has stopped succeeding
+        description: No successful fleet reconciliation has been observed recently. Check controller logs, Kubernetes API access and PostgreSQL.
+    - alert: StolosioMaintenanceUnavailable
+      expr: (max(up{namespace="{{ .Release.Namespace }}",service="{{ $name }}-maintenance-metrics"}) or vector(0)) == 0
+      for: 5m
+      labels:
+        severity: warning
+        namespace: {{ .Release.Namespace }}
+        release: {{ $name }}
+      annotations:
+        summary: Stolosio maintenance metrics are unavailable
+        description: Check the maintenance worker before event recording and retention fall behind.
+    - alert: StolosioRecorderStalled
+      expr: |
+        (max(min_over_time(stolosio_event_recorder_pending{namespace="{{ .Release.Namespace }}",service="{{ $name }}-maintenance-metrics"}[15m])) > 0)
+        and on() ((sum(increase(stolosio_event_recorder_events_total{namespace="{{ .Release.Namespace }}",service="{{ $name }}-maintenance-metrics",outcome=~"recorded|duplicate"}[15m])) or vector(0)) == 0)
+      for: 5m
+      labels:
+        severity: warning
+        namespace: {{ .Release.Namespace }}
+        release: {{ $name }}
+      annotations:
+        summary: Stolosio has pending events without recorder progress
+        description: Pending work remained positive for the observation window with no recorded or duplicate events. Inspect maintenance logs, NATS and PostgreSQL. Idle traffic alone does not trigger this alert.
+    - alert: StolosioDeadLetters
+      expr: sum(increase(stolosio_event_dead_letters_total{namespace="{{ .Release.Namespace }}",service="{{ $name }}-maintenance-metrics"}[10m])) > 0
+      labels:
+        severity: warning
+        namespace: {{ .Release.Namespace }}
+        release: {{ $name }}
+      annotations:
+        summary: Stolosio events entered the dead-letter stream
+        description: Inspect sanitized dead-letter reasons and maintenance logs. Event delivery needs attention even if browser requests succeed.
+{{- end }}

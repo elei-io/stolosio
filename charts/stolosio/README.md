@@ -77,3 +77,32 @@ dashboard's HTTP API requests, but intentionally returns `404` for the
 
 See [the Kubernetes deployment guide](../../docs/KUBERNETES.md) for ownership,
 networking, scaling, and installation details.
+
+## Grafana overview and alerts
+
+With `monitoring.enabled=true`, opt in to `monitoring.dashboard.enabled=true`
+and `monitoring.prometheusRule.enabled=true` when the platform provides Grafana
+sidecar discovery and Prometheus Operator CRDs. Both are disabled by default.
+The ConfigMap uses `grafana_dashboard: "1"`; customize `monitoring.dashboard.labels`
+and `monitoring.prometheusRule.labels` to match the platform's discovery selectors.
+Set `monitoring.dashboard.adminUrl` for the administrative drill-down link.
+
+The overview covers demand/capacity, browser fleet response, acquisition and CDP
+outcomes, event delivery, Kubernetes resources and Loki logs. Select Prometheus and
+Loki data sources at the top; namespace and release scope follow the Helm release.
+Kubernetes panels require kubelet and kube-state-metrics; logs require Loki with a
+`namespace` label. Resource and log panels cover the release namespace; use a dedicated
+namespace. Provider filters affect provider-specific panels; gateway, command-domain
+latency, transitions, event delivery and resources retain their documented global scope.
+
+Shared database gauges use the maximum across API replicas, not their sum. Counters
+and histogram buckets aggregate process-local rates. Empty traffic produces no success
+percentage or percentile, not an invented healthy value. Counts are scrape estimates.
+Acquisition success measures an upstream connection, not crawler extraction success.
+The recorder age is sampled at batch processing time and is not an idle-time alarm.
+
+Five conservative alerts cover API unavailability, stale fleet reconciliation,
+maintenance unavailability, pending recorder work without progress, and dead letters.
+The platform owns Alertmanager routing and notifications. Queue, error-rate and latency
+SLO thresholds should follow representative workload measurements. Review thresholds
+when changing scrape cadence or fleet-controller timing.

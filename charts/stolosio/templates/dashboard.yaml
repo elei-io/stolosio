@@ -1,0 +1,17 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.dashboard.enabled }}
+{{- $dashboard := .Files.Get "dashboards/overview.json" | replace "__NAMESPACE__" .Release.Namespace | replace "__RELEASE__" (include "stolosio.fullname" .) | fromJson }}
+{{- $_ := set $dashboard "uid" (printf "stolosio-%s" (printf "%s/%s" .Release.Namespace (include "stolosio.fullname" .) | sha256sum | trunc 12)) }}
+{{- if .Values.monitoring.dashboard.adminUrl }}
+{{- $_ := set $dashboard "links" (list (dict "title" "Stolosio admin" "url" .Values.monitoring.dashboard.adminUrl "type" "link" "targetBlank" true)) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "stolosio.fullname" . }}-dashboard
+  labels:
+    {{- include "stolosio.labels" . | nindent 4 }}
+    {{- toYaml .Values.monitoring.dashboard.labels | nindent 4 }}
+data:
+  stolosio-{{ .Release.Namespace }}-{{ include "stolosio.fullname" . }}.json: |
+    {{- $dashboard | toPrettyJson | nindent 4 }}
+{{- end }}

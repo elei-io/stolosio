@@ -66,6 +66,14 @@ monitoring:
   service:
     annotations: {}
     labels: {}
+  dashboard:
+    enabled: false
+    labels:
+      grafana_dashboard: "1"
+    adminUrl: ""
+  prometheusRule:
+    enabled: false
+    labels: {}
   serviceMonitor:
     enabled: false
     interval: 30s
