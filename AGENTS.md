@@ -124,6 +124,12 @@ them free of Stolosio-specific SDK code.
 
 ## Frontend
 
+The rules below apply to the `admin/` operator application. The separate
+`public-site/` package (`stolosio-public`) uses Astro, Starlight, and TypeScript for
+static marketing pages and documentation. Validate it with `npm run typecheck`,
+`npm run build`, and `npm test` from `public-site/`. Keep it independent of live
+instance APIs and credentials.
+
 - Build the frontend with React, TypeScript, Vite, and shadcn/ui components.
 - Use React Query for server state. Keep shared API types under `admin/src/types/`.
 - Prefer named exports throughout `admin/src/`; `App.tsx` is the sole default-export

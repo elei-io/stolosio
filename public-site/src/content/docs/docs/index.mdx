@@ -1,0 +1,55 @@
+---
+title: Meet Stolosio
+description: Your browser fleet. One endpoint. Deploy and operate the open-source browser gateway.
+---
+
+import { LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+Stolosio is an open-source, self-hosted browser and web-acquisition gateway. It gives your CDP-compatible automation one endpoint across a bounded HTTP path, a managed Browserless fleet, and optional Browserbase capacity.
+
+**Keep your automation. Use only the browser you need.**
+
+```text
+ws://localhost:8411/v1/connect
+```
+
+<CardGrid>
+  <LinkCard
+    title="Run your first session"
+    description="Start the local stack and connect Playwright."
+    href="/docs/quickstart/"
+  />
+  <LinkCard
+    title="Deploy on Kubernetes"
+    description="Install with Helm on Kubernetes or k3s."
+    href="/docs/kubernetes/"
+  />
+  <LinkCard
+    title="Operate your fleet"
+    description="Understand capacity, routing, and paid fallback."
+    href="/docs/operations/"
+  />
+  <LinkCard
+    title="Understand the boundary"
+    description="Protect your installation and isolate browser workloads."
+    href="/docs/security/"
+  />
+</CardGrid>
+
+## How it works
+
+Your client connects to Stolosio. An automatic session can begin with lightweight HTTP acquisition and escalate to a browser when navigation checks or a command require one. Once a browser is acquired, native CDP traffic passes through to it.
+
+Stolosio owns admission, queues, session lifecycle, fleet capacity, and routing. PostgreSQL is the durable source of truth. A separate fleet controller manages browser workers on Docker or Kubernetes.
+
+## Current status
+
+Stolosio is **experimental**, intended for local development and trusted networks. There are no supported production releases, multi-tenant guarantees, or API/database compatibility guarantees yet.
+
+The CDP, DEBUG, admin, and metrics endpoints have no application-level access control. An installation's externally protected admin interface does not add built-in authentication to Stolosio. Read the [security guide](/docs/security/) before deployment.
+
+## Project and licensing
+
+Stolosio's original code is MIT licensed. Dependencies retain their own licenses; review the [third-party notices](https://github.com/elei-io/stolosio/blob/main/THIRD_PARTY_LICENSES.md), including Browserless terms.
+
+Code, issues, and contributions live on [GitHub](https://github.com/elei-io/stolosio). The [roadmap](https://github.com/elei-io/stolosio/blob/main/docs/ROADMAP.md) describes future direction, not a promise of currently available features.

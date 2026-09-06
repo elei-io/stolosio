@@ -3,22 +3,30 @@
 GitHub Actions provides two paths:
 
 - `CI` applies migrations to PostgreSQL, runs backend lint and tests with
-  JetStream-enabled NATS, runs frontend lint/type-check/build, builds both containers,
+  JetStream-enabled NATS, runs frontend lint/type-check/build, builds all three containers,
   and validates the Helm/Kubernetes manifests on pull requests and pushes to `main`.
-- `Publish` builds multi-architecture `linux/amd64` and `linux/arm64` images and pushes
-  them to GHCR on `main`, semantic version tags, and manual runs.
+- `Publish` builds backend/admin images for `linux/amd64` and `linux/arm64`, and
+  the public-site image for `linux/amd64` only. It pushes them to GHCR on `main`,
+  semantic version tags, and manual runs.
 
 The published Stolosio artifacts are:
 
 ```text
 ghcr.io/elei-io/stolosio
 ghcr.io/elei-io/stolosio-admin
+ghcr.io/elei-io/stolosio-public
 oci://ghcr.io/elei-io/charts/stolosio
 ```
 
 The first image is shared by the API, workers, migration Job, and fleet controller.
 Browserless remains the upstream `ghcr.io/browserless/chromium` image. PostgreSQL and
 NATS are external services, not Stolosio images.
+
+The public image serves only static marketing and documentation pages on port 8080.
+Deployment manifests, ingress, DNS, and TLS belong in the infrastructure repository.
+This repository supplies the image and its runtime contract. CI validates builds on pull
+requests; Publish runs separately on main, tags, and manual dispatch. Require CI
+before merging. Each public-image build also runs its own site checks.
 
 ## Tags
 
@@ -43,7 +51,7 @@ git push origin v0.1.15
 GitHub's repository `GITHUB_TOKEN` publishes all artifacts; no long-lived publishing
 credential is required. New packages follow the repository/package visibility
 configuration. For a private package, a homelab needs a classic personal access token
-with `read:packages`. Alternatively, make the three packages public after their first
+with `read:packages`. Alternatively, make the four packages public after their first
 publication.
 
 Enable all `CI` checks as required checks on the default branch before treating a

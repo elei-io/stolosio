@@ -1,0 +1,43 @@
+@import "@fontsource-variable/geist";
+:root {
+  --sl-font: "Geist Variable", sans-serif;
+  --sl-color-accent-low: #24331b;
+  --sl-color-accent: #a9d760;
+  --sl-color-accent-high: #d2f5a2;
+  --sl-color-black: #101410;
+  --sl-color-gray-6: #181f16;
+  --sl-color-gray-5: #303c2a;
+  --sl-color-gray-4: #66765c;
+  --sl-color-gray-3: #a0ad96;
+  --sl-color-gray-2: #c7d1c0;
+  --sl-color-gray-1: #e8eee3;
+  --sl-content-width: 48rem;
+}
+:root[data-theme="light"] {
+  --sl-color-accent-low: #e7f4d6;
+  --sl-color-accent: #456e19;
+  --sl-color-accent-high: #24450b;
+  --sl-color-black: #fff;
+  --sl-color-gray-6: #f5f7f2;
+  --sl-color-gray-5: #e0e6d9;
+  --sl-color-gray-4: #95a288;
+  --sl-color-gray-3: #59644e;
+  --sl-color-gray-2: #394331;
+  --sl-color-gray-1: #172010;
+}
+.site-title {
+  letter-spacing: -1px;
+  font-weight: 650;
+}
+.site-title:before {
+  content: "≋";
+  font-size: 2.2rem;
+  margin-right: 0.25rem;
+}
+.sl-markdown-content h1,
+.sl-markdown-content h2 {
+  letter-spacing: -0.035em;
+}
+.sl-markdown-content a {
+  text-underline-offset: 3px;
+}

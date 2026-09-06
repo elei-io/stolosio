@@ -108,6 +108,44 @@ jobs:
       - name: Build
         run: npm run build
 
+  public-site:
+    name: Public site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: public-site
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: public-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify generated site
+        run: npm test
+
+      - name: Check formatting
+        run: npm run lint
+
+      - name: Build and test public static server
+        run: |
+          docker build -t stolosio-public:test .
+          bash scripts/container-test.sh stolosio-public:test
+
   containers:
     name: Container (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -118,13 +156,19 @@ jobs:
         include:
           - name: stolosio
             context: .
+            platforms: linux/amd64,linux/arm64
           - name: stolosio-admin
             context: ./admin
+            platforms: linux/amd64,linux/arm64
+          - name: stolosio-public
+            context: ./public-site
+            platforms: linux/amd64
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up QEMU
+        if: contains(matrix.platforms, 'arm64')
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
 
       - name: Set up Docker Buildx
@@ -134,7 +178,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: ${{ matrix.context }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platforms }}
           push: false
           cache-from: type=gha,scope=ci-${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=ci-${{ matrix.name }}

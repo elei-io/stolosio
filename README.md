@@ -134,4 +134,10 @@ Stolosio's original code is licensed under the [MIT License](LICENSE), copyright
 [Third-party licensing](THIRD_PARTY_LICENSES.md), especially the Browserless terms.
 
 The `admin/` package is the operator interface, published as `stolosio-admin`.
-It is separate from the future public marketing/documentation site.
+It is separate from `public-site/`, the static marketing/documentation package
+published in the repository as `stolosio-public`.
+
+To preview the public site locally, run `npm ci` and `npm run dev` from
+`public-site/`, then open <http://127.0.0.1:4321>. See the
+[public site guide](public-site/README.md) for build, validation, and production
+preview instructions. The public site requires no running Stolosio services.
