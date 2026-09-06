@@ -27,7 +27,7 @@ Pagefind search is generated at build time; use the production preview to test i
 `npm test` validates built pages, internal links and anchors, metadata, and search assets.
 Deploy the contents of `dist/` to a static host that serves directory `index.html` files
 and uses `404.html` for missing routes. No server runtime or instance credentials are needed.
-Set Astro's `site` URL when choosing a production domain to enable canonical sitemap URLs.
+Astro's production `site` URL is `https://stolosio.dev` for canonical and sitemap URLs.
 
 ## Content
 
