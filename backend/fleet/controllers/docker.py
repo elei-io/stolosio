@@ -120,7 +120,9 @@ def main() -> None:
     arguments = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     if not arguments.no_metrics:
-        start_http_server(settings.fleet_controller_metrics_port, registry=CONTROLLER_REGISTRY)
+        start_http_server(
+            settings.fleet_controller_metrics_port, addr="127.0.0.1", registry=CONTROLLER_REGISTRY
+        )
     try:
         asyncio.run(run(once=arguments.once))
     except KeyboardInterrupt:

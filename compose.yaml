@@ -15,7 +15,7 @@ services:
       BROWSERLESS_URL: ws://browserless:3000
       BROWSERLESS_SESSION_TIMEOUT_SECONDS: "600"
     ports:
-      - "${STOLOSIO_API_PORT:-8411}:8000"
+      - "127.0.0.1:${STOLOSIO_API_PORT:-8411}:8000"
     volumes:
       - .:/app
       - /app/.venv
@@ -43,7 +43,7 @@ services:
     environment:
       STOLOSIO_API_PROXY_TARGET: http://api:8000
     ports:
-      - "${STOLOSIO_WEB_PORT:-5173}:5173"
+      - "127.0.0.1:${STOLOSIO_WEB_PORT:-5173}:5173"
     volumes:
       - ./web:/app
       - web_node_modules:/app/node_modules
@@ -109,7 +109,7 @@ services:
       POSTGRES_USER: stolosio
       POSTGRES_PASSWORD: stolosio
     ports:
-      - "${STOLOSIO_POSTGRES_PORT:-5433}:5432"
+      - "127.0.0.1:${STOLOSIO_POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
@@ -122,8 +122,8 @@ services:
     image: nats:latest
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "4223:4222"
-      - "8222:8222"
+      - "127.0.0.1:4223:4222"
+      - "127.0.0.1:8222:8222"
     volumes:
       - nats_data:/data
 

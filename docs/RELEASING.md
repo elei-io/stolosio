@@ -49,3 +49,14 @@ publication.
 Enable all `CI` checks as required checks on the default branch before treating a
 release as supported. GitHub Actions dependencies are commit-pinned and Dependabot is
 configured to propose their updates.
+
+## Experimental release policy
+
+Current versions are experimental and do not promise API or database compatibility.
+Document breaking changes in release notes. Before declaring a deployment supported,
+stop rewriting its applied migrations and provide forward migrations for retained data.
+A public repository alone does not make a release production-supported.
+
+Before making the repository public, choose the project license, review dependency
+licenses, enable private vulnerability reporting, and review Git history and published
+artifacts for secrets or private data. Automated scans supplement that review.

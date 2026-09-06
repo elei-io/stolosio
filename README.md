@@ -13,15 +13,44 @@ Native browser traffic is opaque CDP passthrough. Stolosio owns admission, capac
 session lifecycle, observations, and routing; the selected browser remains the
 authority on individual CDP methods.
 
+## Status
+
+Experimental and intended for local development or trusted networks. There is no
+application authentication: do not expose the browser or administrative endpoints to
+the internet. See [Security](SECURITY.md) for the deployment boundary.
+
+The current providers are HTTP, Browserless, and optional paid Browserbase. Automatic
+sessions can escalate from HTTP to a browser when needed. Multi-tenant operation and
+production compatibility guarantees are not currently supported.
+
+## Design decisions
+
+- PostgreSQL owns transactional admission, leases, and fleet policy so concurrent
+  requests cannot independently claim the same capacity.
+- NATS carries live coordination; a transactional outbox and JetStream deliver durable
+  observations without putting messaging on the admission path.
+- Fleet reconciliation runs separately from the API. A session consumes capacity,
+  while acquisition attempts receive browser slots.
+- Native CDP traffic preserves browser semantics. The HTTP path supports a deliberately
+  small command set and escalates when it cannot execute a command correctly.
+
+See [Architecture](docs/ARCHITECTURE.md) for the boundaries and tradeoffs.
+
 ## Developer setup
 
 Requirements: Docker, Docker Compose, and
 [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync
+git clone https://github.com/elei-io/stolosio.git
+cd stolosio
+uv sync --locked
 docker compose up --build -d
 ```
+
+No paid credentials are needed for the local HTTP and Browserless paths. `.env` is
+optional; use [.env.example](.env.example) for supported overrides. Fleet limits and
+routing policy are managed in the UI, not environment variables.
 
 The Stolosio UI is available at `http://localhost:5173` by default. Set
 `STOLOSIO_WEB_PORT` to publish it on a different host port.
@@ -77,7 +106,7 @@ connection Secrets and creates separate API and UI Services; it does not provisi
 those dependencies, ingress, DNS, or TLS. See
 [Kubernetes and k3s](docs/KUBERNETES.md).
 
-Release images are published as `ghcr.io/elei-io/stolosio` and
+The publishing workflow targets `ghcr.io/elei-io/stolosio` and
 `ghcr.io/elei-io/stolosio-web`; the chart is published as
 `oci://ghcr.io/elei-io/charts/stolosio`. A ready-to-copy Flux example lives under
 [`deploy/flux`](deploy/flux).
@@ -96,3 +125,11 @@ Release images are published as `ghcr.io/elei-io/stolosio` and
 - [Roadmap](docs/ROADMAP.md)
 - [CI and releases](docs/RELEASING.md)
 - [Contributor and agent guide](AGENTS.md)
+
+## Contributing and licensing
+
+See [Contributing](CONTRIBUTING.md) for checks and pull request expectations.
+The project license is pending; do not assume this repository grants an open-source
+license yet. Browserless is a separate dependency with its own
+[license](https://github.com/browserless/browserless/blob/main/LICENSE); review the
+terms for the exact image version you use.
