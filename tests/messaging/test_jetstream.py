@@ -1,4 +1,3 @@
-import asyncio
 from uuid import uuid4
 
 import nats
@@ -52,7 +51,7 @@ async def test_one_publish_reaches_live_and_durable_consumers() -> None:
 
         assert SessionEvent.from_json(live_message.data) == event
         assert SessionEvent.from_json(durable_messages[0].data) == event
-        await durable_messages[0].ack()
+        await durable_messages[0].ack_sync()
     finally:
         await live.unsubscribe()
         await subscription.unsubscribe()
@@ -72,9 +71,12 @@ async def test_stable_message_id_deduplicates_retry() -> None:
         await publisher.publish(event)
         await publisher.publish(event)
         messages = await subscription.fetch(1, timeout=1)
-        await messages[0].ack()
-        with pytest.raises((TimeoutError, asyncio.TimeoutError)):
-            await subscription.fetch(1, timeout=0.1)
+        await messages[0].ack_sync()
+        # Both publishes are acknowledged; a duplicate would now be pending.
+        # Avoid leaving a timed-out pull request active during consumer deletion.
+        consumer = await jetstream.consumer_info(EVENT_STREAM, durable)
+        assert consumer.num_pending == 0
+        assert consumer.num_ack_pending == 0
     finally:
         await subscription.unsubscribe()
         await jetstream.delete_consumer(EVENT_STREAM, durable)

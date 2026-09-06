@@ -55,8 +55,9 @@ jobs:
           docker run --detach \
             --name stolosio-ci-nats \
             --publish 4223:4222 \
+            --mount type=volume,destination=/data \
             nats:2.11-alpine \
-            -js
+            -js -sd /data
 
           for _ in {1..30}; do
             if (echo > /dev/tcp/127.0.0.1/4223) 2>/dev/null; then
