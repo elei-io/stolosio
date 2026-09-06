@@ -14,7 +14,7 @@ from backend.settings import Settings
 async def database_sessions() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     settings = Settings()
     admin_engine = create_async_engine(settings.database_url, pool_pre_ping=True)
-    schema = f"harbor_test_{uuid4().hex}"
+    schema = f"stolosio_test_{uuid4().hex}"
     try:
         async with admin_engine.begin() as connection:
             await connection.execute(text(f'CREATE SCHEMA "{schema}"'))

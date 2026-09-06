@@ -132,7 +132,7 @@ async def _nats_runtime(
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.warning("NATS unavailable; Harbor remains in PostgreSQL mode", exc_info=True)
+            logger.warning("NATS unavailable; Stolosio remains in PostgreSQL mode", exc_info=True)
         finally:
             app.state.nats_connected = False
             NATS_CONNECTED.set(0)

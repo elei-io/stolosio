@@ -19,12 +19,12 @@ from backend.proxy.capabilities import capability_registry
 from backend.proxy.capabilities.http import is_content_call, is_utility_evaluation
 from backend.proxy.content_sanity import inspect_content, inspect_headers
 from backend.proxy.contracts import (
-    HarborSession,
     ProviderName,
     ProviderSession,
     ProviderSettingSchema,
     ResolvedSessionSettings,
     SettingSource,
+    StolosioSession,
 )
 from backend.proxy.errors import DomainBlockingUnavailable
 from backend.proxy.network_policy import domain_matches_pattern
@@ -99,7 +99,7 @@ class ProviderTransitionSession:
 
     def __init__(
         self,
-        session: HarborSession,
+        session: StolosioSession,
         resolved: ResolvedSessionSettings,
         attempts: AttemptAdmission | None,
         history: ProviderTransitionRepository | None,
@@ -340,9 +340,9 @@ class ProviderTransitionSession:
         if method == "Browser.getVersion":
             return {
                 "protocolVersion": "1.3",
-                "product": "Harbor/HTTP",
+                "product": "Stolosio/HTTP",
                 "revision": "http",
-                "userAgent": "Harbor HTTP acquisition",
+                "userAgent": "Stolosio HTTP acquisition",
                 "jsVersion": "0",
             }
         if method in _EMPTY_RESULT_METHODS:
@@ -417,7 +417,7 @@ class ProviderTransitionSession:
         if method == "Page.navigate":
             return await self._navigate(params, session_id)
         if method == "Runtime.evaluate" and is_utility_evaluation(params):
-            object_id = f"harbor-http-utility-{uuid4().hex}"
+            object_id = f"stolosio-http-utility-{uuid4().hex}"
             self._utility_objects.add(object_id)
             return {
                 "result": {
@@ -454,7 +454,7 @@ class ProviderTransitionSession:
             domain_matches_pattern(self._domain, pattern)
             for pattern in self._resolved.blocked_domain_patterns
         ):
-            raise ValueError("Navigation blocked by Harbor network policy")
+            raise ValueError("Navigation blocked by Stolosio network policy")
 
         if self._attempt is None and self._automatic:
             if self._routing is None:
@@ -606,7 +606,7 @@ class ProviderTransitionSession:
             else None
         )
         if self._upstream is not None:
-            raise ProviderTransitionError("Harbor does not transition between browser providers")
+            raise ProviderTransitionError("Stolosio does not transition between browser providers")
         if plan is None:
             if self._routing is not None and self._domain is not None:
                 plan = await self._routing.plan(
@@ -1317,7 +1317,7 @@ class ProviderTransitionSession:
                     "id": context_id,
                     "origin": self._frame()["securityOrigin"],
                     "name": name,
-                    "uniqueId": f"harbor-{self._target_id}-{context_id}",
+                    "uniqueId": f"stolosio-{self._target_id}-{context_id}",
                     "auxData": {
                         "isDefault": is_default,
                         "type": "default" if is_default else "isolated",
@@ -1405,7 +1405,7 @@ class ProviderTransitionSession:
         source: SettingSource,
     ) -> ResolvedSessionSettings:
         sources = dict(self._resolved.sources)
-        sources["harbor.provider.slug"] = source
+        sources["stolosio.provider.slug"] = source
         return ResolvedSessionSettings(
             provider=ProviderSettingSchema(
                 slug=provider,
@@ -1484,7 +1484,7 @@ class HttpCdpSession(ProviderTransitionSession):
 
     def __init__(
         self,
-        session: HarborSession,
+        session: StolosioSession,
         resolved: ResolvedSessionSettings,
         settings: Settings,
     ) -> None:

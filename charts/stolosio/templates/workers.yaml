@@ -1,37 +1,37 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "harbor.fullname" . }}-maintenance
+  name: {{ include "stolosio.fullname" . }}-maintenance
   {{- with .Values.workloadAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   labels:
-    {{- include "harbor.labels" . | nindent 4 }}
+    {{- include "stolosio.labels" . | nindent 4 }}
     app.kubernetes.io/component: maintenance
 spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "harbor.selectorLabels" . | nindent 6 }}
+      {{- include "stolosio.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: maintenance
   template:
     metadata:
       annotations:
         {{- toYaml .Values.podAnnotations | nindent 8 }}
       labels:
-        {{- include "harbor.selectorLabels" . | nindent 8 }}
+        {{- include "stolosio.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: maintenance
-        {{- include "harbor.extraPodLabels" . | nindent 8 }}
+        {{- include "stolosio.extraPodLabels" . | nindent 8 }}
     spec:
-      {{- include "harbor.commonPodSpec" . | nindent 6 }}
+      {{- include "stolosio.commonPodSpec" . | nindent 6 }}
       containers:
         - name: maintenance
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/app/.venv/bin/python", "-m", "backend.workers.maintenance"]
           env:
-            {{- include "harbor.connectionEnv" . | nindent 12 }}
+            {{- include "stolosio.connectionEnv" . | nindent 12 }}
           ports:
             - name: metrics
               containerPort: {{ .Values.maintenance.metricsPort }}
@@ -49,30 +49,30 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "harbor.fullname" . }}-health
+  name: {{ include "stolosio.fullname" . }}-health
   {{- with .Values.workloadAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   labels:
-    {{- include "harbor.labels" . | nindent 4 }}
+    {{- include "stolosio.labels" . | nindent 4 }}
     app.kubernetes.io/component: health
 spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "harbor.selectorLabels" . | nindent 6 }}
+      {{- include "stolosio.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: health
   template:
     metadata:
       annotations:
         {{- toYaml .Values.podAnnotations | nindent 8 }}
       labels:
-        {{- include "harbor.selectorLabels" . | nindent 8 }}
+        {{- include "stolosio.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: health
-        {{- include "harbor.extraPodLabels" . | nindent 8 }}
+        {{- include "stolosio.extraPodLabels" . | nindent 8 }}
     spec:
-      {{- include "harbor.commonPodSpec" . | nindent 6 }}
+      {{- include "stolosio.commonPodSpec" . | nindent 6 }}
       containers:
         - name: health
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -84,7 +84,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.database.existingSecret }}
                   key: {{ .Values.database.urlSecretKey }}
-            - name: HEALTH_HARBOR_CDP_URL
-              value: ws://{{ include "harbor.fullname" . }}-api:{{ .Values.api.service.port }}/v1/connect
+            - name: HEALTH_STOLOSIO_CDP_URL
+              value: ws://{{ include "stolosio.fullname" . }}-api:{{ .Values.api.service.port }}/v1/connect
           resources:
             {{- toYaml .Values.health.resources | nindent 12 }}

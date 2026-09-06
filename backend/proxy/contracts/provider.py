@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from backend.proxy.contracts.session import HarborSession
+    from backend.proxy.contracts.session import StolosioSession
     from backend.proxy.contracts.settings import ResolvedSessionSettings
 
 
@@ -41,6 +41,6 @@ class ProviderAdapter(Protocol):
 
     async def acquire(
         self,
-        session: "HarborSession",
+        session: "StolosioSession",
         settings: "ResolvedSessionSettings",
     ) -> ProviderSession: ...

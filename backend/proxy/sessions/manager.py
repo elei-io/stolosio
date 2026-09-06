@@ -3,9 +3,9 @@ from dataclasses import replace
 from uuid import UUID, uuid4
 
 from backend.proxy.contracts import (
-    HarborSession,
     RequestedSessionSettings,
     SessionState,
+    StolosioSession,
 )
 from backend.proxy.errors import GatewayCapacityFull, SessionLeaseLost
 from backend.proxy.postgres import (
@@ -18,7 +18,7 @@ from backend.settings import Settings
 class SessionLease:
     def __init__(
         self,
-        session: HarborSession,
+        session: StolosioSession,
         repository: PostgresSessionRepository,
         heartbeat_seconds: float,
     ) -> None:
@@ -76,7 +76,7 @@ class SessionAdmission:
         self._owner_id = owner_id or str(uuid4())
 
     async def admit(self, requested: RequestedSessionSettings) -> SessionLease:
-        session = HarborSession(
+        session = StolosioSession(
             session_id=str(uuid4()),
             owner_id=self._owner_id,
             lease_token=str(uuid4()),
@@ -91,7 +91,7 @@ class SessionAdmission:
         }
         status = await self._repository.admit(
             session,
-            max_active=self._settings.harbor_max_active_sessions,
+            max_active=self._settings.stolosio_max_active_sessions,
             requested_settings=requested_settings,
             client_reference=(
                 str(requested.session_reference)

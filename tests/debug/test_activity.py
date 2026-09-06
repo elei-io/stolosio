@@ -164,7 +164,7 @@ async def test_activity_stream_filters_events_without_losing_sequence_position()
     finally:
         await stream.aclose()
 
-    assert event_frame.startswith("id: 42\nevent: harbor-event")
+    assert event_frame.startswith("id: 42\nevent: stolosio-event")
     payload = json.loads(event_frame.split("data: ", 1)[1])
     assert payload["event_type"] == "attempt.failed"
     assert payload["outcome"] == "failure"

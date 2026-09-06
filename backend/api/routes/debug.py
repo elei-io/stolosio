@@ -6,7 +6,7 @@ from starlette.websockets import WebSocketState
 from backend.debug import DebugConsumerTooSlow, DebugSessionNotFound
 
 router = APIRouter(tags=["debug"])
-_REFERENCE_QUERY = "harbor.session.reference"
+_REFERENCE_QUERY = "stolosio.session.reference"
 
 
 @router.websocket("/v1/debug")

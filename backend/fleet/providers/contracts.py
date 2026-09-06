@@ -6,7 +6,7 @@ from backend.proxy.contracts import ProviderName
 
 @dataclass(frozen=True, slots=True)
 class ProviderFleetDefinition:
-    """Provider facts needed to expose one runtime instance to Harbor."""
+    """Provider facts needed to expose one runtime instance to Stolosio."""
 
     provider: ProviderName
     connection_port: int

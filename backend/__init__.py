@@ -1,1 +1,1 @@
-"""Harbor backend package."""
+"""Stolosio backend package."""

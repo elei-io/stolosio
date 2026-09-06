@@ -20,7 +20,7 @@ def test_event_round_trip_is_stable_and_validated() -> None:
                     "failed_count": 0,
                     "duration_ms": 25,
                     "provider_latency_ms": 21,
-                    "harbor_queue_ms": 4,
+                    "stolosio_queue_ms": 4,
                 }
             }
         },
@@ -30,12 +30,12 @@ def test_event_round_trip_is_stable_and_validated() -> None:
     decoded = SessionEvent.from_json(event.to_json())
 
     assert decoded == event
-    assert decoded.subject == f"harbor.v1.events.session.{event.session_id}"
+    assert decoded.subject == f"stolosio.v1.events.session.{event.session_id}"
 
 
 def test_unknown_event_and_payload_fields_are_rejected() -> None:
     with pytest.raises(ValueError, match="Unknown event type"):
-        SessionEvent.create("harbor.invented", uuid4())
+        SessionEvent.create("stolosio.invented", uuid4())
 
     with pytest.raises(ValueError):
         SessionEvent.create(
@@ -97,7 +97,7 @@ def test_event_contract_bounds_database_fields_and_requires_timezone() -> None:
                         "failed_count": 0,
                         "duration_ms": 1,
                         "provider_latency_ms": 1,
-                        "harbor_queue_ms": 0,
+                        "stolosio_queue_ms": 0,
                     }
                 }
             },

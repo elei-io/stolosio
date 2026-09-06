@@ -264,7 +264,7 @@ wheels = [
 ]
 
 [[package]]
-name = "harbor"
+name = "stolosio"
 version = "0.1.14"
 source = { virtual = "." }
 dependencies = [

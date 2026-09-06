@@ -660,8 +660,8 @@ class DomainQueryService:
                     "state": row.state,
                     "selection_mode": (
                         "explicit"
-                        if "harbor.provider.slug" in row.requested_settings
-                        and row.requested_settings["harbor.provider.slug"] != "auto"
+                        if "stolosio.provider.slug" in row.requested_settings
+                        and row.requested_settings["stolosio.provider.slug"] != "auto"
                         else "automatic"
                     ),
                     "providers": [attempt.provider for attempt in session_attempts],

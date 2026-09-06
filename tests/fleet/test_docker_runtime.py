@@ -9,7 +9,7 @@ from backend.fleet.runtimes import DockerCommandError, DockerComposeRuntime
 
 @pytest.mark.asyncio
 async def test_docker_runtime_lists_compose_service_as_runtime_instances(tmp_path) -> None:
-    runtime = DockerComposeRuntime(workdir=tmp_path, project_name="harbor")
+    runtime = DockerComposeRuntime(workdir=tmp_path, project_name="stolosio")
     started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
     async def run(*command: str) -> str:
@@ -18,7 +18,7 @@ async def test_docker_runtime_lists_compose_service_as_runtime_instances(tmp_pat
         return json.dumps(
             [
                 {
-                    "Name": "/harbor-browserless-1",
+                    "Name": "/stolosio-browserless-1",
                     "State": {"Running": True, "StartedAt": started_at},
                     "Config": {"Env": ["CONCURRENT=17"]},
                 }
@@ -32,7 +32,7 @@ async def test_docker_runtime_lists_compose_service_as_runtime_instances(tmp_pat
     assert instances == [
         RuntimeInstance(
             instance_id="container-id",
-            address="harbor-browserless-1",
+            address="stolosio-browserless-1",
             started_at=datetime.fromisoformat(started_at.replace("Z", "+00:00")),
             session_capacity=17,
         )
@@ -41,7 +41,7 @@ async def test_docker_runtime_lists_compose_service_as_runtime_instances(tmp_pat
 
 @pytest.mark.asyncio
 async def test_docker_runtime_treats_failed_port_probe_as_not_ready(tmp_path) -> None:
-    runtime = DockerComposeRuntime(workdir=tmp_path, project_name="harbor")
+    runtime = DockerComposeRuntime(workdir=tmp_path, project_name="stolosio")
 
     async def fail(*command: str) -> str:
         raise DockerCommandError("not listening")

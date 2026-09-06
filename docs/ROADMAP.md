@@ -1,6 +1,6 @@
 # Roadmap
 
-Harbor develops through narrow vertical slices. Each milestone must preserve the
+Stolosio develops through narrow vertical slices. Each milestone must preserve the
 provider-neutral CDP endpoint and prove its behavior with an unchanged downstream
 client.
 

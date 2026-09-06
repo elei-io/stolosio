@@ -9,9 +9,9 @@ from backend.proxy.contracts.provider import (
 )
 from backend.proxy.contracts.session import (
     AttemptState,
-    HarborSession,
     ProviderAttempt,
     SessionState,
+    StolosioSession,
 )
 from backend.proxy.contracts.settings import (
     ProviderSelection,
@@ -37,7 +37,7 @@ __all__ = [
     "SessionSettingSchema",
     "SettingSource",
     "SettingsResolutionContext",
-    "HarborSession",
+    "StolosioSession",
     "AttemptState",
     "SessionState",
 ]

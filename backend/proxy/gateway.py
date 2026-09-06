@@ -28,7 +28,7 @@ from backend.proxy.escalation import (
 from backend.proxy.network_policy import NetworkPolicyRepository
 from backend.proxy.routing import RoutingRepository
 from backend.proxy.sessions import SessionAdmission, SessionLease
-from backend.proxy.settings import HarborSettingsResolver, harbor_settings_resolver
+from backend.proxy.settings import StolosioSettingsResolver, stolosio_settings_resolver
 from backend.proxy.transport import relay_cdp
 from backend.settings import Settings
 
@@ -42,7 +42,7 @@ class Gateway:
         attempts: AttemptAdmission,
         settings: Settings,
         event_publisher: EventPublisher | None = None,
-        resolver: HarborSettingsResolver = harbor_settings_resolver,
+        resolver: StolosioSettingsResolver = stolosio_settings_resolver,
         transition_repository: EscalationHistoryRepository | None = None,
         routing: RoutingRepository | None = None,
         network_policy: NetworkPolicyRepository | None = None,
@@ -198,7 +198,7 @@ class Gateway:
         except Exception:
             failed = True
             reason = "provider_connection_lost" if accepted else "provider_unavailable"
-            logger.exception("Harbor connection failed")
+            logger.exception("Stolosio connection failed")
             await self._reject(
                 websocket,
                 ProviderConnectionLost() if accepted else ProviderUnavailable(),
@@ -366,7 +366,7 @@ class Gateway:
             async with asyncio.timeout(self._settings.session_cleanup_timeout_seconds):
                 await cleanup
         except Exception:
-            logger.exception("Failed to release Harbor %s within cleanup budget", resource)
+            logger.exception("Failed to release Stolosio %s within cleanup budget", resource)
 
     @staticmethod
     async def _wait_for_disconnect(websocket: WebSocket) -> None:

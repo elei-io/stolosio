@@ -7,20 +7,20 @@ from starlette.websockets import WebSocketState
 
 from backend.proxy.contracts import (
     AttemptState,
-    HarborSession,
     ProviderAttempt,
     ProviderName,
     SessionState,
+    StolosioSession,
 )
 from backend.proxy.errors import ProviderUnavailable
 from backend.proxy.gateway import Gateway
 from backend.proxy.sessions import SessionLease
-from backend.proxy.settings import harbor_settings_resolver
+from backend.proxy.settings import stolosio_settings_resolver
 from backend.settings import Settings
 
 
 class FakeWebSocket:
-    def __init__(self, query: str = "harbor.provider.slug=browserless") -> None:
+    def __init__(self, query: str = "stolosio.provider.slug=browserless") -> None:
         self.query_params = QueryParams(query)
         self.application_state = WebSocketState.CONNECTING
         self.client_state = WebSocketState.CONNECTING
@@ -59,7 +59,7 @@ class FakeWebSocket:
 
 class FakeSessionLease:
     def __init__(self) -> None:
-        self.session = HarborSession(
+        self.session = StolosioSession(
             session_id="00000000-0000-4000-8000-000000000001",
             owner_id="replica",
             lease_token="token",
@@ -68,7 +68,7 @@ class FakeSessionLease:
         self.released: list[tuple[bool, str]] = []
 
     async def open(self) -> None:
-        self.session = HarborSession(
+        self.session = StolosioSession(
             session_id=self.session.session_id,
             owner_id=self.session.owner_id,
             lease_token=self.session.lease_token,
@@ -126,11 +126,11 @@ async def test_provider_acquisition_failure_releases_both_admission_levels(
             return session
 
     class Attempts:
-        async def acquire(self, harbor_session, resolved):
+        async def acquire(self, stolosio_session, resolved):
             return attempt
 
     class FailingAdapter:
-        async def acquire(self, harbor_session, resolved):
+        async def acquire(self, stolosio_session, resolved):
             raise ConnectionError("provider unavailable")
 
     monkeypatch.setattr(
@@ -170,7 +170,7 @@ async def test_bind_failure_closes_provider_before_releasing_attempt(
     attempt.bind_provider_session = fail_bind  # type: ignore[method-assign]
 
     class Attempts:
-        async def acquire(self, harbor_session, resolved):
+        async def acquire(self, stolosio_session, resolved):
             return attempt
 
     class ProviderSession:
@@ -188,15 +188,15 @@ async def test_bind_failure_closes_provider_before_releasing_attempt(
     provider = ProviderSession()
 
     class Adapter:
-        async def acquire(self, harbor_session, resolved):
+        async def acquire(self, stolosio_session, resolved):
             return provider
 
     monkeypatch.setattr(
         "backend.proxy.gateway.get_provider_adapter",
         lambda selected, endpoint=None: Adapter(),
     )
-    _, resolved = await harbor_settings_resolver.resolve(
-        [("harbor.provider.slug", "browserless")]
+    _, resolved = await stolosio_settings_resolver.resolve(
+        [("stolosio.provider.slug", "browserless")]
     )
     gateway = Gateway(
         None,  # type: ignore[arg-type]
@@ -223,7 +223,7 @@ async def test_disconnect_while_queued_cancels_work_without_accepting() -> None:
             return session
 
     class Attempts:
-        async def acquire(self, harbor_session, resolved):
+        async def acquire(self, stolosio_session, resolved):
             started.set()
             try:
                 await asyncio.Future()
@@ -260,7 +260,7 @@ async def test_postgres_heartbeat_failure_marks_session_lease_lost() -> None:
         async def release(self, session, *, failed: bool, reason: str) -> bool:
             return True
 
-    session = HarborSession(
+    session = StolosioSession(
         session_id="session",
         owner_id="replica",
         lease_token="token",

@@ -109,7 +109,7 @@ async def test_reconciler_routes_browserless_through_runtime_neutral_contract() 
         [
             RuntimeInstance(
                 "browserless-1",
-                "harbor-browserless-1",
+                "stolosio-browserless-1",
                 datetime.now(UTC),
                 session_capacity=1,
             )
@@ -128,7 +128,7 @@ async def test_reconciler_routes_browserless_through_runtime_neutral_contract() 
     assert result.provider == "browserless"
     assert runtime.probed_ports == [3000]
     assert repository.platform == "fake-runtime"
-    assert repository.observations[0].endpoint == "ws://harbor-browserless-1:3000"
+    assert repository.observations[0].endpoint == "ws://stolosio-browserless-1:3000"
     assert repository.observations[0].state.value == "ready"
 
 
@@ -139,7 +139,7 @@ async def test_reconciler_scales_one_runtime_unit_toward_desired_state() -> None
         [
             RuntimeInstance(
                 "browserless-1",
-                "harbor-browserless-1",
+                "stolosio-browserless-1",
                 datetime.now(UTC),
                 session_capacity=1,
             )
@@ -172,7 +172,7 @@ async def test_reconciler_reports_scale_request_to_ready_and_first_assignment() 
             )
             new_instance = RuntimeInstance(
                 "browserless-2",
-                "harbor-browserless-2",
+                "stolosio-browserless-2",
                 datetime.now(UTC),
                 session_capacity=session_capacity,
             )
@@ -183,7 +183,7 @@ async def test_reconciler_reports_scale_request_to_ready_and_first_assignment() 
         [
             RuntimeInstance(
                 "browserless-1",
-                "harbor-browserless-1",
+                "stolosio-browserless-1",
                 datetime.now(UTC),
                 session_capacity=1,
             )
@@ -213,7 +213,7 @@ async def test_reconciler_replaces_instance_that_never_becomes_healthy() -> None
         [
             RuntimeInstance(
                 "failed-instance",
-                "harbor-browserless-1",
+                "stolosio-browserless-1",
                 datetime.now(UTC),
                 session_capacity=1,
             )
@@ -243,7 +243,7 @@ async def test_reconciler_reconfigures_existing_workers_when_capacity_changes() 
         [
             RuntimeInstance(
                 "browserless-1",
-                "harbor-browserless-1",
+                "stolosio-browserless-1",
                 datetime.now(UTC),
                 session_capacity=5,
             )
@@ -270,7 +270,7 @@ async def test_reconciler_waits_for_active_sessions_before_reconfiguring() -> No
         [
             RuntimeInstance(
                 "browserless-1",
-                "harbor-browserless-1",
+                "stolosio-browserless-1",
                 datetime.now(UTC),
                 session_capacity=5,
             )
@@ -295,8 +295,8 @@ async def test_reconciler_drains_runtime_selected_instance_before_scale_down() -
     repository = FakeRepository(ProviderName.BROWSERLESS, desired_instances=1)
     runtime = FakeRuntime(
         [
-            RuntimeInstance("browserless-0", "harbor-browserless-0", session_capacity=1),
-            RuntimeInstance("browserless-1", "harbor-browserless-1", session_capacity=1),
+            RuntimeInstance("browserless-0", "stolosio-browserless-0", session_capacity=1),
+            RuntimeInstance("browserless-1", "stolosio-browserless-1", session_capacity=1),
         ]
     )
     reconciler = FleetReconciler(
@@ -320,8 +320,8 @@ async def test_reconciler_waits_until_scale_down_candidate_is_idle() -> None:
     repository.scale_down_ready = False
     runtime = FakeRuntime(
         [
-            RuntimeInstance("browserless-0", "harbor-browserless-0", session_capacity=1),
-            RuntimeInstance("browserless-1", "harbor-browserless-1", session_capacity=1),
+            RuntimeInstance("browserless-0", "stolosio-browserless-0", session_capacity=1),
+            RuntimeInstance("browserless-1", "stolosio-browserless-1", session_capacity=1),
         ]
     )
     reconciler = FleetReconciler(

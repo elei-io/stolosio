@@ -8,12 +8,12 @@ from backend.proxy.adapters.cdp import DirectCdpAdapter, WebSocketProviderSessio
 from backend.proxy.adapters.http import HttpAdapter
 from backend.proxy.adapters.registry import get_provider_adapter
 from backend.proxy.contracts import (
-    HarborSession,
     ProviderName,
     ProviderSettingSchema,
     ResolvedSessionSettings,
     SessionSettingSchema,
     SessionState,
+    StolosioSession,
 )
 
 
@@ -92,14 +92,14 @@ async def test_direct_adapter_connects_to_assigned_browserless_worker(monkeypatc
     monkeypatch.setattr("backend.proxy.adapters.cdp.connect", fake_connect)
     adapter = DirectCdpAdapter(
         ProviderName.BROWSERLESS,
-        "ws://harbor-browserless-2:3000",
+        "ws://stolosio-browserless-2:3000",
     )
 
     session = await adapter.acquire(None, None)  # type: ignore[arg-type]
 
     assert session.provider is ProviderName.BROWSERLESS
     assert request == {
-        "url": "ws://harbor-browserless-2:3000",
+        "url": "ws://stolosio-browserless-2:3000",
         "kwargs": {"max_size": None, "proxy": None},
     }
 
@@ -172,7 +172,7 @@ async def test_browserbase_adapter_owns_remote_session_lifecycle(monkeypatch) ->
     )
 
     provider_session = await adapter.acquire(
-        HarborSession("harbor-session", "owner", "lease", SessionState.OPEN),
+        StolosioSession("stolosio-session", "owner", "lease", SessionState.OPEN),
         ResolvedSessionSettings(
             provider=ProviderSettingSchema(slug=ProviderName.BROWSERBASE),
             session=SessionSettingSchema(),
@@ -196,7 +196,7 @@ async def test_browserbase_adapter_owns_remote_session_lifecycle(monkeypatch) ->
     assert FakeHttpClient.requests[0][2]["json"] == {
         "keepAlive": False,
         "timeout": 600,
-        "userMetadata": {"harborSessionId": "harbor-session"},
+        "userMetadata": {"stolosioSessionId": "stolosio-session"},
         "projectId": "project",
     }
 
@@ -229,7 +229,7 @@ async def test_browserbase_releases_session_when_connect_url_is_missing(
 
     with pytest.raises(RuntimeError, match="invalid session"):
         await adapter.acquire(
-            HarborSession("harbor-session", "owner", "lease", SessionState.OPEN),
+            StolosioSession("stolosio-session", "owner", "lease", SessionState.OPEN),
             ResolvedSessionSettings(
                 provider=ProviderSettingSchema(slug=ProviderName.BROWSERBASE),
                 session=SessionSettingSchema(),
@@ -262,7 +262,7 @@ def test_registry_has_only_http_browserless_and_browserbase_adapters() -> None:
 async def test_explicit_http_is_bounded_and_never_transitions() -> None:
     adapter = get_provider_adapter(ProviderName.HTTP)
     session = await adapter.acquire(
-        HarborSession("session", "owner", "lease", SessionState.OPEN),
+        StolosioSession("session", "owner", "lease", SessionState.OPEN),
         ResolvedSessionSettings(
             provider=ProviderSettingSchema(slug=ProviderName.HTTP),
             session=SessionSettingSchema(),

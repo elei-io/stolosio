@@ -10,7 +10,11 @@ from backend.proxy.contracts import ACTIVE_PROVIDERS, ProviderName
 
 class FakeFleet:
     async def gateway_snapshot(self):
-        return GatewayFleetSnapshot(active_sessions=2, capacity=100)
+        return GatewayFleetSnapshot(
+            active_sessions=2,
+            sessions_last_24h=37,
+            capacity=100,
+        )
 
     async def snapshot(self):
         return [
@@ -40,9 +44,15 @@ def test_json_and_prometheus_views_share_the_fleet_snapshot() -> None:
     app.include_router(metrics_router)
 
     with TestClient(app) as client:
+        gateway = client.get("/v1/fleet/gateway")
         response = client.get("/v1/fleet/providers")
         metrics = client.get("/metrics")
 
+    assert gateway.json() == {
+        "active_sessions": 2,
+        "sessions_last_24h": 37,
+        "capacity": 100,
+    }
     assert response.status_code == 200
     assert len(response.json()) == 3
     browserless = next(
@@ -63,14 +73,14 @@ def test_json_and_prometheus_views_share_the_fleet_snapshot() -> None:
         "available_slots": 2,
     }
     assert metrics.status_code == 200
-    assert "harbor_gateway_active_sessions 2.0" in metrics.text
-    assert "harbor_gateway_capacity 100.0" in metrics.text
-    assert 'harbor_provider_active_attempts{provider="browserless"} 1.0' in metrics.text
-    assert 'harbor_provider_queued_attempts{provider="browserless"} 2.0' in metrics.text
-    assert 'harbor_provider_desired_instances{provider="browserless"} 2.0' in metrics.text
-    assert 'harbor_provider_ready_instances{provider="browserless"} 1.0' in metrics.text
-    assert 'harbor_provider_unhealthy_instances{provider="browserless"} 1.0' in metrics.text
-    assert 'harbor_provider_available_slots{provider="browserless"} 2.0' in metrics.text
+    assert "stolosio_gateway_active_sessions 2.0" in metrics.text
+    assert "stolosio_gateway_capacity 100.0" in metrics.text
+    assert 'stolosio_provider_active_attempts{provider="browserless"} 1.0' in metrics.text
+    assert 'stolosio_provider_queued_attempts{provider="browserless"} 2.0' in metrics.text
+    assert 'stolosio_provider_desired_instances{provider="browserless"} 2.0' in metrics.text
+    assert 'stolosio_provider_ready_instances{provider="browserless"} 1.0' in metrics.text
+    assert 'stolosio_provider_unhealthy_instances{provider="browserless"} 1.0' in metrics.text
+    assert 'stolosio_provider_available_slots{provider="browserless"} 2.0' in metrics.text
     assert "session_id" not in metrics.text
 
 

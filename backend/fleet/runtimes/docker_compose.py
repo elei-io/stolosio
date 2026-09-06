@@ -12,7 +12,7 @@ class DockerCommandError(RuntimeError):
 
 
 class DockerComposeRuntime:
-    """Docker Compose implementation of Harbor's fleet runtime contract."""
+    """Docker Compose implementation of Stolosio's fleet runtime contract."""
 
     platform = "docker-compose"
 
@@ -81,7 +81,7 @@ class DockerComposeRuntime:
         session_capacity: int,
     ) -> None:
         environment_key = (
-            f"HARBOR_{deployment.upper().replace('-', '_')}_CONCURRENT"
+            f"STOLOSIO_{deployment.upper().replace('-', '_')}_CONCURRENT"
         )
         await self._run(
             "docker",

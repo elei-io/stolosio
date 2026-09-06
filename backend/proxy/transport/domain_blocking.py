@@ -25,7 +25,7 @@ _CLOSED = object()
 
 
 class DomainBlockingProviderSession:
-    """Apply Harbor's URL blocklist before exposing newly attached page targets."""
+    """Apply Stolosio's URL blocklist before exposing newly attached page targets."""
 
     def __init__(
         self,

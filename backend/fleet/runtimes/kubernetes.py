@@ -53,8 +53,8 @@ class KubernetesRuntime:
             f"/api/v1/namespaces/{self._namespace}/pods",
             params={
                 "labelSelector": (
-                    "app.kubernetes.io/managed-by=harbor-fleet-controller,"
-                    f"harbor.openai.com/fleet={deployment}"
+                    "app.kubernetes.io/managed-by=stolosio-fleet-controller,"
+                    f"stolosio.openai.com/fleet={deployment}"
                 )
             },
         )
@@ -71,8 +71,8 @@ class KubernetesRuntime:
             if not pod_name or not uid:
                 continue
             annotations = metadata.get("annotations", {})
-            pod_revision = annotations.get("harbor.openai.com/workload-revision")
-            capacity_raw = annotations.get("harbor.openai.com/session-capacity")
+            pod_revision = annotations.get("stolosio.openai.com/workload-revision")
+            capacity_raw = annotations.get("stolosio.openai.com/session-capacity")
             capacity = (
                 int(capacity_raw)
                 if isinstance(capacity_raw, str)
@@ -169,8 +169,8 @@ class KubernetesRuntime:
                 f"/api/v1/namespaces/{self._namespace}/pods",
                 params={
                     "labelSelector": (
-                        "app.kubernetes.io/managed-by=harbor-fleet-controller,"
-                        f"harbor.openai.com/fleet={deployment}"
+                        "app.kubernetes.io/managed-by=stolosio-fleet-controller,"
+                        f"stolosio.openai.com/fleet={deployment}"
                     )
                 },
             )
@@ -261,15 +261,15 @@ class KubernetesRuntime:
         labels = pod_metadata.setdefault("labels", {})
         labels.update(
             {
-                "app.kubernetes.io/managed-by": "harbor-fleet-controller",
-                "harbor.openai.com/fleet": deployment,
+                "app.kubernetes.io/managed-by": "stolosio-fleet-controller",
+                "stolosio.openai.com/fleet": deployment,
             }
         )
         annotations = pod_metadata.setdefault("annotations", {})
         annotations.update(
             {
-                "harbor.openai.com/session-capacity": str(session_capacity),
-                "harbor.openai.com/workload-revision": revision,
+                "stolosio.openai.com/session-capacity": str(session_capacity),
+                "stolosio.openai.com/workload-revision": revision,
             }
         )
         containers = pod_template.setdefault("spec", {}).get("containers", [])

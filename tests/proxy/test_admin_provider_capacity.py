@@ -44,7 +44,7 @@ def test_admin_can_update_http_capacity() -> None:
         response = client.patch(
             "/v1/admin/providers/http/capacity",
             json={"max_active_sessions": 12, "max_queued_attempts": 24},
-            headers={"X-Harbor-Actor": "test-operator"},
+            headers={"X-Stolosio-Actor": "test-operator"},
         )
 
     assert response.status_code == 200
@@ -59,7 +59,7 @@ def test_missing_browserbase_api_key_is_returned_as_a_clear_conflict() -> None:
         async def update(self, provider, values, *, actor):
             raise ExternalCapacityEnablementError(
                 "Cannot enable Browserbase because its API key is not configured. "
-                "Configure browserbase_api_key and restart Harbor."
+                "Configure browserbase_api_key and restart Stolosio."
             )
 
     app = FastAPI()
@@ -76,6 +76,6 @@ def test_missing_browserbase_api_key_is_returned_as_a_clear_conflict() -> None:
     assert response.json() == {
         "detail": (
             "Cannot enable Browserbase because its API key is not configured. "
-            "Configure browserbase_api_key and restart Harbor."
+            "Configure browserbase_api_key and restart Stolosio."
         )
     }

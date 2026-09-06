@@ -34,18 +34,18 @@ jobs:
           RELEASE_VERSION: ${{ github.ref_name }}
         run: |
           release_version="${RELEASE_VERSION#v}"
-          chart_version="$(awk '$1 == "version:" {print $2}' charts/harbor/Chart.yaml)"
-          app_version="$(awk '$1 == "appVersion:" {gsub(/"/, "", $2); print $2}' charts/harbor/Chart.yaml)"
+          chart_version="$(awk '$1 == "version:" {print $2}' charts/stolosio/Chart.yaml)"
+          app_version="$(awk '$1 == "appVersion:" {gsub(/"/, "", $2); print $2}' charts/stolosio/Chart.yaml)"
           project_version="$(awk -F '"' '$1 ~ /^version = / {print $2; exit}' pyproject.toml)"
-          image_tag="$(awk '$1 == "image:" {section = "image"; next} section == "image" && $1 == "tag:" {gsub(/"/, "", $2); print $2; exit}' charts/harbor/values.yaml)"
-          web_image_tag="$(awk '$1 == "webImage:" {section = "web"; next} section == "web" && $1 == "tag:" {gsub(/"/, "", $2); print $2; exit}' charts/harbor/values.yaml)"
+          image_tag="$(awk '$1 == "image:" {section = "image"; next} section == "image" && $1 == "tag:" {gsub(/"/, "", $2); print $2; exit}' charts/stolosio/values.yaml)"
+          web_image_tag="$(awk '$1 == "webImage:" {section = "web"; next} section == "web" && $1 == "tag:" {gsub(/"/, "", $2); print $2; exit}' charts/stolosio/values.yaml)"
 
           if [ "${release_version}" != "${chart_version}" ] \
             || [ "${release_version}" != "${app_version}" ] \
             || [ "${release_version}" != "${project_version}" ] \
             || [ "${release_version}" != "${image_tag}" ] \
             || [ "${release_version}" != "${web_image_tag}" ]; then
-            echo "Git tag, project, chart, and default Harbor image versions must match."
+            echo "Git tag, project, chart, and default Stolosio image versions must match."
             echo "tag=${release_version} project=${project_version} chart=${chart_version}"
             echo "appVersion=${app_version} image=${image_tag} webImage=${web_image_tag}"
             exit 1
@@ -60,9 +60,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: harbor
+          - name: stolosio
             context: .
-          - name: harbor-web
+          - name: stolosio-web
             context: ./web
     steps:
       - name: Check out repository
@@ -124,7 +124,7 @@ jobs:
           version: v3.21.0
 
       - name: Package chart
-        run: helm package charts/harbor --destination dist
+        run: helm package charts/stolosio --destination dist
 
       - name: Log in to GHCR
         env:
@@ -140,5 +140,5 @@ jobs:
           RELEASE_VERSION: ${{ github.ref_name }}
         run: |
           release_version="${RELEASE_VERSION#v}"
-          helm push "dist/harbor-${release_version}.tgz" \
+          helm push "dist/stolosio-${release_version}.tgz" \
             "oci://ghcr.io/${{ github.repository_owner }}/charts"

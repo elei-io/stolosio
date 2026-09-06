@@ -4,25 +4,25 @@ Status: implemented
 
 ## Public contract
 
-Harbor exposes one provider-neutral CDP WebSocket:
+Stolosio exposes one provider-neutral CDP WebSocket:
 
 ```text
 WS /v1/connect
 ```
 
 The provider is automatic unless the caller explicitly supplies
-`harbor.provider.slug`. Ordinary CDP consumers are not required to understand Harbor's
+`stolosio.provider.slug`. Ordinary CDP consumers are not required to understand Stolosio's
 capacity, queues, deadlines, or rejection reasons.
 
 ## Two-level admission
 
-Harbor separates logical downstream sessions from acquisition attempts.
+Stolosio separates logical downstream sessions from acquisition attempts.
 
 ```text
 connection
     |
     v
-global Harbor admission
+global Stolosio admission
     |
     v
 planner
@@ -34,7 +34,7 @@ provider attempt admission
 provider connection
 ```
 
-Global admission limits all live Harbor sessions. A session keeps its global slot from
+Global admission limits all live Stolosio sessions. A session keeps its global slot from
 admission until the downstream connection terminates.
 
 Provider admission independently limits active and queued attempts for HTTP,

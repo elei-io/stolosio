@@ -66,7 +66,7 @@ async def update_external_capacity(
     provider: ProviderName,
     update: ExternalCapacityUpdate,
     request: Request,
-    actor: Annotated[str, Header(alias="X-Harbor-Actor")] = "local-admin",
+    actor: Annotated[str, Header(alias="X-Stolosio-Actor")] = "local-admin",
 ) -> ExternalCapacityResponse:
     try:
         value = await request.app.state.external_capacity.update(

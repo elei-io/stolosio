@@ -116,7 +116,7 @@ async def run(*, once: bool) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Reconcile Harbor's Kubernetes browser fleets")
+    parser = argparse.ArgumentParser(description="Reconcile Stolosio's Kubernetes browser fleets")
     parser.add_argument("--once", action="store_true", help="Run one reconciliation pass")
     parser.add_argument(
         "--no-metrics",

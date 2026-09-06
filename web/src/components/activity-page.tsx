@@ -439,7 +439,7 @@ function EventDetails({
 
           <dl className="mt-6 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-3 text-sm">
             <dt className="text-muted-foreground">Provider</dt>
-            <dd className="font-mono">{event.provider ?? "Harbor"}</dd>
+            <dd className="font-mono">{event.provider ?? "Stolosio"}</dd>
             <dt className="text-muted-foreground">Outcome</dt>
             <dd className="font-mono">{event.outcome ?? "observation"}</dd>
             <dt className="text-muted-foreground">Session</dt>
@@ -555,7 +555,7 @@ export function ActivityPage({ navigate }: ActivityPageProps) {
     source.onopen = () => setStatusState({ query: filterQuery, status: "live" })
     source.onerror = () =>
       setStatusState({ query: filterQuery, status: "reconnecting" })
-    source.addEventListener("harbor-event", (message) => {
+    source.addEventListener("stolosio-event", (message) => {
       const event: unknown = JSON.parse((message as MessageEvent<string>).data)
       if (!isActivityEvent(event)) return
       if (pausedRef.current) {
@@ -757,7 +757,7 @@ export function ActivityPage({ navigate }: ActivityPageProps) {
             Activity
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            A live, sanitized operational log across Harbor sessions.
+            A live, sanitized operational log across Stolosio sessions.
           </p>
         </div>
         <Button
@@ -976,7 +976,7 @@ export function ActivityPage({ navigate }: ActivityPageProps) {
                             providerTone(event.provider)
                           )}
                         >
-                          {event.provider ?? "harbor"}
+                          {event.provider ?? "stolosio"}
                         </span>
                         <span
                           className={cn(
@@ -1040,7 +1040,7 @@ export function ActivityPage({ navigate }: ActivityPageProps) {
               <p className="mt-2 text-xs leading-5 text-slate-400">
                 {history.isError
                   ? extractApiError(history.error)
-                  : "Sanitized operational events appear here as Harbor observes them."}
+                  : "Sanitized operational events appear here as Stolosio observes them."}
               </p>
             </div>
           </div>

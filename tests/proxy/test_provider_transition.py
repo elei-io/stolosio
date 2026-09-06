@@ -19,13 +19,13 @@ from backend.db.models import (
 from backend.events.cdp import CdpEventObserver
 from backend.events.publisher import NullEventPublisher
 from backend.proxy.contracts import (
-    HarborSession,
     ProviderName,
     ProviderSettingSchema,
     ResolvedSessionSettings,
     SessionSettingSchema,
     SessionState,
     SettingSource,
+    StolosioSession,
 )
 from backend.proxy.errors import DomainBlockingUnavailable
 from backend.proxy.provider_transition.history import ProviderTransitionRepository
@@ -69,7 +69,7 @@ def test_http_request_headers_are_descriptive_and_truthful() -> None:
     headers = _http_request_headers(Settings())
 
     assert headers == {
-        "User-Agent": "HarborBot/0.1 (https://github.com/ekkuleivonen/harbor)",
+        "User-Agent": "StolosioBot/0.1 (https://github.com/elei-io/stolosio)",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
     }
@@ -82,11 +82,11 @@ def transition_session(upstream: FakeProviderSession) -> ProviderTransitionSessi
     resolved = ResolvedSessionSettings(
         provider=ProviderSettingSchema(slug=ProviderName.HTTP),
         session=SessionSettingSchema(),
-        sources={"harbor.provider.slug": SettingSource.EXPLICIT},
+        sources={"stolosio.provider.slug": SettingSource.EXPLICIT},
     )
     publisher = NullEventPublisher()
     facade = ProviderTransitionSession(
-        HarborSession(str(session_id), "test", "lease", SessionState.OPEN),
+        StolosioSession(str(session_id), "test", "lease", SessionState.OPEN),
         resolved,
         None,  # type: ignore[arg-type]
         None,  # type: ignore[arg-type]
@@ -126,7 +126,7 @@ async def test_http_navigation_honors_the_global_domain_blocklist() -> None:
         "id": 1,
         "error": {
             "code": -32000,
-            "message": "Navigation blocked by Harbor network policy",
+            "message": "Navigation blocked by Stolosio network policy",
         },
     }
 
@@ -836,11 +836,11 @@ async def test_transition_tries_the_full_plan_before_releasing_the_source(
 
     session_id = uuid4()
     facade = ProviderTransitionSession(
-        HarborSession(str(session_id), "test", "lease", SessionState.OPEN),
+        StolosioSession(str(session_id), "test", "lease", SessionState.OPEN),
         ResolvedSessionSettings(
             provider=ProviderSettingSchema(),
             session=SessionSettingSchema(),
-            sources={"harbor.provider.slug": SettingSource.AUTO},
+            sources={"stolosio.provider.slug": SettingSource.AUTO},
         ),
         Attempts(),  # type: ignore[arg-type]
         History(),  # type: ignore[arg-type]

@@ -5,20 +5,20 @@ import os
 
 from playwright.async_api import async_playwright
 
-HARBOR_CDP_URL = os.getenv(
-    "HARBOR_CDP_URL",
+STOLOSIO_CDP_URL = os.getenv(
+    "STOLOSIO_CDP_URL",
     "ws://localhost:8411/v1/connect",
 )
 
 
 async def main() -> None:
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.connect_over_cdp(HARBOR_CDP_URL)
+        browser = await playwright.chromium.connect_over_cdp(STOLOSIO_CDP_URL)
         page = await browser.new_page()
 
-        await page.goto("https://example.com/?harbor-replay=first")
+        await page.goto("https://example.com/?stolosio-replay=first")
         assert "Example Domain" in await page.content()
-        await page.goto("https://example.com/?harbor-replay=second")
+        await page.goto("https://example.com/?stolosio-replay=second")
         assert "Example Domain" in await page.content()
 
         state = await page.evaluate(
@@ -26,7 +26,7 @@ async def main() -> None:
             "heading: document.querySelector('h1').textContent})"
         )
 
-        assert state["search"] == "?harbor-replay=second"
+        assert state["search"] == "?stolosio-replay=second"
         assert state["historyLength"] >= 3
         assert state["heading"] == "Example Domain"
 

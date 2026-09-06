@@ -1,8 +1,8 @@
 from backend.proxy.contracts import (
-    HarborSession,
     ProviderName,
     ProviderSession,
     ResolvedSessionSettings,
+    StolosioSession,
 )
 from backend.proxy.provider_transition.session import HttpCdpSession
 from backend.settings import Settings, settings
@@ -20,7 +20,7 @@ class HttpAdapter:
 
     async def acquire(
         self,
-        session: HarborSession,
+        session: StolosioSession,
         resolved: ResolvedSessionSettings,
     ) -> ProviderSession:
         return HttpCdpSession(

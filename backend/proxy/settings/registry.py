@@ -4,10 +4,10 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from backend.proxy.contracts import RequestedSessionSettings
-from backend.proxy.errors import InvalidHarborSettings
-from backend.proxy.settings.base import BaseHarborSetting
-from backend.proxy.settings.provider import HarborProviderSetting
-from backend.proxy.settings.session import HarborSessionSetting
+from backend.proxy.errors import InvalidStolosioSettings
+from backend.proxy.settings.base import BaseStolosioSetting
+from backend.proxy.settings.provider import StolosioProviderSetting
+from backend.proxy.settings.session import StolosioSessionSetting
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,20 +19,20 @@ class RegisteredField:
     automatic: bool
 
 
-class HarborSettingsRegistry:
-    def __init__(self, settings: tuple[type[BaseHarborSetting[Any]], ...]) -> None:
+class StolosioSettingsRegistry:
+    def __init__(self, settings: tuple[type[BaseStolosioSetting[Any]], ...]) -> None:
         self._settings = settings
         self._fields: dict[str, RegisteredField] = {}
-        self._settings_by_slug: dict[str, type[BaseHarborSetting[Any]]] = {}
+        self._settings_by_slug: dict[str, type[BaseStolosioSetting[Any]]] = {}
 
         for setting in settings:
             if setting.slug in self._settings_by_slug:
-                raise ValueError(f"Duplicate Harbor setting slug: {setting.slug}")
+                raise ValueError(f"Duplicate Stolosio setting slug: {setting.slug}")
             self._settings_by_slug[setting.slug] = setting
             for field_name, model_field in setting.schema.model_fields.items():
                 query = f"{setting.query_prefix}.{field_name}"
                 if query in self._fields:
-                    raise ValueError(f"Duplicate Harbor query key: {query}")
+                    raise ValueError(f"Duplicate Stolosio query key: {query}")
                 self._fields[query] = RegisteredField(
                     setting_slug=setting.slug,
                     model_field=field_name,
@@ -55,21 +55,21 @@ class HarborSettingsRegistry:
         seen: set[str] = set()
 
         for query, raw_value in query_items:
-            if not query.startswith("harbor."):
+            if not query.startswith("stolosio."):
                 continue
             field = self._fields.get(query)
             if field is None or query in seen or not raw_value:
-                raise InvalidHarborSettings
+                raise InvalidStolosioSettings
             seen.add(query)
             if raw_value == "auto":
                 if not field.automatic:
-                    raise InvalidHarborSettings
+                    raise InvalidStolosioSettings
                 auto_fields.add(query)
                 continue
             try:
                 value = field.adapter.validate_python(raw_value)
             except ValidationError as error:
-                raise InvalidHarborSettings from error
+                raise InvalidStolosioSettings from error
             overrides[query] = value
 
         return RequestedSessionSettings(
@@ -96,4 +96,6 @@ class HarborSettingsRegistry:
         }
 
 
-harbor_settings_registry = HarborSettingsRegistry((HarborProviderSetting, HarborSessionSetting))
+stolosio_settings_registry = StolosioSettingsRegistry(
+    (StolosioProviderSetting, StolosioSessionSetting)
+)

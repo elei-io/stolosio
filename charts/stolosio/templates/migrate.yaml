@@ -1,9 +1,9 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "harbor.fullname" . }}-migrate
+  name: {{ include "stolosio.fullname" . }}-migrate
   labels:
-    {{- include "harbor.labels" . | nindent 4 }}
+    {{- include "stolosio.labels" . | nindent 4 }}
     app.kubernetes.io/component: migration
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
@@ -17,12 +17,12 @@ spec:
       annotations:
         {{- toYaml .Values.podAnnotations | nindent 8 }}
       labels:
-        {{- include "harbor.selectorLabels" . | nindent 8 }}
+        {{- include "stolosio.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: migration
-        {{- include "harbor.extraPodLabels" . | nindent 8 }}
+        {{- include "stolosio.extraPodLabels" . | nindent 8 }}
     spec:
       restartPolicy: Never
-      {{- include "harbor.commonPodSpec" . | nindent 6 }}
+      {{- include "stolosio.commonPodSpec" . | nindent 6 }}
       containers:
         - name: migrate
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

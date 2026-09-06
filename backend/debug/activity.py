@@ -317,7 +317,7 @@ class ActivityStreamService:
                     continue
                 if filters.matches(event):
                     yield self._sse(
-                        "harbor-event",
+                        "stolosio-event",
                         activity_event_dict(event),
                         event_id=last_sequence,
                     )

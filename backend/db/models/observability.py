@@ -123,7 +123,7 @@ class ProviderCommandCostStat(Base):
     total_provider_latency_ms: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default="0"
     )
-    total_harbor_queue_ms: Mapped[int] = mapped_column(
+    total_stolosio_queue_ms: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default="0"
     )
     attributed_browser_time_ms: Mapped[int] = mapped_column(

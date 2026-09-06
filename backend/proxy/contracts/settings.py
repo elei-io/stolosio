@@ -38,14 +38,14 @@ class RequestedSessionSettings:
 
     @property
     def provider(self) -> ProviderSelection:
-        value = self.overrides.get("harbor.provider.slug")
+        value = self.overrides.get("stolosio.provider.slug")
         if value is None:
             return ProviderSelection.AUTO
         return ProviderSelection(value)
 
     @property
     def session_reference(self) -> UUID | None:
-        value = self.overrides.get("harbor.session.reference")
+        value = self.overrides.get("stolosio.session.reference")
         return value if isinstance(value, UUID) else None
 
 

@@ -281,7 +281,7 @@ function DomainIndex({ navigate }: { navigate: (href: string) => void }) {
         <SummaryCard
           label="Known domains"
           value={page.summary.known_domains}
-          detail="Observed by Harbor"
+          detail="Observed by Stolosio"
           icon={Globe2}
         />
         <SummaryCard
@@ -995,7 +995,7 @@ export function DomainsPage({
             Domains
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Harbor picks the cheapest provider with current health evidence and
+            Stolosio picks the cheapest provider with current health evidence and
             uses Browserbase as the configured terminal fallback.
           </p>
         </header>

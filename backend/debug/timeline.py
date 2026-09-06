@@ -44,7 +44,7 @@ class LiveDebugTimeline:
         self._client = client
 
     async def events(self, session_id: UUID) -> AsyncIterator[SessionEvent]:
-        subscription = await self._client.subscribe(f"harbor.v1.events.session.{session_id}")
+        subscription = await self._client.subscribe(f"stolosio.v1.events.session.{session_id}")
         try:
             async for message in subscription.messages:
                 yield SessionEvent.from_json(message.data)

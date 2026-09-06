@@ -7,11 +7,11 @@ from nats.js.errors import BadRequestError, NotFoundError
 
 from backend.events import SessionEvent
 
-EVENT_STREAM = "HARBOR_EVENTS"
-EVENT_SUBJECT = "harbor.v1.events.session.*"
-DEAD_LETTER_STREAM = "HARBOR_DEAD_LETTERS"
-DEAD_LETTER_SUBJECT = "harbor.v1.dead_letters"
-RECORDER_CONSUMER = "harbor-recorder-v1"
+EVENT_STREAM = "STOLOSIO_EVENTS"
+EVENT_SUBJECT = "stolosio.v1.events.session.*"
+DEAD_LETTER_STREAM = "STOLOSIO_DEAD_LETTERS"
+DEAD_LETTER_SUBJECT = "stolosio.v1.dead_letters"
+RECORDER_CONSUMER = "stolosio-recorder-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +24,7 @@ class EventStreamSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class HarborTopology:
+class StolosioTopology:
     event_stream_created: bool
 
 
@@ -81,7 +81,7 @@ async def _ensure_stream(
         try:
             await jetstream.add_stream(config=config)
         except BadRequestError:
-            # Another Harbor process may have observed the same empty account.
+            # Another Stolosio process may have observed the same empty account.
             await jetstream.stream_info(config.name)
         else:
             return True
@@ -89,12 +89,12 @@ async def _ensure_stream(
     return False
 
 
-async def ensure_harbor_topology(
+async def ensure_stolosio_topology(
     jetstream: JetStreamContext,
     settings: EventStreamSettings,
     *,
     dead_letter_max_bytes: int,
-) -> HarborTopology:
+) -> StolosioTopology:
     event_stream_created = await _ensure_stream(
         jetstream,
         event_stream_config(settings),
@@ -106,7 +106,7 @@ async def ensure_harbor_topology(
             max_bytes=dead_letter_max_bytes,
         ),
     )
-    return HarborTopology(event_stream_created=event_stream_created)
+    return StolosioTopology(event_stream_created=event_stream_created)
 
 
 class JetStreamEventPublisher:

@@ -26,7 +26,7 @@ from backend.messaging.jetstream import (
     EventStreamSettings,
     JetStreamEventPublisher,
     dead_letter_stream_config,
-    ensure_harbor_topology,
+    ensure_stolosio_topology,
 )
 from backend.metrics import REGISTRY, InstrumentedEventPublisher
 from backend.metrics.definitions import (
@@ -230,7 +230,7 @@ async def _rehydrate_event_stream(
 
 async def _topology_loop(jetstream, publisher: JetStreamEventPublisher) -> None:
     while True:
-        topology = await ensure_harbor_topology(
+        topology = await ensure_stolosio_topology(
             jetstream,
             _event_stream_settings(),
             dead_letter_max_bytes=settings.jetstream_dead_letter_max_bytes,
@@ -282,7 +282,7 @@ async def _run_connected() -> None:
         await client.flush(timeout=settings.nats_connect_timeout_seconds)
         NATS_CONNECTED.set(1)
         jetstream = client.jetstream()
-        topology = await ensure_harbor_topology(
+        topology = await ensure_stolosio_topology(
             jetstream,
             _event_stream_settings(),
             dead_letter_max_bytes=settings.jetstream_dead_letter_max_bytes,

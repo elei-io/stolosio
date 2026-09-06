@@ -7,7 +7,7 @@ import httpx
 from websockets.asyncio.client import connect
 
 from backend.proxy.adapters.cdp import WebSocketProviderSession
-from backend.proxy.contracts import HarborSession, ProviderName, ResolvedSessionSettings
+from backend.proxy.contracts import ProviderName, ResolvedSessionSettings, StolosioSession
 from backend.proxy.transport.domain_blocking import apply_domain_blocking
 
 
@@ -121,7 +121,7 @@ class BrowserbaseAdapter:
 
     async def acquire(
         self,
-        session: HarborSession,
+        session: StolosioSession,
         settings: ResolvedSessionSettings,
     ):
         if not self.api_key:
@@ -129,7 +129,7 @@ class BrowserbaseAdapter:
         payload: dict[str, object] = {
             "keepAlive": False,
             "timeout": self.timeout_seconds,
-            "userMetadata": {"harborSessionId": session.session_id},
+            "userMetadata": {"stolosioSessionId": session.session_id},
         }
         if self.project_id:
             payload["projectId"] = self.project_id

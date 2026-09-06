@@ -6,7 +6,7 @@ from backend.messaging.jetstream import (
     DEAD_LETTER_STREAM,
     EVENT_STREAM,
     EventStreamSettings,
-    ensure_harbor_topology,
+    ensure_stolosio_topology,
 )
 from backend.settings import settings
 from backend.workers.maintenance.__main__ import _ensure_dead_letters
@@ -49,10 +49,10 @@ class EmptyAccount:
 
 
 @pytest.mark.asyncio
-async def test_empty_account_is_reconciled_by_harbor() -> None:
+async def test_empty_account_is_reconciled_by_stolosio() -> None:
     jetstream = EmptyAccount()
 
-    result = await ensure_harbor_topology(
+    result = await ensure_stolosio_topology(
         jetstream,
         EventStreamSettings(
             max_age_seconds=60,
@@ -68,7 +68,7 @@ async def test_empty_account_is_reconciled_by_harbor() -> None:
     assert set(jetstream.streams) == {EVENT_STREAM, DEAD_LETTER_STREAM}
     assert jetstream.streams[EVENT_STREAM].num_replicas == 3
 
-    result = await ensure_harbor_topology(
+    result = await ensure_stolosio_topology(
         jetstream,
         EventStreamSettings(
             max_age_seconds=60,

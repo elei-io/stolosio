@@ -21,7 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.db.session import Base
 
-attempt_queue_sequence = Sequence("harbor_attempt_queue_sequence")
+attempt_queue_sequence = Sequence("stolosio_attempt_queue_sequence")
 
 
 class GatewayState(Base):

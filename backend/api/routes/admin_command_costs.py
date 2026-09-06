@@ -16,7 +16,7 @@ class CommandCostResponse(BaseModel):
     interrupted_count: int
     total_duration_ms: int
     total_provider_latency_ms: int
-    total_harbor_queue_ms: int
+    total_stolosio_queue_ms: int
     attributed_browser_time_ms: int
     attributed_cost_units: int
     first_seen_at: str

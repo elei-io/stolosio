@@ -1,4 +1,4 @@
-"""Observe a Harbor session while controlling it through standard Playwright CDP."""
+"""Observe a Stolosio session while controlling it through standard Playwright CDP."""
 
 import asyncio
 import json
@@ -9,20 +9,20 @@ from uuid import uuid4
 from playwright.async_api import async_playwright
 from websockets.asyncio.client import connect
 
-HARBOR_CDP_URL = os.getenv("HARBOR_CDP_URL", "ws://localhost:8411/v1/connect")
-HARBOR_DEBUG_URL = os.getenv("HARBOR_DEBUG_URL", "ws://localhost:8411/v1/debug")
+STOLOSIO_CDP_URL = os.getenv("STOLOSIO_CDP_URL", "ws://localhost:8411/v1/connect")
+STOLOSIO_DEBUG_URL = os.getenv("STOLOSIO_DEBUG_URL", "ws://localhost:8411/v1/debug")
 
 
 def with_reference(url: str, reference: str) -> str:
     parsed = urlsplit(url)
     query = parse_qsl(parsed.query, keep_blank_values=True)
-    query.append(("harbor.session.reference", reference))
+    query.append(("stolosio.session.reference", reference))
     return urlunsplit((*parsed[:3], urlencode(query), parsed.fragment))
 
 
 async def observe(reference: str) -> list[dict]:
     events = []
-    async with connect(with_reference(HARBOR_DEBUG_URL, reference)) as websocket:
+    async with connect(with_reference(STOLOSIO_DEBUG_URL, reference)) as websocket:
         async for raw_event in websocket:
             event = json.loads(raw_event)
             events.append(event)
@@ -37,7 +37,7 @@ async def main() -> None:
 
     async with async_playwright() as playwright:
         browser = await playwright.chromium.connect_over_cdp(
-            with_reference(HARBOR_CDP_URL, reference)
+            with_reference(STOLOSIO_CDP_URL, reference)
         )
         page = await browser.new_page()
         await page.goto("https://example.com")

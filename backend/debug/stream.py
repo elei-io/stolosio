@@ -196,7 +196,7 @@ class DebugStreamService:
     ):
         jetstream = self._client.jetstream()
         return await jetstream.subscribe(
-            f"harbor.v1.events.session.{session_id}",
+            f"stolosio.v1.events.session.{session_id}",
             cb=receive,
             stream=EVENT_STREAM,
             ordered_consumer=True,

@@ -1,9 +1,9 @@
-Harbor is installed.
+Stolosio is installed.
 
 The platform can read the API and UI load-balancer addresses with:
 
-  kubectl get service {{ include "harbor.fullname" . }}-api -n {{ .Release.Namespace }}
-  kubectl get service {{ include "harbor.fullname" . }}-web -n {{ .Release.Namespace }}
+  kubectl get service {{ include "stolosio.fullname" . }}-api -n {{ .Release.Namespace }}
+  kubectl get service {{ include "stolosio.fullname" . }}-web -n {{ .Release.Namespace }}
 
 CDP endpoint:
 

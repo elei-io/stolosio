@@ -32,7 +32,7 @@ import type {
   ActivityEvent,
   ActivityEventPage,
   ActivityProvider,
-  HarborSessionState,
+  StolosioSessionState,
   SessionDetail,
   SessionPage,
 } from "@/types/api"
@@ -80,7 +80,7 @@ function humanize(value: string | null) {
   return value?.replaceAll("_", " ") ?? "—"
 }
 
-function StateBadge({ state }: { state: HarborSessionState }) {
+function StateBadge({ state }: { state: StolosioSessionState }) {
   const terminal = state === "closed"
   const failed = state === "failed"
   const Icon = terminal ? CheckCircle2 : failed ? XCircle : CircleDot
@@ -332,8 +332,8 @@ function EventTimeline({ events }: { events: ActivityEvent[] }) {
                   {formatMilliseconds(event.payload.duration_ms)} total
                   {typeof event.payload.provider_latency_ms === "number" &&
                     ` · ${formatMilliseconds(event.payload.provider_latency_ms)} provider`}
-                  {typeof event.payload.harbor_queue_ms === "number" &&
-                    ` · ${formatMilliseconds(event.payload.harbor_queue_ms)} Harbor`}
+                  {typeof event.payload.stolosio_queue_ms === "number" &&
+                    ` · ${formatMilliseconds(event.payload.stolosio_queue_ms)} Stolosio`}
                 </p>
               )}
             </div>

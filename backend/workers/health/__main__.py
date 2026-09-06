@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 def _probe_url(base: str, probe_id: str, provider: str) -> str:
     parsed = urlsplit(base)
     query = dict(parse_qsl(parsed.query))
-    query["harbor.provider.slug"] = provider
-    query["harbor.session.reference"] = probe_id
+    query["stolosio.provider.slug"] = provider
+    query["stolosio.session.reference"] = probe_id
     return urlunsplit((*parsed[:3], urlencode(query), ""))
 
 
@@ -31,7 +31,7 @@ async def _execute(job: HealthProbeJob) -> HealthProbeResult:
         browser_type = getattr(playwright, "chro" + "mium")
         browser = await browser_type.connect_over_cdp(
             _probe_url(
-                settings.health_harbor_cdp_url,
+                settings.health_stolosio_cdp_url,
                 job.id,
                 job.provider.value,
             )

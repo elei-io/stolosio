@@ -7,10 +7,10 @@ from uuid import uuid4
 from backend.messaging import CapacityNotifier, PollingNotifier
 from backend.proxy.contracts import (
     AttemptState,
-    HarborSession,
     ProviderAttempt,
     ResolvedSessionSettings,
     SettingSource,
+    StolosioSession,
 )
 from backend.proxy.errors import ProviderQueueFull, ProviderQueueTimeout
 from backend.proxy.postgres import (
@@ -134,7 +134,7 @@ class AttemptAdmission:
 
     async def acquire(
         self,
-        session: HarborSession,
+        session: StolosioSession,
         resolved: ResolvedSessionSettings,
         *,
         replacement_for: str | None = None,
@@ -157,8 +157,8 @@ class AttemptAdmission:
                 attempt.attempt_id,
                 provider,
                 resolved_settings={
-                    "harbor.provider.slug": provider.value,
-                    "harbor.provider.allow_paid_fallback": (
+                    "stolosio.provider.slug": provider.value,
+                    "stolosio.provider.allow_paid_fallback": (
                         resolved.provider.allow_paid_fallback
                     ),
                     "policy.network.blocked_domain_patterns": list(
@@ -172,7 +172,7 @@ class AttemptAdmission:
                     **{
                         field: source.value
                         for field, source in resolved.sources.items()
-                        if field != "harbor.session.reference"
+                        if field != "stolosio.session.reference"
                     },
                     "policy.network.blocked_domain_patterns": (
                         SettingSource.POLICY.value

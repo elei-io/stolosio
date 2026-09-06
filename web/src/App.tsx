@@ -43,7 +43,7 @@ const navigationItems: NavigationItem[] = [
     label: "Activity",
     href: "/activity",
     icon: Activity,
-    description: "A live, filtered stream of events across Harbor sessions.",
+    description: "A live, filtered stream of events across Stolosio sessions.",
   },
   {
     label: "Sessions",
@@ -92,7 +92,7 @@ function StubPage({ item }: { item: NavigationItem }) {
           <Icon className="size-5 text-muted-foreground" aria-hidden />
         </span>
         <p className="mb-3 font-mono text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
-          Harbor console
+          Stolosio console
         </p>
         <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
           {item.label}
@@ -175,7 +175,7 @@ export default function App() {
             <span className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
               <Anchor className="size-4" aria-hidden />
             </span>
-            Harbor
+            Stolosio
           </a>
           <Button
             variant="ghost"
@@ -188,7 +188,7 @@ export default function App() {
           </Button>
         </div>
 
-        <nav className="flex-1 px-3 py-4" aria-label="Harbor navigation">
+        <nav className="flex-1 px-3 py-4" aria-label="Stolosio navigation">
           <p className="mb-2 px-3 text-[0.6875rem] font-semibold tracking-[0.16em] text-muted-foreground">
             OPERATE
           </p>
@@ -244,7 +244,7 @@ export default function App() {
           >
             <Menu aria-hidden />
           </Button>
-          <span className="ml-3 font-semibold">Harbor</span>
+          <span className="ml-3 font-semibold">Stolosio</span>
           <span className="ml-2 text-sm text-muted-foreground">
             / {activeItem.label}
           </span>

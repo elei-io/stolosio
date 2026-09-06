@@ -1,7 +1,7 @@
 # Network policy
 
-Harbor owns one global, PostgreSQL-backed domain blocklist. It is administrative
-policy, not a downstream `harbor.*` session setting, and clients cannot override it.
+Stolosio owns one global, PostgreSQL-backed domain blocklist. It is administrative
+policy, not a downstream `stolosio.*` session setting, and clients cannot override it.
 Startup creates the missing global row with an empty blocklist but never replaces
 saved values from environment configuration.
 
@@ -38,14 +38,14 @@ does not read the database for every connection. An update through the local pro
 refreshes its cache immediately. Other API replicas can continue using their prior
 snapshot until their cache expires.
 
-For native browser providers, Harbor converts the domain patterns to CDP URL
+For native browser providers, Stolosio converts the domain patterns to CDP URL
 patterns and applies `Network.setBlockedURLs` to each attached page, iframe, worker,
 and service-worker target before exposing that attachment to the downstream client.
-The Harbor-owned command response is consumed internally; downstream command IDs,
-session IDs, and target-local event order remain unchanged. Harbor configures attached
+The Stolosio-owned command response is consumed internally; downstream command IDs,
+session IDs, and target-local event order remain unchanged. Stolosio configures attached
 targets concurrently and holds only traffic for a target whose policy is not yet
 confirmed, so an attaching worker cannot delay traffic for an already-configured page.
-If the provider rejects or times out while applying the policy, Harbor closes the
+If the provider rejects or times out while applying the policy, Stolosio closes the
 connection with `domain_blocking_unavailable` rather than continuing without the
 requested policy.
 

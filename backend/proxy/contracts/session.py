@@ -23,7 +23,7 @@ class AttemptState(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class HarborSession:
+class StolosioSession:
     session_id: str
     owner_id: str
     lease_token: str

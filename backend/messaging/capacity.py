@@ -10,7 +10,7 @@ from nats.aio.client import Client as NatsClient
 from backend.messaging.connection import nats_auth_options
 from backend.proxy.contracts import ProviderName
 
-_CAPACITY_SUBJECT = "harbor.v1.capacity"
+_CAPACITY_SUBJECT = "stolosio.v1.capacity"
 
 
 class CapacityNotifier(Protocol):

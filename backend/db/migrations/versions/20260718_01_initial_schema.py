@@ -180,7 +180,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column(
-            "total_harbor_queue_ms",
+            "total_stolosio_queue_ms",
             sa.BigInteger(),
             server_default="0",
             nullable=False,
@@ -437,7 +437,7 @@ def upgrade() -> None:
     op.create_index(
         "ix_session_events_session", "session_events", ["session_id", "id"], unique=False
     )
-    op.execute(sa.schema.CreateSequence(sa.Sequence("harbor_attempt_queue_sequence")))
+    op.execute(sa.schema.CreateSequence(sa.Sequence("stolosio_attempt_queue_sequence")))
     op.create_table(
         "acquisition_attempts",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -452,7 +452,7 @@ def upgrade() -> None:
         sa.Column(
             "queue_sequence",
             sa.BigInteger(),
-            server_default=sa.text("nextval('harbor_attempt_queue_sequence')"),
+            server_default=sa.text("nextval('stolosio_attempt_queue_sequence')"),
             nullable=False,
         ),
         sa.Column(
@@ -543,7 +543,7 @@ def downgrade() -> None:
     op.drop_index("ix_acquisition_attempts_instance_state", table_name="acquisition_attempts")
     op.drop_index(op.f("ix_acquisition_attempts_domain_id"), table_name="acquisition_attempts")
     op.drop_table("acquisition_attempts")
-    op.execute(sa.schema.DropSequence(sa.Sequence("harbor_attempt_queue_sequence")))
+    op.execute(sa.schema.DropSequence(sa.Sequence("stolosio_attempt_queue_sequence")))
     op.drop_index("ix_session_events_session", table_name="session_events")
     op.drop_index(op.f("ix_session_events_published_at"), table_name="session_events")
     op.drop_index("ix_session_events_occurred", table_name="session_events")

@@ -11,8 +11,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "Harbor"
-    database_url: str = "postgresql+asyncpg://harbor:harbor@localhost:5433/harbor"
+    app_name: str = "Stolosio"
+    database_url: str = "postgresql+asyncpg://stolosio:stolosio@localhost:5433/stolosio"
     nats_url: AnyUrl = AnyUrl("nats://localhost:4223")
     nats_seed: str = ""
     nats_connect_timeout_seconds: float = 1
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     browserbase_api_key: str = ""
     browserbase_project_id: str | None = None
     browserbase_session_timeout_seconds: int = 600
-    harbor_max_active_sessions: int = 100
+    stolosio_max_active_sessions: int = 100
     session_lease_seconds: float = 30
     session_heartbeat_seconds: float = 10
     provider_queue_poll_ms: int = 1000
@@ -50,13 +50,13 @@ class Settings(BaseSettings):
     session_cleanup_timeout_seconds: float = 2
     http_request_timeout_seconds: float = 20
     http_max_response_bytes: int = 10 * 1024 * 1024
-    http_user_agent: str = "HarborBot/0.1 (https://github.com/ekkuleivonen/harbor)"
+    http_user_agent: str = "StolosioBot/0.1 (https://github.com/elei-io/stolosio)"
     http_accept: str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     http_accept_language: str = "en-US,en;q=0.5"
     provider_transition_replay_max_commands: int = 100
     provider_transition_replay_max_bytes: int = 2 * 1024 * 1024
     provider_transition_replay_timeout_seconds: float = 30
-    health_harbor_cdp_url: str = "ws://localhost:8411/v1/connect"
+    health_stolosio_cdp_url: str = "ws://localhost:8411/v1/connect"
     health_schedule_delay_seconds: float = 2
     health_poll_seconds: float = 1
     health_lease_seconds: float = 60
@@ -66,13 +66,13 @@ class Settings(BaseSettings):
     fleet_instance_startup_timeout_seconds: float = 30
     fleet_controller_backoff_seconds: float = 2
     fleet_controller_metrics_port: int = 9101
-    fleet_compose_project_name: str = "harbor"
+    fleet_compose_project_name: str = "stolosio"
     fleet_compose_workdir: str = "."
     browserless_fleet_compose_service: str = "browserless"
-    kubernetes_namespace: str = "harbor"
-    kubernetes_browserless_statefulset: str = "harbor-browserless"
-    kubernetes_browserless_workload_config_map: str = "harbor-browserless-workload"
-    kubernetes_browserless_headless_service: str = "harbor-browserless-headless"
+    kubernetes_namespace: str = "stolosio"
+    kubernetes_browserless_statefulset: str = "stolosio-browserless"
+    kubernetes_browserless_workload_config_map: str = "stolosio-browserless-workload"
+    kubernetes_browserless_headless_service: str = "stolosio-browserless-headless"
 
 
 @lru_cache

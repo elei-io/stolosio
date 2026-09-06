@@ -1,14 +1,14 @@
 # Downstream client examples
 
-These programs represent clients using Harbor through Playwright's existing CDP API.
-They are executable examples now and end-to-end acceptance targets for Harbor as the
+These programs represent clients using Stolosio through Playwright's existing CDP API.
+They are executable examples now and end-to-end acceptance targets for Stolosio as the
 proxy is implemented.
 
-Set `HARBOR_CDP_URL` to the Harbor WebSocket endpoint. For an explicit local browser
+Set `STOLOSIO_CDP_URL` to the Stolosio WebSocket endpoint. For an explicit local browser
 route:
 
 ```bash
-export HARBOR_CDP_URL='ws://localhost:8411/v1/connect?harbor.provider.slug=browserless'
+export STOLOSIO_CDP_URL='ws://localhost:8411/v1/connect?stolosio.provider.slug=browserless'
 ```
 
 Run each example from the repository root:
@@ -25,8 +25,8 @@ uv run python examples/08_automatic_routing.py
 ```
 
 The examples intentionally use only the standard Playwright client. They contain no
-Harbor-specific SDK code; switching between Harbor routes requires changing only
-`HARBOR_CDP_URL`. Omitting `harbor.provider.slug` selects Harbor's automatic plan.
+Stolosio-specific SDK code; switching between Stolosio routes requires changing only
+`STOLOSIO_CDP_URL`. Omitting `stolosio.provider.slug` selects Stolosio's automatic plan.
 
 ## Targets
 
@@ -49,14 +49,14 @@ three self-checking examples:
 
 Example 05 explicitly selects HTTP. Examples 06 and 07 use automatic routing and
 require prepared support evidence whose cheapest provider cannot satisfy the later
-evaluation; set `HARBOR_E2E_TRANSITIONS=1` to include them in E2E runs.
+evaluation; set `STOLOSIO_E2E_TRANSITIONS=1` to include them in E2E runs.
 
 Examples 05 and 06 also observe the public DEBUG WebSocket to assert the factual
-attempt sequence. Set `HARBOR_DEBUG_URL` when it isn't available at
+attempt sequence. Set `STOLOSIO_DEBUG_URL` when it isn't available at
 `ws://localhost:8411/v1/debug`.
 
 The Docker E2E suite will run those same example files, so a command that succeeds for
 a developer is the exact downstream workflow exercised by automated acceptance.
 
 `08_automatic_routing.py` omits the provider override and prints the factual attempt and
-transition journey selected from Harbor's domain support plan.
+transition journey selected from Stolosio's domain support plan.

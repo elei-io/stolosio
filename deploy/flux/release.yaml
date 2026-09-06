@@ -1,19 +1,19 @@
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: harbor
-  namespace: harbor
+  name: stolosio
+  namespace: stolosio
 spec:
   interval: 10m
   chartRef:
     kind: OCIRepository
-    name: harbor-chart
+    name: stolosio-chart
   values:
     database:
-      existingSecret: harbor-connections
+      existingSecret: stolosio-connections
       urlSecretKey: database-url
     nats:
-      existingSecret: harbor-connections
+      existingSecret: stolosio-connections
       urlSecretKey: nats-url
       seedSecretKey: nats-seed
     imagePullSecrets:

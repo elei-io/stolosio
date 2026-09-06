@@ -352,7 +352,7 @@ class EventRecorder:
                 interrupted_count=int(usage.get("interrupted_count", 0)),
                 total_duration_ms=int(usage.get("duration_ms", 0)),
                 total_provider_latency_ms=provider_ms,
-                total_harbor_queue_ms=int(usage.get("harbor_queue_ms", 0)),
+                total_stolosio_queue_ms=int(usage.get("stolosio_queue_ms", 0)),
                 attributed_browser_time_ms=method_browser_ms,
                 attributed_cost_units=method_cost,
                 observed_at=attempt.finished_at,
@@ -369,7 +369,7 @@ class EventRecorder:
                 interrupted_count=0,
                 total_duration_ms=0,
                 total_provider_latency_ms=0,
-                total_harbor_queue_ms=0,
+                total_stolosio_queue_ms=0,
                 attributed_browser_time_ms=overhead_browser_ms,
                 attributed_cost_units=overhead_cost,
                 observed_at=attempt.finished_at,
@@ -426,7 +426,7 @@ class EventRecorder:
         interrupted_count: int,
         total_duration_ms: int,
         total_provider_latency_ms: int,
-        total_harbor_queue_ms: int,
+        total_stolosio_queue_ms: int,
         attributed_browser_time_ms: int,
         attributed_cost_units: int,
         observed_at: datetime,
@@ -441,7 +441,7 @@ class EventRecorder:
                 "interrupted_count": 0,
                 "total_duration_ms": 0,
                 "total_provider_latency_ms": 0,
-                "total_harbor_queue_ms": 0,
+                "total_stolosio_queue_ms": 0,
                 "attributed_browser_time_ms": 0,
                 "attributed_cost_units": 0,
                 "first_seen_at": observed_at,
@@ -454,7 +454,7 @@ class EventRecorder:
             "interrupted_count": interrupted_count,
             "total_duration_ms": total_duration_ms,
             "total_provider_latency_ms": total_provider_latency_ms,
-            "total_harbor_queue_ms": total_harbor_queue_ms,
+            "total_stolosio_queue_ms": total_stolosio_queue_ms,
             "attributed_browser_time_ms": attributed_browser_time_ms,
             "attributed_cost_units": attributed_cost_units,
         }.items():
@@ -490,9 +490,9 @@ class EventRecorder:
                         ProviderCommandCostStat.total_provider_latency_ms
                         + excluded.total_provider_latency_ms
                     ),
-                    "total_harbor_queue_ms": (
-                        ProviderCommandCostStat.total_harbor_queue_ms
-                        + excluded.total_harbor_queue_ms
+                    "total_stolosio_queue_ms": (
+                        ProviderCommandCostStat.total_stolosio_queue_ms
+                        + excluded.total_stolosio_queue_ms
                     ),
                     "attributed_browser_time_ms": (
                         ProviderCommandCostStat.attributed_browser_time_ms

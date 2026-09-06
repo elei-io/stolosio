@@ -1,1 +1,1 @@
-"""Infrastructure reconciliation controllers for Harbor-managed fleets."""
+"""Infrastructure reconciliation controllers for Stolosio-managed fleets."""

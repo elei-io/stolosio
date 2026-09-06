@@ -17,23 +17,23 @@ from backend.proxy.contracts import ProviderName
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(
-        os.getenv("HARBOR_E2E") != "1",
-        reason="set HARBOR_E2E=1 with the Docker Compose stack running",
+        os.getenv("STOLOSIO_E2E") != "1",
+        reason="set STOLOSIO_E2E=1 with the Docker Compose stack running",
     ),
 ]
 LOCAL_E2E_PROVIDERS = [ProviderName.HTTP, ProviderName.BROWSERLESS]
 
 
-def harbor_url(provider: ProviderName) -> str:
-    base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
-    return f"{base}?harbor.provider.slug={provider.value}"
+def stolosio_url(provider: ProviderName) -> str:
+    base = os.getenv("STOLOSIO_E2E_URL", "ws://localhost:8411/v1/connect")
+    return f"{base}?stolosio.provider.slug={provider.value}"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", LOCAL_E2E_PROVIDERS)
 async def test_goto_and_content(provider: ProviderName) -> None:
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.connect_over_cdp(harbor_url(provider))
+        browser = await playwright.chromium.connect_over_cdp(stolosio_url(provider))
         page = await browser.new_page()
         response = await page.goto("https://example.com")
 
@@ -46,7 +46,7 @@ async def test_goto_and_content(provider: ProviderName) -> None:
 @pytest.mark.parametrize("provider", LOCAL_E2E_PROVIDERS)
 async def test_interaction(provider: ProviderName) -> None:
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.connect_over_cdp(harbor_url(provider))
+        browser = await playwright.chromium.connect_over_cdp(stolosio_url(provider))
         page = await browser.new_page()
         await page.goto("https://example.com")
         if provider is ProviderName.HTTP:
@@ -65,7 +65,7 @@ async def test_interaction(provider: ProviderName) -> None:
 @pytest.mark.parametrize("provider", LOCAL_E2E_PROVIDERS)
 async def test_evaluate(provider: ProviderName) -> None:
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.connect_over_cdp(harbor_url(provider))
+        browser = await playwright.chromium.connect_over_cdp(stolosio_url(provider))
         page = await browser.new_page()
         await page.goto("https://example.com")
 
@@ -80,7 +80,7 @@ async def test_evaluate(provider: ProviderName) -> None:
 
 @pytest.mark.asyncio
 async def test_omitted_provider_uses_automatic_plan() -> None:
-    base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
+    base = os.getenv("STOLOSIO_E2E_URL", "ws://localhost:8411/v1/connect")
     async with async_playwright() as playwright:
         browser = await playwright.chromium.connect_over_cdp(base)
         page = await browser.new_page()
@@ -92,17 +92,17 @@ async def test_omitted_provider_uses_automatic_plan() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
-    os.getenv("HARBOR_E2E_TRANSITIONS") != "1",
-    reason="prepare multi-provider eligibility evidence and set HARBOR_E2E_TRANSITIONS=1",
+    os.getenv("STOLOSIO_E2E_TRANSITIONS") != "1",
+    reason="prepare multi-provider eligibility evidence and set STOLOSIO_E2E_TRANSITIONS=1",
 )
 async def test_runtime_transition_replays_all_prior_navigations() -> None:
-    base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
+    base = os.getenv("STOLOSIO_E2E_URL", "ws://localhost:8411/v1/connect")
     async with async_playwright() as playwright:
         browser = await playwright.chromium.connect_over_cdp(base)
         page = await browser.new_page()
-        await page.goto("https://example.com/?harbor-replay=first")
+        await page.goto("https://example.com/?stolosio-replay=first")
         assert "Example Domain" in await page.content()
-        await page.goto("https://example.com/?harbor-replay=second")
+        await page.goto("https://example.com/?stolosio-replay=second")
         assert "Example Domain" in await page.content()
 
         state = await page.evaluate(
@@ -111,7 +111,7 @@ async def test_runtime_transition_replays_all_prior_navigations() -> None:
         )
 
         assert state == {
-            "search": "?harbor-replay=second",
+            "search": "?stolosio-replay=second",
             "historyLength": state["historyLength"],
             "heading": "Example Domain",
         }
@@ -127,7 +127,7 @@ async def test_runtime_transition_replays_all_prior_navigations() -> None:
 async def test_no_browser_example_programs(example: str) -> None:
     root = Path(__file__).parents[2]
     environment = os.environ.copy()
-    environment["HARBOR_CDP_URL"] = harbor_url(ProviderName.HTTP)
+    environment["STOLOSIO_CDP_URL"] = stolosio_url(ProviderName.HTTP)
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         str(root / "examples" / example),
@@ -143,8 +143,8 @@ async def test_no_browser_example_programs(example: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
-    os.getenv("HARBOR_E2E_TRANSITIONS") != "1",
-    reason="prepare multi-provider eligibility evidence and set HARBOR_E2E_TRANSITIONS=1",
+    os.getenv("STOLOSIO_E2E_TRANSITIONS") != "1",
+    reason="prepare multi-provider eligibility evidence and set STOLOSIO_E2E_TRANSITIONS=1",
 )
 @pytest.mark.parametrize(
     "example",
@@ -153,7 +153,7 @@ async def test_no_browser_example_programs(example: str) -> None:
 async def test_provider_transition_examples(example: str) -> None:
     root = Path(__file__).parents[2]
     environment = os.environ.copy()
-    environment["HARBOR_CDP_URL"] = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
+    environment["STOLOSIO_CDP_URL"] = os.getenv("STOLOSIO_E2E_URL", "ws://localhost:8411/v1/connect")
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         str(root / "examples" / example),
@@ -187,14 +187,14 @@ async def test_automatic_routing_example_program() -> None:
 async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
     async with async_playwright() as playwright:
         blockers = [
-            await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.BROWSERLESS))
+            await playwright.chromium.connect_over_cdp(stolosio_url(ProviderName.BROWSERLESS))
             for _ in range(2)
         ]
 
         async def abandon_waiter() -> None:
             with pytest.raises(PlaywrightTimeoutError):
                 await playwright.chromium.connect_over_cdp(
-                    harbor_url(ProviderName.BROWSERLESS),
+                    stolosio_url(ProviderName.BROWSERLESS),
                     timeout=100,
                 )
 
@@ -202,7 +202,7 @@ async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
         await asyncio.gather(*(blocker.close() for blocker in blockers))
 
         browser = await playwright.chromium.connect_over_cdp(
-            harbor_url(ProviderName.BROWSERLESS),
+            stolosio_url(ProviderName.BROWSERLESS),
             timeout=5_000,
         )
         page = await browser.new_page()
@@ -213,7 +213,7 @@ async def test_abandoned_provider_waiters_do_not_leak_capacity() -> None:
 
 @pytest.mark.asyncio
 async def test_managed_browserless_fleet_packs_sessions_scales_and_returns_to_minimum() -> None:
-    api = os.getenv("HARBOR_E2E_HTTP_URL", "http://localhost:8411")
+    api = os.getenv("STOLOSIO_E2E_HTTP_URL", "http://localhost:8411")
 
     async def browserless_fleet() -> dict:
         async with httpx.AsyncClient() as client:
@@ -246,8 +246,8 @@ async def test_managed_browserless_fleet_packs_sessions_scales_and_returns_to_mi
     )
 
     async with async_playwright() as playwright:
-        first = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.BROWSERLESS))
-        second = await playwright.chromium.connect_over_cdp(harbor_url(ProviderName.BROWSERLESS))
+        first = await playwright.chromium.connect_over_cdp(stolosio_url(ProviderName.BROWSERLESS))
+        second = await playwright.chromium.connect_over_cdp(stolosio_url(ProviderName.BROWSERLESS))
         first_page = await first.new_page()
         second_page = await second.new_page()
         await asyncio.gather(
@@ -268,7 +268,7 @@ async def test_managed_browserless_fleet_packs_sessions_scales_and_returns_to_mi
 
         third_task = asyncio.create_task(
             playwright.chromium.connect_over_cdp(
-                harbor_url(ProviderName.BROWSERLESS),
+                stolosio_url(ProviderName.BROWSERLESS),
                 timeout=20_000,
             )
         )
@@ -298,13 +298,13 @@ async def test_managed_browserless_fleet_packs_sessions_scales_and_returns_to_mi
 @pytest.mark.asyncio
 async def test_debug_stream_replays_session_start_and_tails_until_close() -> None:
     reference = str(uuid4())
-    base = os.getenv("HARBOR_E2E_URL", "ws://localhost:8411/v1/connect")
+    base = os.getenv("STOLOSIO_E2E_URL", "ws://localhost:8411/v1/connect")
     separator = "&" if "?" in base else "?"
     cdp_url = (
-        f"{base}{separator}harbor.provider.slug=browserless&harbor.session.reference={reference}"
+        f"{base}{separator}stolosio.provider.slug=browserless&stolosio.session.reference={reference}"
     )
-    debug_base = os.getenv("HARBOR_DEBUG_URL", "ws://localhost:8411/v1/debug")
-    debug_url = f"{debug_base}?harbor.session.reference={reference}"
+    debug_base = os.getenv("STOLOSIO_DEBUG_URL", "ws://localhost:8411/v1/debug")
+    debug_url = f"{debug_base}?stolosio.session.reference={reference}"
 
     async def observe() -> list[dict]:
         observed = []

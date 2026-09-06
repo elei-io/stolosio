@@ -1,13 +1,13 @@
 # Architecture
 
-Harbor presents one downstream endpoint:
+Stolosio presents one downstream endpoint:
 
 ```text
 WS /v1/connect
 ```
 
 Existing CDP and Playwright `connect_over_cdp()` clients should need only a URL change.
-Harbor settings use the `harbor.*` query namespace; provider addresses and credentials
+Stolosio settings use the `stolosio.*` query namespace; provider addresses and credentials
 are never public API.
 
 ## Data path
@@ -24,12 +24,12 @@ downstream CDP
 ```
 
 The HTTP facade implements only its explicitly tested contract. Browserless and
-Browserbase are opaque, bidirectional CDP transports. Harbor validates the JSON
+Browserbase are opaque, bidirectional CDP transports. Stolosio validates the JSON
 envelope needed for correlation and observation, but it does not decide whether an
 individual browser method is supported.
 
 An automatic session may make one HTTP-to-browser escalation. It cannot move from one
-browser provider to another. One Harbor browser attempt owns one upstream browser
+browser provider to another. One Stolosio browser attempt owns one upstream browser
 session for its lifetime.
 
 ## Promotion and escalation
@@ -45,8 +45,8 @@ Promotion and escalation are separate mechanisms:
 
 Browserbase is never probed automatically and never contributes promotion evidence.
 Operators may run an explicit paid diagnostic probe. When enabled,
-Harbor assumes it works and keeps it as the terminal escalation candidate. Failure
-there is terminal because Harbor has no more capable provider to try.
+Stolosio assumes it works and keeps it as the terminal escalation candidate. Failure
+there is terminal because Stolosio has no more capable provider to try.
 
 ## Capacity
 
@@ -58,11 +58,11 @@ session slots, and a separate fleet controller reconciles desired workers agains
 Docker or another compute platform. Only ready, healthy, non-draining workers
 contribute slots.
 
-The Kubernetes/k3s runtime uses a Harbor-owned StatefulSet so ordinal scale-down can
+The Kubernetes/k3s runtime uses a Stolosio-owned StatefulSet so ordinal scale-down can
 be drained safely. Helm and GitOps own a static workload template rather than the live
 replica count. See [Kubernetes and k3s](KUBERNETES.md).
 
-Browserbase is external capacity. Harbor applies an administrator-configured active
+Browserbase is external capacity. Stolosio applies an administrator-configured active
 session and queue limit before calling the Browserbase Sessions API. Automatic use
 also requires an explicit per-session paid-fallback opt-in, and Browserbase is never
 the first automatic candidate. This limit can
@@ -72,7 +72,7 @@ track the subscription ceiling or enforce a stricter cost budget.
 
 Attempt lifecycle is durable and cleanup is idempotent. Provider session IDs and
 provider start/end timestamps are stored without persisting provider connection URLs.
-Harbor derives:
+Stolosio derives:
 
 - capacity-occupied time;
 - browser-connected time;
@@ -87,18 +87,18 @@ and interruptions produce individual command events.
 PostgreSQL folds attempt summaries into a cumulative provider-and-method cost
 aggregate, with browser-connected time capped at the attempt total and residual time
 assigned to an unattributed-session row. Attempts separately retain a bounded shadow
-summary of command-active union time and fixed internal lifecycle phases. Harbor does
+summary of command-active union time and fixed internal lifecycle phases. Stolosio does
 not retain individual successful command executions.
 DEBUG events contain normalized, redacted observations rather than arbitrary
 parameters, page data, credentials, or diagnoses.
 
 ## Network policy
 
-PostgreSQL stores Harbor's operator-managed global domain blocklist. Each provider
+PostgreSQL stores Stolosio's operator-managed global domain blocklist. Each provider
 attempt snapshots the current policy version. Browser attempts apply the list to
 newly attached network-capable CDP targets before exposing them downstream; the HTTP
 facade applies it to top-level navigation. Clients cannot override administrative
-network policy through `harbor.*` query parameters. See
+network policy through `stolosio.*` query parameters. See
 [Network policy](NETWORK_POLICY.md).
 
 ## Process boundaries

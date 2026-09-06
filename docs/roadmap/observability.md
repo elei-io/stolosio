@@ -2,7 +2,7 @@
 
 Status: implemented
 
-Harbor records filtered facts about sessions, acquisition attempts, CDP commands, and
+Stolosio records filtered facts about sessions, acquisition attempts, CDP commands, and
 browser activity. These facts support the DEBUG stream, operational metrics, durable
 history, and future analytics without placing observation delivery on the admission
 path.
@@ -51,11 +51,11 @@ payload
 Events are published to:
 
 ```text
-harbor.v1.events.session.<session_id>
+stolosio.v1.events.session.<session_id>
 ```
 
 `event_id` is stable across retries and is also used as the JetStream message ID.
-PostgreSQL recording is idempotent by event ID. Harbor preserves observation order for
+PostgreSQL recording is idempotent by event ID. Stolosio preserves observation order for
 one live connection but does not invent a total order across processes.
 
 Registered event families are:
@@ -86,7 +86,7 @@ Operational entities and factual projections retain their own product state. The
 transactional attempt command summary is cleared after its bounded aggregate has
 been projected.
 
-PostgreSQL is the reconstruction source when NATS is replaced. Harbor owns and
+PostgreSQL is the reconstruction source when NATS is replaced. Stolosio owns and
 continuously reconciles its JetStream streams and consumers. Creating a fresh event
 stream triggers a bounded replay of PostgreSQL records that still fall inside the
 configured JetStream retention window.
@@ -107,7 +107,7 @@ described in [ANALYTICS.md](../ANALYTICS.md) and no-browser policy is described 
 
 ## Privacy boundary
 
-Filtering happens before publication. By default Harbor does not put the following into
+Filtering happens before publication. By default Stolosio does not put the following into
 NATS, DEBUG, metrics, or analytical projections:
 
 - HTML, response bodies, or evaluated values.
@@ -121,7 +121,7 @@ are bounded and never contain domains, URLs, session IDs, or arbitrary error str
 
 ## Operational views
 
-Harbor exposes current PostgreSQL-backed fleet state through:
+Stolosio exposes current PostgreSQL-backed fleet state through:
 
 ```text
 GET /v1/fleet/gateway
@@ -133,12 +133,12 @@ Gateway metrics describe logical session intake. Provider metrics describe acqui
 attempts and provider capacity:
 
 ```text
-harbor_gateway_active_sessions
-harbor_gateway_capacity
-harbor_provider_active_attempts
-harbor_provider_queued_attempts
-harbor_provider_capacity
-harbor_provider_oldest_queued_attempt_seconds
+stolosio_gateway_active_sessions
+stolosio_gateway_capacity
+stolosio_provider_active_attempts
+stolosio_provider_queued_attempts
+stolosio_provider_capacity
+stolosio_provider_oldest_queued_attempt_seconds
 ```
 
 Process-local counters and histograms cover acquisitions, session outcomes, commands,
@@ -166,10 +166,10 @@ sequences provide resumable cursors while PostgreSQL remains the historical sour
 The downstream DEBUG contract is:
 
 ```text
-WS /v1/debug?harbor.session.reference=<uuid>
+WS /v1/debug?stolosio.session.reference=<uuid>
 ```
 
-The stream resolves the caller-provided reference to Harbor's internal session and uses
+The stream resolves the caller-provided reference to Stolosio's internal session and uses
 an ephemeral ordered JetStream consumer to replay and follow that session until it
 terminates. Buffers are bounded; a slow consumer is disconnected instead of slowing
 browser traffic.

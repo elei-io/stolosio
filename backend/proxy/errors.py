@@ -1,16 +1,16 @@
-class HarborError(Exception):
-    """Base class for errors Harbor can render without leaking internals."""
+class StolosioError(Exception):
+    """Base class for errors Stolosio can render without leaking internals."""
 
 
-class ConnectionRejected(HarborError):
+class ConnectionRejected(StolosioError):
     close_code = 1011
-    reason = "harbor_internal_error"
+    reason = "stolosio_internal_error"
     status_code = 500
 
 
-class InvalidHarborSettings(ConnectionRejected):
+class InvalidStolosioSettings(ConnectionRejected):
     close_code = 4400
-    reason = "invalid_harbor_settings"
+    reason = "invalid_stolosio_settings"
     status_code = 400
 
 

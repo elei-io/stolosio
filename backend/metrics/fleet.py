@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -13,6 +13,7 @@ from backend.settings import Settings
 @dataclass(frozen=True, slots=True)
 class GatewayFleetSnapshot:
     active_sessions: int
+    sessions_last_24h: int
     capacity: int
 
 
@@ -45,23 +46,31 @@ class FleetSnapshotService:
     async def gateway_snapshot(self) -> GatewayFleetSnapshot:
         now = datetime.now(UTC)
         async with self._sessions() as database:
-            active = await database.scalar(
-                select(func.count())
-                .select_from(GatewaySession)
-                .where(
-                    GatewaySession.state.in_(
-                        (
-                            SessionState.ADMITTED.value,
-                            SessionState.OPEN.value,
-                            SessionState.CLOSING.value,
+            active, recent = (
+                await database.execute(
+                    select(
+                        func.count()
+                        .filter(
+                            GatewaySession.state.in_(
+                                (
+                                    SessionState.ADMITTED.value,
+                                    SessionState.OPEN.value,
+                                    SessionState.CLOSING.value,
+                                )
+                            ),
+                            GatewaySession.lease_expires_at > now,
                         )
-                    ),
-                    GatewaySession.lease_expires_at > now,
+                        .label("active_sessions"),
+                        func.count()
+                        .filter(GatewaySession.created_at >= now - timedelta(hours=24))
+                        .label("sessions_last_24h"),
+                    ).select_from(GatewaySession)
                 )
-            )
+            ).one()
         return GatewayFleetSnapshot(
             active_sessions=int(active or 0),
-            capacity=self._settings.harbor_max_active_sessions,
+            sessions_last_24h=int(recent or 0),
+            capacity=self._settings.stolosio_max_active_sessions,
         )
 
     async def snapshot(self) -> list[ProviderFleetSnapshot]:

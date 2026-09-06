@@ -2,11 +2,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "harbor.fullname" . }}-api-metrics
+  name: {{ include "stolosio.fullname" . }}-api-metrics
   labels:
-    {{- include "harbor.labels" . | nindent 4 }}
+    {{- include "stolosio.labels" . | nindent 4 }}
     app.kubernetes.io/component: metrics
-    harbor.ekkuleivonen.io/metrics: "true"
+    stolosio.elei.io/metrics: "true"
     {{- with .Values.monitoring.service.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -20,7 +20,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    {{- include "harbor.selectorLabels" . | nindent 4 }}
+    {{- include "stolosio.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: api
   ports:
     - name: metrics
@@ -30,11 +30,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "harbor.fullname" . }}-fleet-controller-metrics
+  name: {{ include "stolosio.fullname" . }}-fleet-controller-metrics
   labels:
-    {{- include "harbor.labels" . | nindent 4 }}
+    {{- include "stolosio.labels" . | nindent 4 }}
     app.kubernetes.io/component: metrics
-    harbor.ekkuleivonen.io/metrics: "true"
+    stolosio.elei.io/metrics: "true"
     {{- with .Values.monitoring.service.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -48,7 +48,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    {{- include "harbor.selectorLabels" . | nindent 4 }}
+    {{- include "stolosio.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: fleet-controller
   ports:
     - name: metrics
@@ -58,11 +58,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "harbor.fullname" . }}-maintenance-metrics
+  name: {{ include "stolosio.fullname" . }}-maintenance-metrics
   labels:
-    {{- include "harbor.labels" . | nindent 4 }}
+    {{- include "stolosio.labels" . | nindent 4 }}
     app.kubernetes.io/component: metrics
-    harbor.ekkuleivonen.io/metrics: "true"
+    stolosio.elei.io/metrics: "true"
     {{- with .Values.monitoring.service.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -76,7 +76,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    {{- include "harbor.selectorLabels" . | nindent 4 }}
+    {{- include "stolosio.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: maintenance
   ports:
     - name: metrics
@@ -87,9 +87,9 @@ spec:
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "harbor.fullname" . }}
+  name: {{ include "stolosio.fullname" . }}
   labels:
-    {{- include "harbor.labels" . | nindent 4 }}
+    {{- include "stolosio.labels" . | nindent 4 }}
     {{- with .Values.monitoring.serviceMonitor.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -99,9 +99,9 @@ spec:
       - {{ .Release.Namespace }}
   selector:
     matchLabels:
-      {{- include "harbor.selectorLabels" . | nindent 6 }}
+      {{- include "stolosio.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: metrics
-      harbor.ekkuleivonen.io/metrics: "true"
+      stolosio.elei.io/metrics: "true"
   endpoints:
     - port: metrics
       path: /metrics

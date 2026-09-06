@@ -73,7 +73,7 @@ async def update_fleet(
     provider: ProviderName,
     update: FleetConfigurationUpdate,
     request: Request,
-    actor: Annotated[str, Header(alias="X-Harbor-Actor")] = "local-admin",
+    actor: Annotated[str, Header(alias="X-Stolosio-Actor")] = "local-admin",
 ) -> FleetConfigurationResponse:
     try:
         value = await request.app.state.fleet_admin.update(

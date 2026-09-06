@@ -23,6 +23,7 @@ class ProviderFleetResponse(BaseModel):
 
 class GatewayFleetResponse(BaseModel):
     active_sessions: int
+    sessions_last_24h: int
     capacity: int
 
 
@@ -34,6 +35,7 @@ async def gateway(request: Request) -> GatewayFleetResponse:
         raise HTTPException(status_code=503, detail="fleet snapshot unavailable") from error
     return GatewayFleetResponse(
         active_sessions=snapshot.active_sessions,
+        sessions_last_24h=snapshot.sessions_last_24h,
         capacity=snapshot.capacity,
     )
 

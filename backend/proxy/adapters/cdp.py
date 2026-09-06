@@ -5,9 +5,9 @@ from datetime import UTC, datetime, timedelta
 from websockets.asyncio.client import ClientConnection, connect
 
 from backend.proxy.contracts import (
-    HarborSession,
     ProviderName,
     ResolvedSessionSettings,
+    StolosioSession,
 )
 from backend.proxy.transport.domain_blocking import apply_domain_blocking
 
@@ -70,7 +70,7 @@ class DirectCdpAdapter:
 
     async def acquire(
         self,
-        session: HarborSession,
+        session: StolosioSession,
         settings: ResolvedSessionSettings,
     ):
         acquisition_started_at = datetime.now(UTC)

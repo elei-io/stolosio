@@ -1,4 +1,4 @@
-name: harbor
+name: stolosio
 
 services:
   api:
@@ -10,12 +10,12 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://harbor:harbor@postgres:5432/harbor
+      DATABASE_URL: postgresql+asyncpg://stolosio:stolosio@postgres:5432/stolosio
       NATS_URL: nats://nats:4222
       BROWSERLESS_URL: ws://browserless:3000
       BROWSERLESS_SESSION_TIMEOUT_SECONDS: "600"
     ports:
-      - "${HARBOR_API_PORT:-8411}:8000"
+      - "${STOLOSIO_API_PORT:-8411}:8000"
     volumes:
       - .:/app
       - /app/.venv
@@ -41,9 +41,9 @@ services:
       context: web
       target: development
     environment:
-      HARBOR_API_PROXY_TARGET: http://api:8000
+      STOLOSIO_API_PROXY_TARGET: http://api:8000
     ports:
-      - "${HARBOR_WEB_PORT:-5173}:5173"
+      - "${STOLOSIO_WEB_PORT:-5173}:5173"
     volumes:
       - ./web:/app
       - web_node_modules:/app/node_modules
@@ -69,7 +69,7 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://harbor:harbor@postgres:5432/harbor
+      DATABASE_URL: postgresql+asyncpg://stolosio:stolosio@postgres:5432/stolosio
       NATS_URL: nats://nats:4222
     expose:
       - "9000"
@@ -91,8 +91,8 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://harbor:harbor@postgres:5432/harbor
-      HEALTH_HARBOR_CDP_URL: ws://api:8000/v1/connect
+      DATABASE_URL: postgresql+asyncpg://stolosio:stolosio@postgres:5432/stolosio
+      HEALTH_STOLOSIO_CDP_URL: ws://api:8000/v1/connect
     volumes:
       - .:/app
       - /app/.venv
@@ -105,15 +105,15 @@ services:
   postgres:
     image: postgres:latest
     environment:
-      POSTGRES_DB: harbor
-      POSTGRES_USER: harbor
-      POSTGRES_PASSWORD: harbor
+      POSTGRES_DB: stolosio
+      POSTGRES_USER: stolosio
+      POSTGRES_PASSWORD: stolosio
     ports:
-      - "${HARBOR_POSTGRES_PORT:-5433}:5432"
+      - "${STOLOSIO_POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U harbor -d harbor"]
+      test: ["CMD-SHELL", "pg_isready -U stolosio -d stolosio"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -130,7 +130,7 @@ services:
   browserless:
     image: ghcr.io/browserless/chromium:latest
     environment:
-      CONCURRENT: "${HARBOR_BROWSERLESS_CONCURRENT:-5}"
+      CONCURRENT: "${STOLOSIO_BROWSERLESS_CONCURRENT:-5}"
       QUEUED: "10"
       TIMEOUT: "600000"
     expose:

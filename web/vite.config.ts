@@ -9,7 +9,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/v1": {
-        target: process.env.HARBOR_API_PROXY_TARGET ?? "http://localhost:8411",
+        target: process.env.STOLOSIO_API_PROXY_TARGET ?? "http://localhost:8411",
         changeOrigin: true,
         ws: true,
       },

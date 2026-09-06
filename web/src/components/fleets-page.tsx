@@ -436,7 +436,7 @@ function FleetList({
           <div className="border-b px-4 py-3">
             <h2 className="font-semibold">Admission-controlled providers</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Concurrency and queue limits enforced by Harbor admission.
+              Concurrency and queue limits enforced by Stolosio admission.
             </p>
           </div>
           <div className="divide-y">
@@ -671,7 +671,7 @@ function ConfigurationForm({
             value={values.minimum_instances ?? 0}
             min={0}
             max={100}
-            help="Warm instances Harbor keeps available."
+            help="Warm instances Stolosio keeps available."
             onChange={updateNumber}
           />
           <NumberField
@@ -696,7 +696,7 @@ function ConfigurationForm({
             name="scale_down_cooldown_seconds"
             value={values.scale_down_cooldown_seconds ?? 1}
             min={1}
-            help="Idle seconds before Harbor reduces capacity."
+            help="Idle seconds before Stolosio reduces capacity."
             onChange={updateNumber}
           />
           <NumberField
@@ -704,14 +704,14 @@ function ConfigurationForm({
             name="max_queued_attempts"
             value={values.max_queued_attempts ?? 0}
             min={0}
-            help="Attempts Harbor may queue while all Browserless slots are occupied."
+            help="Attempts Stolosio may queue while all Browserless slots are occupied."
             onChange={updateNumber}
           />
         </div>
 
         <div className="mt-6 flex items-center justify-between border-t pt-5">
           <p className="text-xs text-muted-foreground">
-            Changes are versioned and audited by Harbor.
+            Changes are versioned and audited by Stolosio.
           </p>
           <Button
             type="submit"
@@ -845,7 +845,7 @@ function FleetDetail({
               <div>
                 <h2 className="font-semibold">Instance inventory</h2>
                 <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-                  Harbor reports aggregate instance state today. Individual
+                  Stolosio reports aggregate instance state today. Individual
                   instance IDs, observation freshness, and slot assignments will
                   appear here when the instance read API is available.
                 </p>
@@ -957,7 +957,7 @@ function ExternalCapacityForm({
               className="mt-2 h-10 bg-background"
             />
             <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
-              Hard Harbor admission ceiling for this provider.
+              Hard Stolosio admission ceiling for this provider.
             </span>
           </label>
           <label className="block">
@@ -984,8 +984,8 @@ function ExternalCapacityForm({
         <div className="mt-6 flex items-center justify-between border-t pt-5">
           <p className="text-xs text-muted-foreground">
             {capacity.provider === "browserbase"
-              ? "Harbor controls admission only; Browserbase controls instances."
-              : "Harbor enforces this limit before starting direct HTTP work."}
+              ? "Stolosio controls admission only; Browserbase controls instances."
+              : "Stolosio enforces this limit before starting direct HTTP work."}
           </p>
           <Button
             type="submit"
@@ -1047,8 +1047,8 @@ function ExternalCapacityDetail({
         </h1>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
           {capacity.provider === "browserbase"
-            ? "External browser concurrency and Harbor admission limits. There are no Harbor-managed instances for this provider."
-            : "Direct HTTP concurrency and queue limits enforced by Harbor admission."}
+            ? "External browser concurrency and Stolosio admission limits. There are no Stolosio-managed instances for this provider."
+            : "Direct HTTP concurrency and queue limits enforced by Stolosio admission."}
         </p>
       </header>
       <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1155,7 +1155,7 @@ export function FleetsPage({ provider, navigate }: FleetPageProps) {
               Fleets
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              Monitor provider demand, usable browser capacity, and Harbor’s
+              Monitor provider demand, usable browser capacity, and Stolosio’s
               managed scaling limits.
             </p>
           </div>
@@ -1207,7 +1207,7 @@ export function FleetsPage({ provider, navigate }: FleetPageProps) {
             />
             <h1 className="mt-4 text-xl font-semibold">Fleet not found</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              This is not a managed Harbor provider.
+              This is not a managed Stolosio provider.
             </p>
             <Button
               variant="outline"

@@ -29,7 +29,7 @@ export type CommandCostStat = {
   interrupted_count: number
   total_duration_ms: number
   total_provider_latency_ms: number
-  total_harbor_queue_ms: number
+  total_stolosio_queue_ms: number
   attributed_browser_time_ms: number
   attributed_cost_units: number
   first_seen_at: string
@@ -94,7 +94,7 @@ export type ActivityProvider =
   | "browserless"
   | "browserbase"
 
-export type HarborSessionState =
+export type StolosioSessionState =
   | "requested"
   | "admitted"
   | "open"
@@ -110,7 +110,7 @@ export type SessionDomainSummary = {
 export type SessionListItem = {
   id: string
   client_reference: string | null
-  state: HarborSessionState
+  state: StolosioSessionState
   created_at: string
   closed_at: string | null
   duration_seconds: number | null
@@ -189,6 +189,7 @@ export type ManagedProvider = "browserless"
 
 export type GatewayFleetSnapshot = {
   active_sessions: number
+  sessions_last_24h: number
   capacity: number
 }
 

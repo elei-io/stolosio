@@ -125,7 +125,7 @@ function policySummary(
   )
   const confirmations = configuration.required_health_confirmations
 
-  return `When Harbor has no current promotion evidence for a domain, it bootstraps with ${defaultLabel}${
+  return `When Stolosio has no current promotion evidence for a domain, it bootstraps with ${defaultLabel}${
     defaultCost === undefined ? "" : ` (${defaultCost} units/s)`
   }. HTTP and Browserless promotion requires ${confirmations} healthy ${
     confirmations === 1 ? "probe" : "probes"
@@ -574,7 +574,7 @@ function ProviderPolicy({
         </div>
         <span className="inline-flex items-center gap-2 self-start text-xs text-muted-foreground sm:self-auto">
           <CircleDollarSign className="size-4" aria-hidden />
-          Relative Harbor cost units
+          Relative Stolosio cost units
         </span>
       </div>
 
@@ -605,7 +605,7 @@ function ProviderPolicy({
           allow paid fallback. These settings do not disable capacity or prevent
           explicit{" "}
           <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.6875rem] text-foreground">
-            harbor.provider.slug
+            stolosio.provider.slug
           </code>{" "}
           selection.
         </p>
@@ -651,7 +651,7 @@ function NetworkPolicySettings({ policy }: { policy: NetworkPolicy }) {
           <div>
             <h2 className="font-semibold">Global domain blocklist</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Block matching requests in every Harbor session.
+              Block matching requests in every Stolosio session.
             </p>
           </div>
           <Badge

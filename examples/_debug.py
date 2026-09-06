@@ -7,7 +7,7 @@ from websockets.asyncio.client import connect
 def with_reference(url: str, reference: str) -> str:
     parsed = urlsplit(url)
     query = parse_qsl(parsed.query, keep_blank_values=True)
-    query.append(("harbor.session.reference", reference))
+    query.append(("stolosio.session.reference", reference))
     return urlunsplit((*parsed[:3], urlencode(query), parsed.fragment))
 
 

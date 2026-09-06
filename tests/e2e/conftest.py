@@ -10,12 +10,12 @@ import pytest
 
 @pytest.fixture(scope="session", autouse=True)
 def managed_browser_controller() -> Iterator[None]:
-    if os.getenv("HARBOR_E2E") != "1":
+    if os.getenv("STOLOSIO_E2E") != "1":
         yield
         return
 
     root = Path(__file__).resolve().parents[2]
-    api = os.getenv("HARBOR_E2E_HTTP_URL", "http://localhost:8411")
+    api = os.getenv("STOLOSIO_E2E_HTTP_URL", "http://localhost:8411")
     process = subprocess.Popen(
         [
             "uv",
@@ -54,7 +54,7 @@ def managed_browser_controller() -> Iterator[None]:
                 "scale_down_cooldown_seconds": cooldown_seconds,
                 "enabled": enabled,
             },
-            headers={"X-Harbor-Actor": "e2e-controller-fixture"},
+            headers={"X-Stolosio-Actor": "e2e-controller-fixture"},
             timeout=5,
         )
         response.raise_for_status()
@@ -107,7 +107,7 @@ def managed_browser_controller() -> Iterator[None]:
                     "docker",
                     "compose",
                     "-p",
-                    "harbor",
+                    "stolosio",
                     "up",
                     "-d",
                     "--scale",

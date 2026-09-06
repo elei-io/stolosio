@@ -1,9 +1,9 @@
 # Debug Stream
 
-Harbor provides an opinionated, standardized stream of session observations.
+Stolosio provides an opinionated, standardized stream of session observations.
 
 The stream is used internally for understanding sessions and comparing provider
-behavior. Harbor also exposes the same filtered event contract to its initial
+behavior. Stolosio also exposes the same filtered event contract to its initial
 downstream integration partner through a small, read-only WebSocket.
 
 ## Purpose
@@ -11,7 +11,7 @@ downstream integration partner through a small, read-only WebSocket.
 The stream preserves useful evidence from a session regardless of whether the work was
 performed by plain HTTP, Browserless, or Browserbase.
 
-This evidence should help Harbor's operators, and potentially downstream consumers,
+This evidence should help Stolosio's operators, and potentially downstream consumers,
 investigate questions such as:
 
 - Whether the selected provider behaved well for the session.
@@ -28,7 +28,7 @@ answer them.
 The debug stream reports facts observed during the session. It must not emit decisions,
 recommendations, or inferred conclusions.
 
-For example, Harbor may report:
+For example, Stolosio may report:
 
 - An HTTP response returned status `403`.
 - A response included a `Retry-After` header.
@@ -38,26 +38,26 @@ For example, Harbor may report:
 - A browser process or page crashed.
 - A console message or uncaught JavaScript error occurred.
 
-Harbor must not turn those observations into statements such as:
+Stolosio must not turn those observations into statements such as:
 
 - The session needs more stealth.
 - The IP should be rotated.
 - The provider was a bad choice.
 - A provider change is required.
 - A challenge or CAPTCHA was detected unless that fact was explicitly reported by the
-  provider or remote system rather than inferred by Harbor.
+  provider or remote system rather than inferred by Stolosio.
 
 Interpretation belongs to the human or system consuming the stream, not to the debug
 stream itself.
 
 ## Opinionated filtering
 
-Provider protocols expose large, noisy, and provider-specific event streams. Harbor
+Provider protocols expose large, noisy, and provider-specific event streams. Stolosio
 should not forward those streams unchanged.
 
-"Opinionated" means Harbor selects the subset of browser-provided evidence that is
+"Opinionated" means Stolosio selects the subset of browser-provided evidence that is
 useful for understanding session behavior, removes protocol noise, and normalizes
-equivalent observations across providers. It does not mean Harbor invents opinions
+equivalent observations across providers. It does not mean Stolosio invents opinions
 about what the observations imply.
 
 Potential evidence includes:
@@ -80,14 +80,14 @@ or promise that every provider can supply every observation.
 
 ## Standardization
 
-Harbor should normalize equivalent evidence so consumers do not need to understand
+Stolosio should normalize equivalent evidence so consumers do not need to understand
 provider conventions or the HTTP no-browser path.
 
 The useful common subset must be discovered from the evidence each provider actually
 supplies. Provider-specific evidence may be retained when it is useful, but it must be
 clearly distinguishable from observations available across providers.
 
-Harbor defines a deliberately small, versioned event envelope for terminal session and
+Stolosio defines a deliberately small, versioned event envelope for terminal session and
 attempt lifecycle, main-document navigation, command failures and interruptions, one
 bounded command summary per attempt, meaningful page failures/content observations,
 and provider disconnection. Generic successful commands, intermediate queue states,
@@ -97,18 +97,18 @@ information, query strings, and fragments, and response headers use a strict
 allowlist before an event reaches NATS.
 
 Live internal consumers subscribe to
-`harbor.v1.events.session.<session_id>`. JetStream retains the same publication for
+`stolosio.v1.events.session.<session_id>`. JetStream retains the same publication for
 durable consumers, and PostgreSQL supplies factual historical timelines. There is no
 separate, richer raw stream behind this view.
 
-JetStream and PostgreSQL receive the same compact event contract; Harbor does not
+JetStream and PostgreSQL receive the same compact event contract; Stolosio does not
 split observations into multiple retention classes. PostgreSQL additionally keeps
 bounded factual projections such as provider-and-method command cost aggregates.
 
-Harbor also records `page.content_observed` with content length, plus `console.message`
+Stolosio also records `page.content_observed` with content length, plus `console.message`
 and `javascript.exception` with bounded source, level, and message fingerprint. HTML
 and unrestricted console text never enter the stream. Attempt closure includes
-normalized Harbor cost units.
+normalized Stolosio cost units.
 
 Whether a provider supports a domain and how providers are ordered are policy
 conclusions stored outside DEBUG.
@@ -118,17 +118,17 @@ conclusions stored outside DEBUG.
 A downstream client generates a UUID and supplies it while connecting to CDP:
 
 ```text
-WS /v1/connect?harbor.session.reference=<uuid>
+WS /v1/connect?stolosio.session.reference=<uuid>
 ```
 
 It observes that session through:
 
 ```text
-WS /v1/debug?harbor.session.reference=<same-uuid>
+WS /v1/debug?stolosio.session.reference=<same-uuid>
 ```
 
-The client reference correlates two connections; it is not Harbor's authoritative
-session ID and is not an authentication token. Harbor stores a globally unique
+The client reference correlates two connections; it is not Stolosio's authoritative
+session ID and is not an authentication token. Stolosio stores a globally unique
 reference on the session and continues to generate its own session UUID.
 
 The DEBUG WebSocket can connect before the CDP connection. It waits up to 30 seconds
@@ -172,7 +172,7 @@ opaque pagination cursor. SSE event IDs are JetStream stream sequences, so the b
 can resume through `Last-Event-ID`; filtered connections receive bounded cursor
 heartbeats so their resume position continues to advance.
 
-Replacing NATS resets stream sequences. Harbor reports `replay-unavailable` with
+Replacing NATS resets stream sequences. Stolosio reports `replay-unavailable` with
 `stream_recreated` when a supplied sequence belongs to the previous stream generation;
 the client then reloads retained history from PostgreSQL before following the new live
 tail.

@@ -345,7 +345,7 @@ class RoutingRepository:
                 health_policy_version,
             )
 
-        # The configured default is a bootstrap path only. Once Harbor has current
+        # The configured default is a bootstrap path only. Once Stolosio has current
         # health evidence, health conclusions are binding.
         has_current_health = any(
             row.health_policy_version == health_policy_version for row in health

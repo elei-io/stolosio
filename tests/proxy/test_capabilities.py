@@ -15,7 +15,7 @@ from backend.proxy.contracts import ProviderName
 def test_browser_providers_treat_every_method_as_native_passthrough(
     provider: ProviderName,
 ) -> None:
-    assert capability_registry.supports(provider, "Future.methodAddedAfterHarborRelease")
+    assert capability_registry.supports(provider, "Future.methodAddedAfterStolosioRelease")
 
 
 def test_http_remains_an_explicitly_bounded_facade() -> None:
@@ -32,7 +32,7 @@ def test_http_method_name_does_not_authorize_arbitrary_evaluation() -> None:
 
 
 def test_http_content_capability_requires_the_exact_executable_shape() -> None:
-    object_id = "harbor-http-utility-test"
+    object_id = "stolosio-http-utility-test"
     valid = {
         "objectId": object_id,
         "functionDeclaration": UTILITY_CALL,

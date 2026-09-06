@@ -1,9 +1,9 @@
 # Kubernetes and k3s
 
-Harbor runs the managed Browserless fleet itself. PostgreSQL remains authoritative for
+Stolosio runs the managed Browserless fleet itself. PostgreSQL remains authoritative for
 fleet policy, desired capacity, queues, leases, draining, and instance observations.
 Kubernetes supplies Pods, stable service discovery, scheduling, and container
-recovery. Do not attach an HPA or KEDA `ScaledObject` to Harbor's Browserless
+recovery. Do not attach an HPA or KEDA `ScaledObject` to Stolosio's Browserless
 StatefulSet.
 
 The same integration works on Kubernetes and k3s through the standard in-cluster API.
@@ -12,13 +12,13 @@ It does not call Docker, containerd, or a distribution-specific CLI.
 ## Platform prerequisites
 
 The platform must provide reachable PostgreSQL and NATS installations and put their
-connection details in namespace-scoped Kubernetes Secrets. Harbor does not install, operate, size, back
-up, or upgrade either service. The PostgreSQL identity must be allowed to run Harbor's
-schema migrations. The NATS identity must be allowed to create and update Harbor's
+connection details in namespace-scoped Kubernetes Secrets. Stolosio does not install, operate, size, back
+up, or upgrade either service. The PostgreSQL identity must be allowed to run Stolosio's
+schema migrations. The NATS identity must be allowed to create and update Stolosio's
 own JetStream streams and consumers. The platform does not create or delete those
 resources.
 
-NATS is a disposable delivery layer for Harbor. PostgreSQL is authoritative. Harbor's
+NATS is a disposable delivery layer for Stolosio. PostgreSQL is authoritative. Stolosio's
 maintenance worker continuously reconciles its streams and consumers and reconstructs
 the retained event window from PostgreSQL whenever it creates a fresh event stream.
 
@@ -30,22 +30,22 @@ The cluster also needs:
 
 - Flux source-controller and helm-controller when using the GitOps example;
 - k3s ServiceLB, MetalLB, or another implementation for `LoadBalancer` addresses;
-- GHCR pull credentials while the Harbor image and chart packages are private;
+- GHCR pull credentials while the Stolosio image and chart packages are private;
 - nodes matching the architecture of every pinned image;
 - enough node memory for the configured Browserless requests and limits.
 
-Harbor's application and UI images are published for `linux/amd64` and `linux/arm64`.
+Stolosio's application and UI images are published for `linux/amd64` and `linux/arm64`.
 Confirm that the Browserless version you pin also publishes an image for every node
 architecture on which it may be scheduled.
 
 ## Fleet ownership
 
 The Helm release owns a ConfigMap containing the static Browserless workload template.
-The Harbor fleet controller reads that template and owns the resulting StatefulSet.
-This keeps Helm and GitOps tools from competing with Harbor over replicas or
+The Stolosio fleet controller reads that template and owns the resulting StatefulSet.
+This keeps Helm and GitOps tools from competing with Stolosio over replicas or
 Browserless concurrency.
 
-Harbor owns these dynamic values:
+Stolosio owns these dynamic values:
 
 - StatefulSet replicas;
 - `CONCURRENT`, derived from PostgreSQL session capacity;
@@ -55,15 +55,15 @@ Harbor owns these dynamic values:
 Helm owns the Browserless image, resources, probes, security context, and scheduling
 constraints. The StatefulSet uses `OnDelete`, so applying a changed template never
 restarts an existing Pod automatically. A scale-up may create new Pods from the latest
-template while older Pods continue serving work; Harbor waits for fleet demand to
+template while older Pods continue serving work; Stolosio waits for fleet demand to
 reach zero before replacing those older Pods. Session-capacity changes also wait for
 zero demand.
 
-StatefulSet ordinals make scale-down deterministic. Harbor drains the highest ordinal,
+StatefulSet ordinals make scale-down deterministic. Stolosio drains the highest ordinal,
 transactionally prevents new admission to it, waits for its live assignments to
 finish, and only then lowers the replica count.
 
-Kubernetes restarts failed containers through the Pod liveness policy. Harbor
+Kubernetes restarts failed containers through the Pod liveness policy. Stolosio
 currently treats a Pod that remains not Ready beyond the configured startup timeout
 as unhealthy, stops admitting work to it, and deletes it after its assignments have
 cleared. The StatefulSet creates a clean replacement. Per-instance semantic signals
@@ -75,14 +75,14 @@ replacement decision.
 GitHub Actions publishes:
 
 ```text
-ghcr.io/ekkuleivonen/harbor
-ghcr.io/ekkuleivonen/harbor-web
-oci://ghcr.io/ekkuleivonen/charts/harbor
+ghcr.io/elei-io/stolosio
+ghcr.io/elei-io/stolosio-web
+oci://ghcr.io/elei-io/charts/stolosio
 ```
 
-The Harbor image is shared by the API, migration Job, maintenance and health workers,
+The Stolosio image is shared by the API, migration Job, maintenance and health workers,
 and fleet controller. Browserless remains the upstream
-`ghcr.io/browserless/chromium` image. There are no Harbor-owned PostgreSQL or NATS
+`ghcr.io/browserless/chromium` image. There are no Stolosio-owned PostgreSQL or NATS
 images.
 
 Pushes to `main` publish `main` and immutable `sha-<short-commit>` image tags. A
@@ -92,47 +92,47 @@ an unreleased application build with the chart checked out from Git.
 
 ## Helm installation
 
-Create separate Secrets for the PostgreSQL connection and the platform-issued Harbor
+Create separate Secrets for the PostgreSQL connection and the platform-issued Stolosio
 NATS namespace credential:
 
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: harbor-database
-  namespace: harbor
+  name: stolosio-database
+  namespace: stolosio
 type: Opaque
 stringData:
-  DATABASE_URL: postgresql+asyncpg://harbor:password@postgres.example:5432/harbor
+  DATABASE_URL: postgresql+asyncpg://stolosio:password@postgres.example:5432/stolosio
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: nats-harbor
-  namespace: harbor
+  name: nats-stolosio
+  namespace: stolosio
 type: Opaque
 stringData:
   NATS_URL: tls://nats.example:4222
   NATS_SEED: SU...
 ```
 
-Install Harbor:
+Install Stolosio:
 
 ```bash
-helm upgrade --install harbor \
-  oci://ghcr.io/ekkuleivonen/charts/harbor \
+helm upgrade --install stolosio \
+  oci://ghcr.io/elei-io/charts/stolosio \
   --version 0.1.12 \
-  --namespace harbor \
+  --namespace stolosio \
   --create-namespace \
-  --set database.existingSecret=harbor-database \
+  --set database.existingSecret=stolosio-database \
   --set database.urlSecretKey=DATABASE_URL \
-  --set nats.existingSecret=nats-harbor \
+  --set nats.existingSecret=nats-stolosio \
   --set nats.urlSecretKey=NATS_URL \
   --set nats.seedSecretKey=NATS_SEED \
   --set nats.jetstreamReplicas=3
 ```
 
-The release chart defaults to matching Harbor and web image versions and a pinned
+The release chart defaults to matching Stolosio and web image versions and a pinned
 Browserless version. Keep all image tags pinned when overriding those defaults.
 
 For private GHCR packages, log Helm in before a direct installation and configure an
@@ -141,7 +141,7 @@ image-pull Secret in the chart:
 ```bash
 helm registry login ghcr.io --username <github-user>
 
-kubectl --namespace harbor create secret docker-registry ghcr-auth \
+kubectl --namespace stolosio create secret docker-registry ghcr-auth \
   --docker-server=ghcr.io \
   --docker-username=<github-user> \
   --docker-password=<github-token>
@@ -152,7 +152,7 @@ needs `read:packages`.
 
 `browserless.timeoutMilliseconds` controls the Browserless worker's session deadline.
 Fleet enablement, minimum and maximum instances, queue limits, cooldown, and
-per-instance concurrency remain PostgreSQL-backed Harbor administration settings.
+per-instance concurrency remain PostgreSQL-backed Stolosio administration settings.
 
 The chart runs `alembic upgrade head` as a Helm pre-install and pre-upgrade Job using
 the supplied PostgreSQL Secret. PostgreSQL and NATS themselves remain
@@ -163,7 +163,7 @@ Secret and reference it:
 
 ```yaml
 browserbase:
-  existingSecret: harbor-browserbase
+  existingSecret: stolosio-browserbase
   apiKeySecretKey: api-key
   projectIdSecretKey: project-id
 ```
@@ -171,7 +171,7 @@ browserbase:
 Read the platform-assigned endpoints:
 
 ```bash
-kubectl get service harbor-api harbor-web --namespace harbor
+kubectl get service stolosio-api stolosio-web --namespace stolosio
 ```
 
 The public CDP endpoint is:
@@ -181,7 +181,7 @@ ws://<API-ADDRESS>:8411/v1/connect
 ```
 
 The platform may attach DNS and TLS and publish the endpoint as `wss://`. Pod IPs are
-never public Harbor endpoints. The UI Service proxies its same-origin `/v1` requests
+never public Stolosio endpoints. The UI Service proxies its same-origin `/v1` requests
 to the internal API Service; the API Service remains separately exposed for CDP
 clients.
 
@@ -189,15 +189,15 @@ clients.
 
 The example under [`deploy/flux`](../deploy/flux) uses a Flux `OCIRepository` and
 `HelmRelease` to consume the versioned chart directly from GHCR. Copy that directory
-into the cluster GitOps repository, provide `harbor-database` and `nats-harbor`, and provide
+into the cluster GitOps repository, provide `stolosio-database` and `nats-stolosio`, and provide
 `ghcr-auth` while the packages are private.
 
 Keep credentials out of plaintext Git. Encrypt the Secrets with SOPS or source them
 from the platform's external-secrets mechanism. The same `ghcr-auth` Docker config
-Secret can authenticate both Flux's chart pull and the Harbor application image
+Secret can authenticate both Flux's chart pull and the Stolosio application image
 pulls.
 
-Flux reconciles the static Helm release and Browserless workload template. Harbor's
+Flux reconciles the static Helm release and Browserless workload template. Stolosio's
 fleet controller still owns the live Browserless StatefulSet replicas and rollout;
 do not add that StatefulSet to the GitOps repository and do not attach KEDA or an HPA
 to it.

@@ -1,8 +1,8 @@
 # Fleet and Capacity Management
 
-Harbor manages Browserless as a horizontal fleet. Browserbase is externally hosted, so
-Harbor manages an admission quota rather than infrastructure. Direct HTTP work also
-uses an admission quota because it consumes Harbor process and network capacity
+Stolosio manages Browserless as a horizontal fleet. Browserbase is externally hosted, so
+Stolosio manages an admission quota rather than infrastructure. Direct HTTP work also
+uses an admission quota because it consumes Stolosio process and network capacity
 without browser instances.
 
 ## Browserless
@@ -18,13 +18,13 @@ desired instances = clamp(ceil(demand / slots per instance), minimum, maximum)
 Placement atomically assigns an acquisition attempt to a free slot. Sessions on the
 same worker remain separate upstream browser sessions. The fleet controller runs
 outside FastAPI and reconciles Docker or another compute platform from PostgreSQL.
-Browserless itself is not assumed to scale Harbor's worker fleet.
+Browserless itself is not assumed to scale Stolosio's worker fleet.
 
 Administrators control minimum and maximum instances, session slots per instance,
 maximum queued attempts, scale-down cooldown, and whether the fleet is enabled. Only
 current, ready, healthy, non-draining observations count as capacity.
 
-The session-slots value has no Harbor-imposed upper bound. Five is only the initial
+The session-slots value has no Stolosio-imposed upper bound. Five is only the initial
 database default. Startup inserts this default only when no Browserless fleet row
 exists and never overwrites a saved value. The fleet controller applies the stored
 session capacity to Browserless workers and reports observed concurrency back to
@@ -38,18 +38,18 @@ operation so a slow image pull cannot cause runaway expansion.
 The fleet controller exposes bounded Prometheus telemetry for scaling actions,
 request-to-ready latency, request-to-first-assignment latency, and instances removed
 without ever serving an acquisition attempt. These observations are recorded from the
-controller's successful scale request, so they measure Harbor's operational path
+controller's successful scale request, so they measure Stolosio's operational path
 rather than approximating it from pod creation timestamps.
 
-On Kubernetes and k3s, Harbor owns a Browserless StatefulSet generated from a
-GitOps-managed workload template. Harbor writes its replica count directly; KEDA and
-HPA must not target that StatefulSet. Deterministic StatefulSet ordinals let Harbor
+On Kubernetes and k3s, Stolosio owns a Browserless StatefulSet generated from a
+GitOps-managed workload template. Stolosio writes its replica count directly; KEDA and
+HPA must not target that StatefulSet. Deterministic StatefulSet ordinals let Stolosio
 drain the instance Kubernetes will remove before lowering replicas. See
 [Kubernetes and k3s](KUBERNETES.md).
 
 ## Browserbase
 
-Browserbase supplies its own infrastructure. Harbor stores a durable external-provider
+Browserbase supplies its own infrastructure. Stolosio stores a durable external-provider
 limit with enabled state, maximum active sessions, maximum queued attempts, and an
 audited configuration version.
 
@@ -63,14 +63,14 @@ configuration.
 
 ## Direct HTTP
 
-Harbor stores durable maximum-active and maximum-queued limits for direct HTTP work.
+Stolosio stores durable maximum-active and maximum-queued limits for direct HTTP work.
 Administrators configure both values, and can enable or disable HTTP admission, from
 the Fleets page. Admission applies changes to new acquisition attempts immediately;
 active requests are allowed to finish.
 
 ## Administrative boundary
 
-Fleet and external quota limits are administrative policy, not `harbor.*` session
+Fleet and external quota limits are administrative policy, not `stolosio.*` session
 settings. Explicit downstream provider selection cannot bypass them.
 
 PostgreSQL is authoritative for queues, leases, slot assignments, desired capacity,
@@ -80,3 +80,10 @@ operator-saved values. Environment variables are reserved for credentials, endpo
 database and messaging connections, and process/runtime mechanics. Prometheus exposes
 bounded operational aggregates; session IDs, URLs, domains, and provider error text
 remain in durable observations instead of metric labels.
+
+## Gateway overview
+
+`GET /v1/fleet/gateway` reports `active_sessions`, `sessions_last_24h`, and global
+`capacity`. The 24-hour count includes all sessions created during the rolling window,
+including sessions that have already closed. Active sessions require an admitted,
+open, or closing state and an unexpired lease.

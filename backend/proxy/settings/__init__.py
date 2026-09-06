@@ -1,9 +1,9 @@
-from backend.proxy.settings.registry import HarborSettingsRegistry, harbor_settings_registry
-from backend.proxy.settings.resolver import HarborSettingsResolver, harbor_settings_resolver
+from backend.proxy.settings.registry import StolosioSettingsRegistry, stolosio_settings_registry
+from backend.proxy.settings.resolver import StolosioSettingsResolver, stolosio_settings_resolver
 
 __all__ = [
-    "HarborSettingsRegistry",
-    "HarborSettingsResolver",
-    "harbor_settings_registry",
-    "harbor_settings_resolver",
+    "StolosioSettingsRegistry",
+    "StolosioSettingsResolver",
+    "stolosio_settings_registry",
+    "stolosio_settings_resolver",
 ]

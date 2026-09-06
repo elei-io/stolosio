@@ -33,6 +33,7 @@ async def add_session(
     state: str = "open",
     lease_expires_at: datetime | None = None,
     closed_at: datetime | None = None,
+    created_at: datetime | None = None,
 ) -> None:
     async with sessions.begin() as database:
         database.add(
@@ -42,6 +43,7 @@ async def add_session(
                 lease_token=str(uuid4()),
                 requested_settings={},
                 state=state,
+                **({"created_at": created_at} if created_at is not None else {}),
                 lease_expires_at=lease_expires_at,
                 closed_at=closed_at,
             )
@@ -62,8 +64,8 @@ async def add_attempt(
                 session_id=str(session_id),
                 ordinal=1,
                 provider="browserless",
-                resolved_settings={"harbor.provider.slug": "browserless"},
-                setting_sources={"harbor.provider.slug": "auto"},
+                resolved_settings={"stolosio.provider.slug": "browserless"},
+                setting_sources={"stolosio.provider.slug": "auto"},
                 state=state,
                 queued_at=queued_at,
             )
@@ -85,8 +87,8 @@ async def test_recorder_is_idempotent_and_projects_domain_evidence(
                 session_id=str(session_id),
                 ordinal=1,
                 provider="browserless",
-                resolved_settings={"harbor.provider.slug": "browserless"},
-                setting_sources={"harbor.provider.slug": "auto"},
+                resolved_settings={"stolosio.provider.slug": "browserless"},
+                setting_sources={"stolosio.provider.slug": "auto"},
                 state="closed",
                 finished_at=now,
                 browser_connected_ms=100,
@@ -99,7 +101,7 @@ async def test_recorder_is_idempotent_and_projects_domain_evidence(
                             "failed_count": 0,
                             "duration_ms": 90,
                             "provider_latency_ms": 80,
-                            "harbor_queue_ms": 10,
+                            "stolosio_queue_ms": 10,
                         }
                     }
                 },
@@ -128,7 +130,7 @@ async def test_recorder_is_idempotent_and_projects_domain_evidence(
                     "failed_count": 0,
                     "duration_ms": 90,
                     "provider_latency_ms": 80,
-                    "harbor_queue_ms": 10,
+                    "stolosio_queue_ms": 10,
                 }
             }
         },
@@ -161,7 +163,7 @@ async def test_recorder_is_idempotent_and_projects_domain_evidence(
     assert command_stat.command_count == 1
     assert command_stat.total_duration_ms == 90
     assert command_stat.total_provider_latency_ms == 80
-    assert command_stat.total_harbor_queue_ms == 10
+    assert command_stat.total_stolosio_queue_ms == 10
     assert command_stat.attributed_cost_units == 16
     assert domain_cost is not None
     assert attempt is not None
@@ -210,7 +212,7 @@ async def test_http_command_summary_never_attributes_browser_time(
                             "failed_count": 0,
                             "duration_ms": 80,
                             "provider_latency_ms": 75,
-                            "harbor_queue_ms": 5,
+                            "stolosio_queue_ms": 5,
                         }
                     }
                 },
@@ -229,7 +231,7 @@ async def test_http_command_summary_never_attributes_browser_time(
                     "failed_count": 0,
                     "duration_ms": 80,
                     "provider_latency_ms": 75,
-                    "harbor_queue_ms": 5,
+                    "stolosio_queue_ms": 5,
                 }
             }
         },
@@ -288,7 +290,7 @@ async def test_terminal_outbox_redelivery_projects_stored_command_summary(
                             "failed_count": 0,
                             "duration_ms": 500,
                             "provider_latency_ms": 500,
-                            "harbor_queue_ms": 0,
+                            "stolosio_queue_ms": 0,
                         }
                     }
                 },
@@ -356,7 +358,7 @@ async def test_command_cost_projection_bounds_method_identity_and_tracks_interru
                             "interrupted_count": int(method == "Domain.fourth"),
                             "duration_ms": 10,
                             "provider_latency_ms": 10,
-                            "harbor_queue_ms": 0,
+                            "stolosio_queue_ms": 0,
                         }
                         for method in (
                             "Domain.first",
@@ -382,7 +384,7 @@ async def test_command_cost_projection_bounds_method_identity_and_tracks_interru
                     "interrupted_count": int(method == "Domain.fourth"),
                     "duration_ms": 10,
                     "provider_latency_ms": 10,
-                    "harbor_queue_ms": 0,
+                    "stolosio_queue_ms": 0,
                 }
                 for method in (
                     "Domain.first",
@@ -694,7 +696,7 @@ async def test_recorder_keeps_probe_sessions_out_of_domain_projections(
                     "failed_count": 0,
                     "duration_ms": 1,
                     "provider_latency_ms": 1,
-                    "harbor_queue_ms": 0,
+                    "stolosio_queue_ms": 0,
                 }
             }
         },
@@ -763,6 +765,37 @@ async def test_fleet_snapshot_includes_every_provider_and_only_live_leases(
         for snapshot in snapshots
         if snapshot.provider is not ProviderName.BROWSERLESS
     )
+
+
+@pytest.mark.asyncio
+async def test_gateway_snapshot_reports_recent_and_active_sessions(
+    database_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    now = datetime.now(UTC)
+    await add_session(
+        database_sessions,
+        uuid4(),
+        lease_expires_at=now + timedelta(minutes=1),
+    )
+    await add_session(
+        database_sessions,
+        uuid4(),
+        state="closed",
+        closed_at=now - timedelta(hours=1),
+        created_at=now - timedelta(hours=2),
+    )
+    await add_session(
+        database_sessions,
+        uuid4(),
+        state="closed",
+        closed_at=now - timedelta(days=2),
+        created_at=now - timedelta(days=2),
+    )
+
+    snapshot = await FleetSnapshotService(database_sessions, Settings()).gateway_snapshot()
+
+    assert snapshot.active_sessions == 1
+    assert snapshot.sessions_last_24h == 2
 
 
 @pytest.mark.asyncio

@@ -97,7 +97,7 @@ class ExternalCapacityRepository:
         ):
             raise ExternalCapacityEnablementError(
                 "Cannot enable Browserbase because its API key is not configured. "
-                "Configure browserbase_api_key and restart Harbor."
+                "Configure browserbase_api_key and restart Stolosio."
             )
         async with self._sessions.begin() as database:
             await self._lock_provider(database, provider)

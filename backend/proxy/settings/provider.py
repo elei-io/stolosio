@@ -1,8 +1,8 @@
 from backend.proxy.contracts import ProviderSettingSchema
-from backend.proxy.settings.base import BaseHarborSetting
+from backend.proxy.settings.base import BaseStolosioSetting
 
 
-class HarborProviderSetting(BaseHarborSetting[ProviderSettingSchema]):
+class StolosioProviderSetting(BaseStolosioSetting[ProviderSettingSchema]):
     slug = "provider"
-    query_prefix = "harbor.provider"
+    query_prefix = "stolosio.provider"
     schema = ProviderSettingSchema

@@ -35,7 +35,7 @@ class _CommandUsage:
     interrupted_count: int = 0
     duration_ms: int = 0
     provider_latency_ms: int = 0
-    harbor_queue_ms: int = 0
+    stolosio_queue_ms: int = 0
 
 
 @dataclass(slots=True)
@@ -479,7 +479,7 @@ class CdpEventObserver:
             if pending.forwarded_at is not None
             else 0
         )
-        harbor_queue_ms = (
+        stolosio_queue_ms = (
             round((pending.forwarded_at - pending.started_at) * 1000)
             if pending.forwarded_at is not None
             else 0
@@ -512,7 +512,7 @@ class CdpEventObserver:
             usage.interrupted_count += int(outcome == "interrupted")
             usage.duration_ms += duration_ms
             usage.provider_latency_ms += provider_latency_ms
-            usage.harbor_queue_ms += harbor_queue_ms
+            usage.stolosio_queue_ms += stolosio_queue_ms
         if event_type is None:
             return
         payload = {
@@ -522,7 +522,7 @@ class CdpEventObserver:
             "domain": pending.domain,
             "duration_ms": duration_ms,
             "provider_latency_ms": provider_latency_ms,
-            "harbor_queue_ms": harbor_queue_ms,
+            "stolosio_queue_ms": stolosio_queue_ms,
             "reason": reason,
             "cdp_error_code": cdp_error_code,
         }
@@ -549,7 +549,7 @@ class CdpEventObserver:
                             "interrupted_count": usage.interrupted_count,
                             "duration_ms": usage.duration_ms,
                             "provider_latency_ms": usage.provider_latency_ms,
-                            "harbor_queue_ms": usage.harbor_queue_ms,
+                            "stolosio_queue_ms": usage.stolosio_queue_ms,
                         }
                         for method, usage in methods.items()
                     }
@@ -576,7 +576,7 @@ class CdpEventObserver:
                     "interrupted_count": usage.interrupted_count,
                     "duration_ms": usage.duration_ms,
                     "provider_latency_ms": usage.provider_latency_ms,
-                    "harbor_queue_ms": usage.harbor_queue_ms,
+                    "stolosio_queue_ms": usage.stolosio_queue_ms,
                 }
                 for method, usage in methods.items()
             }

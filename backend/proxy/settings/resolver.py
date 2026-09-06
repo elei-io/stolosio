@@ -4,15 +4,15 @@ from backend.proxy.contracts import (
     SettingSource,
     SettingsResolutionContext,
 )
-from backend.proxy.planner import HarborPlanner, static_harbor_planner
-from backend.proxy.settings.registry import HarborSettingsRegistry, harbor_settings_registry
+from backend.proxy.planner import StolosioPlanner, static_stolosio_planner
+from backend.proxy.settings.registry import StolosioSettingsRegistry, stolosio_settings_registry
 
 
-class HarborSettingsResolver:
+class StolosioSettingsResolver:
     def __init__(
         self,
-        registry: HarborSettingsRegistry,
-        planner: HarborPlanner,
+        registry: StolosioSettingsRegistry,
+        planner: StolosioPlanner,
     ) -> None:
         self._registry = registry
         self._planner = planner
@@ -51,7 +51,7 @@ class HarborSettingsResolver:
         )
 
 
-harbor_settings_resolver = HarborSettingsResolver(
-    harbor_settings_registry,
-    static_harbor_planner,
+stolosio_settings_resolver = StolosioSettingsResolver(
+    stolosio_settings_registry,
+    static_stolosio_planner,
 )

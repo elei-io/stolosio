@@ -45,7 +45,7 @@ def test_admin_can_update_versioned_fleet_configuration() -> None:
         response = client.patch(
             "/v1/admin/fleets/browserless",
             json={"maximum_instances": 8, "session_capacity_per_instance": 3},
-            headers={"X-Harbor-Actor": "test-operator"},
+            headers={"X-Stolosio-Actor": "test-operator"},
         )
 
     assert response.status_code == 200

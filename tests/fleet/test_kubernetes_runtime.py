@@ -53,7 +53,7 @@ async def test_kubernetes_runtime_creates_controller_owned_statefulset() -> None
         transport=httpx.MockTransport(handler),
     )
     runtime = KubernetesRuntime(
-        namespace="harbor",
+        namespace="stolosio",
         workload_config_map="workload",
         headless_service="browserless-headless",
         client=client,
@@ -67,7 +67,7 @@ async def test_kubernetes_runtime_creates_controller_owned_statefulset() -> None
     assert body["spec"]["replicas"] == 2
     assert body["spec"]["updateStrategy"] == {"type": "OnDelete"}
     pod_template = body["spec"]["template"]
-    assert pod_template["metadata"]["annotations"]["harbor.openai.com/session-capacity"] == "7"
+    assert pod_template["metadata"]["annotations"]["stolosio.openai.com/session-capacity"] == "7"
     environment = pod_template["spec"]["containers"][0]["env"]
     assert {"name": "CONCURRENT", "value": "7"} in environment
     await runtime.close()
@@ -102,8 +102,8 @@ async def test_kubernetes_runtime_maps_ready_pods_to_stable_instance_dns() -> No
                                     }
                                 ],
                                 "annotations": {
-                                    "harbor.openai.com/workload-revision": revision,
-                                    "harbor.openai.com/session-capacity": "5",
+                                    "stolosio.openai.com/workload-revision": revision,
+                                    "stolosio.openai.com/session-capacity": "5",
                                 },
                             },
                             "status": {
@@ -116,8 +116,8 @@ async def test_kubernetes_runtime_maps_ready_pods_to_stable_instance_dns() -> No
                                 "name": "browserless-99",
                                 "uid": "foreign-pod",
                                 "annotations": {
-                                    "harbor.openai.com/workload-revision": revision,
-                                    "harbor.openai.com/session-capacity": "5",
+                                    "stolosio.openai.com/workload-revision": revision,
+                                    "stolosio.openai.com/session-capacity": "5",
                                 },
                             },
                             "status": {
@@ -134,7 +134,7 @@ async def test_kubernetes_runtime_maps_ready_pods_to_stable_instance_dns() -> No
         transport=httpx.MockTransport(handler),
     )
     runtime = KubernetesRuntime(
-        namespace="harbor",
+        namespace="stolosio",
         workload_config_map="workload",
         headless_service="browserless-headless",
         client=client,
@@ -143,7 +143,7 @@ async def test_kubernetes_runtime_maps_ready_pods_to_stable_instance_dns() -> No
     instances = await runtime.list_instances("browserless")
 
     assert len(instances) == 1
-    assert instances[0].address == "browserless-1.browserless-headless.harbor.svc"
+    assert instances[0].address == "browserless-1.browserless-headless.stolosio.svc"
     assert instances[0].session_capacity == 5
     assert await runtime.port_open(instances[0], 3000)
     assert runtime.scale_down_candidate(instances) == instances[0]
@@ -165,7 +165,7 @@ async def test_kubernetes_runtime_rereads_rotated_service_account_token(tmp_path
         transport=httpx.MockTransport(handler),
     )
     runtime = KubernetesRuntime(
-        namespace="harbor",
+        namespace="stolosio",
         workload_config_map="workload",
         headless_service="browserless-headless",
         client=client,
@@ -195,7 +195,7 @@ async def test_kubernetes_runtime_scopes_pod_lookup_before_delete() -> None:
         transport=httpx.MockTransport(handler),
     )
     runtime = KubernetesRuntime(
-        namespace="harbor",
+        namespace="stolosio",
         workload_config_map="workload",
         headless_service="browserless-headless",
         client=client,
@@ -205,8 +205,8 @@ async def test_kubernetes_runtime_scopes_pod_lookup_before_delete() -> None:
 
     assert (
         requests[0].url.params["labelSelector"]
-        == "app.kubernetes.io/managed-by=harbor-fleet-controller,"
-        "harbor.openai.com/fleet=browserless"
+        == "app.kubernetes.io/managed-by=stolosio-fleet-controller,"
+        "stolosio.openai.com/fleet=browserless"
     )
     await runtime.close()
 
@@ -257,8 +257,8 @@ async def test_kubernetes_runtime_replaces_one_stale_pod_during_stable_reconfigu
                                     }
                                 ],
                                 "annotations": {
-                                    "harbor.openai.com/workload-revision": pod_revision,
-                                    "harbor.openai.com/session-capacity": pod_capacity,
+                                    "stolosio.openai.com/workload-revision": pod_revision,
+                                    "stolosio.openai.com/session-capacity": pod_capacity,
                                 },
                             },
                             "status": {
@@ -282,7 +282,7 @@ async def test_kubernetes_runtime_replaces_one_stale_pod_during_stable_reconfigu
         transport=httpx.MockTransport(handler),
     )
     runtime = KubernetesRuntime(
-        namespace="harbor",
+        namespace="stolosio",
         workload_config_map="workload",
         headless_service="browserless-headless",
         client=client,
@@ -329,8 +329,8 @@ async def test_kubernetes_runtime_does_not_roll_stale_pod_while_scaling() -> Non
                                     }
                                 ],
                                 "annotations": {
-                                    "harbor.openai.com/workload-revision": "old",
-                                    "harbor.openai.com/session-capacity": "5",
+                                    "stolosio.openai.com/workload-revision": "old",
+                                    "stolosio.openai.com/session-capacity": "5",
                                 },
                             },
                             "status": {
@@ -349,7 +349,7 @@ async def test_kubernetes_runtime_does_not_roll_stale_pod_while_scaling() -> Non
         transport=httpx.MockTransport(handler),
     )
     runtime = KubernetesRuntime(
-        namespace="harbor",
+        namespace="stolosio",
         workload_config_map="workload",
         headless_service="browserless-headless",
         client=client,

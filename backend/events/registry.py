@@ -50,7 +50,7 @@ class CommandPayload(_Payload):
     domain: str | None = Field(default=None, max_length=253)
     duration_ms: int | None = None
     provider_latency_ms: int | None = None
-    harbor_queue_ms: int | None = None
+    stolosio_queue_ms: int | None = None
     reason: str | None = Field(default=None, max_length=64)
     cdp_error_code: int | None = None
 
@@ -61,7 +61,7 @@ class CommandUsagePayload(_Payload):
     interrupted_count: int = Field(default=0, ge=0)
     duration_ms: int = Field(ge=0)
     provider_latency_ms: int = Field(ge=0)
-    harbor_queue_ms: int = Field(ge=0)
+    stolosio_queue_ms: int = Field(ge=0)
 
 
 class CommandSummaryPayload(_Payload):

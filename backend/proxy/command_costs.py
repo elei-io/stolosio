@@ -50,7 +50,7 @@ class CommandCostQueryService:
                 "interrupted_count": row.interrupted_count,
                 "total_duration_ms": row.total_duration_ms,
                 "total_provider_latency_ms": row.total_provider_latency_ms,
-                "total_harbor_queue_ms": row.total_harbor_queue_ms,
+                "total_stolosio_queue_ms": row.total_stolosio_queue_ms,
                 "attributed_browser_time_ms": (row.attributed_browser_time_ms),
                 "attributed_cost_units": row.attributed_cost_units,
                 "first_seen_at": _iso(row.first_seen_at),

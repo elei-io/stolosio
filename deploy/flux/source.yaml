@@ -1,11 +1,11 @@
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
-  name: harbor-chart
-  namespace: harbor
+  name: stolosio-chart
+  namespace: stolosio
 spec:
   interval: 10m
-  url: oci://ghcr.io/ekkuleivonen/charts/harbor
+  url: oci://ghcr.io/elei-io/charts/stolosio
   ref:
     semver: ">=0.1.12 <0.2.0"
   layerSelector:

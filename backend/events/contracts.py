@@ -105,4 +105,4 @@ class SessionEvent:
 
     @property
     def subject(self) -> str:
-        return f"harbor.v1.events.session.{self.session_id}"
+        return f"stolosio.v1.events.session.{self.session_id}"

@@ -1,30 +1,30 @@
-{{- define "harbor.name" -}}
+{{- define "stolosio.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{- define "harbor.fullname" -}}
+{{- define "stolosio.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
-{{- else if contains (include "harbor.name" .) .Release.Name }}
+{{- else if contains (include "stolosio.name" .) .Release.Name }}
 {{- .Release.Name | trunc 63 | trimSuffix "-" }}
 {{- else }}
-{{- printf "%s-%s" .Release.Name (include "harbor.name" .) | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-%s" .Release.Name (include "stolosio.name" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
 
-{{- define "harbor.labels" -}}
-app.kubernetes.io/name: {{ include "harbor.name" . }}
+{{- define "stolosio.labels" -}}
+app.kubernetes.io/name: {{ include "stolosio.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" | quote }}
 {{- end }}
 
-{{- define "harbor.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "harbor.name" . }}
+{{- define "stolosio.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "stolosio.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{- define "harbor.extraPodLabels" -}}
+{{- define "stolosio.extraPodLabels" -}}
 {{- $labels := omit .Values.podLabels
   "app.kubernetes.io/name"
   "app.kubernetes.io/instance"
@@ -34,15 +34,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
-{{- define "harbor.serviceAccountName" -}}
+{{- define "stolosio.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (printf "%s-fleet-controller" (include "harbor.fullname" .)) .Values.serviceAccount.name }}
+{{- default (printf "%s-fleet-controller" (include "stolosio.fullname" .)) .Values.serviceAccount.name }}
 {{- else }}
 {{- required "serviceAccount.name is required when serviceAccount.create=false" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
 
-{{- define "harbor.connectionEnv" -}}
+{{- define "stolosio.connectionEnv" -}}
 - name: DATABASE_URL
   valueFrom:
     secretKeyRef:
@@ -64,7 +64,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   value: {{ .Values.nats.jetstreamReplicas | quote }}
 {{- end }}
 
-{{- define "harbor.browserbaseEnv" -}}
+{{- define "stolosio.browserbaseEnv" -}}
 - name: BROWSERBASE_API_URL
   value: {{ .Values.browserbase.apiUrl | quote }}
 {{- with .Values.browserbase.existingSecret }}
@@ -81,7 +81,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
-{{- define "harbor.commonPodSpec" -}}
+{{- define "stolosio.commonPodSpec" -}}
 {{- with .Values.imagePullSecrets }}
 imagePullSecrets:
   {{- toYaml . | nindent 2 }}

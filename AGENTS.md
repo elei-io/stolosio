@@ -1,4 +1,4 @@
-# Working on Harbor
+# Working on Stolosio
 
 This file is the implementation guide for coding agents and contributors. Read the
 relevant documents in `docs/` before changing a public contract or architectural
@@ -6,7 +6,7 @@ boundary.
 
 ## Product contract
 
-Harbor presents one CDP-compatible endpoint to downstream automation:
+Stolosio presents one CDP-compatible endpoint to downstream automation:
 
 ```text
 WS /v1/connect
@@ -14,8 +14,8 @@ WS /v1/connect
 
 - Existing CDP and Playwright `connect_over_cdp()` clients should need only a URL
   change.
-- Harbor-owned connection settings use the `harbor.*` query namespace.
-- Explicit query settings override Harbor's automatic plan, which overrides defaults.
+- Stolosio-owned connection settings use the `stolosio.*` query namespace.
+- Explicit query settings override Stolosio's automatic plan, which overrides defaults.
 - Do not expose provider addresses or add provider names to public route paths.
 - Unsupported behavior must return an explicit protocol error. Never silently succeed,
   lose HTML, or substitute materially different behavior.
@@ -25,20 +25,20 @@ WS /v1/connect
 - `backend/api/` owns HTTP/WebSocket transport and application lifecycle only.
 - `backend/proxy/` owns planning, settings resolution, admission, provider adapters,
   session lifecycle, and protocol transport.
-- Provider adapters satisfy Harbor's internal contract; they do not define the public
+- Provider adapters satisfy Stolosio's internal contract; they do not define the public
   API.
 - Native CDP providers should preserve command IDs, session IDs, event order,
   backpressure, and close behavior.
 - PostgreSQL is the durable source of truth and owns transactional admission, queues,
   leases, capacity, and analytical projections.
-- Logical sessions consume global Harbor capacity and never own a permanent provider.
+- Logical sessions consume global Stolosio capacity and never own a permanent provider.
   Provider queues contain acquisition attempts, not sessions.
 - Managed provider fleets contain browser instances, and instances expose session
   slots. Only healthy, ready, non-draining instances contribute provider capacity.
 - Fleet controllers own infrastructure reconciliation and run separately from FastAPI.
   Provider adapters consume assigned instance endpoints; they do not scale fleets.
 - NATS Core is for live coordination and fan-out. JetStream is for durable observation
-  delivery and replay. Harbor has no Redis dependency.
+  delivery and replay. Stolosio has no Redis dependency.
 - Prometheus metrics must use bounded labels. Domains, URLs, session IDs, and arbitrary
   error text belong in PostgreSQL or the observation stream, never metric labels.
 
@@ -54,11 +54,11 @@ WS /v1/connect
   command at a time with tests.
 - The optimizer minimizes browser, proxy, and helper-service spend subject to
   correctness. Cost reduction never outranks correct acquisition.
-- Harbor owns browser fleet policy, desired capacity, placement, health, and draining.
-  Docker, Kubernetes, or another platform supplies compute through a separate Harbor
+- Stolosio owns browser fleet policy, desired capacity, placement, health, and draining.
+  Docker, Kubernetes, or another platform supplies compute through a separate Stolosio
   fleet controller.
 - Administrative fleet limits are not downstream session settings and cannot be
-  overridden through `harbor.*` query parameters.
+  overridden through `stolosio.*` query parameters.
 - PostgreSQL is authoritative for operator-editable fleet, provider-capacity, and
   routing policy. Startup may seed missing rows with product defaults but must never
   reconcile saved values from environment variables. Keep environment configuration
@@ -69,7 +69,7 @@ WS /v1/connect
 
 ## Greenfield compatibility policy
 
-Harbor is currently unreleased: it has no external users, supported deployments, or
+Stolosio is currently unreleased: it has no external users, supported deployments, or
 production data whose compatibility must be preserved.
 
 - Do not add compatibility shims for contracts, provider names, settings, database
@@ -105,7 +105,7 @@ uv run ruff check .
 Run infrastructure-dependent tests explicitly:
 
 ```bash
-HARBOR_E2E=1 uv run pytest -m e2e
+STOLOSIO_E2E=1 uv run pytest -m e2e
 ```
 
 Before handing off a change:
@@ -120,7 +120,7 @@ Before handing off a change:
 5. Preserve unrelated work in the working tree.
 
 The programs in `examples/` are mock downstream clients and acceptance targets. Keep
-them free of Harbor-specific SDK code.
+them free of Stolosio-specific SDK code.
 
 ## Frontend
 

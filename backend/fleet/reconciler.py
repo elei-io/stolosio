@@ -43,7 +43,7 @@ class ReconciliationOperationError(RuntimeError):
 
 
 class FleetReconciler:
-    """Reconcile Harbor's durable desired state through any fleet runtime."""
+    """Reconcile Stolosio's durable desired state through any fleet runtime."""
 
     def __init__(
         self,

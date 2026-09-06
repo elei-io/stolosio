@@ -1,5 +1,5 @@
 [project]
-name = "harbor"
+name = "stolosio"
 version = "0.1.14"
 description = "A unified browser acquisition fleet"
 requires-python = ">=3.13"

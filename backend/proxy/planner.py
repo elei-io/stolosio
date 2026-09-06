@@ -3,7 +3,7 @@ from typing import Any, Protocol
 from backend.proxy.contracts import RequestedSessionSettings, SettingsResolutionContext
 
 
-class HarborPlanner(Protocol):
+class StolosioPlanner(Protocol):
     async def plan(
         self,
         context: SettingsResolutionContext,
@@ -12,7 +12,7 @@ class HarborPlanner(Protocol):
     ) -> dict[str, Any]: ...
 
 
-class StaticHarborPlanner:
+class StaticStolosioPlanner:
     async def plan(
         self,
         context: SettingsResolutionContext,
@@ -22,4 +22,4 @@ class StaticHarborPlanner:
         return defaults.copy()
 
 
-static_harbor_planner: HarborPlanner = StaticHarborPlanner()
+static_stolosio_planner: StolosioPlanner = StaticStolosioPlanner()

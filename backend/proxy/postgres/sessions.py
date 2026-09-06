@@ -12,7 +12,7 @@ from backend.db.models import (
     GatewayState,
     SessionEventRecord,
 )
-from backend.proxy.contracts import AttemptState, HarborSession, SessionState
+from backend.proxy.contracts import AttemptState, SessionState, StolosioSession
 from backend.proxy.postgres.usage import finalize_attempt_usage
 
 
@@ -49,7 +49,7 @@ class PostgresSessionRepository:
 
     async def admit(
         self,
-        session: HarborSession,
+        session: StolosioSession,
         *,
         max_active: int,
         requested_settings: dict[str, object],
@@ -98,7 +98,7 @@ class PostgresSessionRepository:
             row.lease_expires_at = now + timedelta(seconds=self._settings.lease_seconds)
             return SessionAdmissionStatus.ADMITTED
 
-    async def heartbeat(self, session: HarborSession) -> bool:
+    async def heartbeat(self, session: StolosioSession) -> bool:
         async with self._sessions.begin() as database:
             now = await self._now(database)
             row = await self._owned(database, session, for_update=True)
@@ -112,7 +112,7 @@ class PostgresSessionRepository:
             row.lease_expires_at = now + timedelta(seconds=self._settings.lease_seconds)
             return True
 
-    async def open(self, session: HarborSession) -> bool:
+    async def open(self, session: StolosioSession) -> bool:
         async with self._sessions.begin() as database:
             now = await self._now(database)
             row = await self._owned(database, session, for_update=True)
@@ -131,7 +131,7 @@ class PostgresSessionRepository:
 
     async def release(
         self,
-        session: HarborSession,
+        session: StolosioSession,
         *,
         failed: bool,
         reason: str,
@@ -281,7 +281,7 @@ class PostgresSessionRepository:
     async def _owned(
         self,
         database: AsyncSession,
-        session: HarborSession,
+        session: StolosioSession,
         *,
         for_update: bool,
     ) -> GatewaySession | None:

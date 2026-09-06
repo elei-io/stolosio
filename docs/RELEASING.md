@@ -8,17 +8,17 @@ GitHub Actions provides two paths:
 - `Publish` builds multi-architecture `linux/amd64` and `linux/arm64` images and pushes
   them to GHCR on `main`, semantic version tags, and manual runs.
 
-The published Harbor artifacts are:
+The published Stolosio artifacts are:
 
 ```text
-ghcr.io/ekkuleivonen/harbor
-ghcr.io/ekkuleivonen/harbor-web
-oci://ghcr.io/ekkuleivonen/charts/harbor
+ghcr.io/elei-io/stolosio
+ghcr.io/elei-io/stolosio-web
+oci://ghcr.io/elei-io/charts/stolosio
 ```
 
 The first image is shared by the API, workers, migration Job, and fleet controller.
 Browserless remains the upstream `ghcr.io/browserless/chromium` image. PostgreSQL and
-NATS are external services, not Harbor images.
+NATS are external services, not Stolosio images.
 
 ## Tags
 
@@ -29,8 +29,8 @@ A manual run always publishes the immutable commit tag and may also publish its 
 tag.
 
 The chart is only published for a Git tag. The workflow requires the Git tag without
-its `v` prefix, the Python project version, `charts/harbor/Chart.yaml` `version` and
-`appVersion`, and the chart's default Harbor image tags to match. This check runs
+its `v` prefix, the Python project version, `charts/stolosio/Chart.yaml` `version` and
+`appVersion`, and the chart's default Stolosio image tags to match. This check runs
 before any release image is pushed.
 
 To release `0.1.12` after CI passes:

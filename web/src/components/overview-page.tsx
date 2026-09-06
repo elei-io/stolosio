@@ -102,7 +102,7 @@ function eventDetail(event: ActivityEvent) {
     return `${payload.from_provider} → ${payload.to_provider}`
   }
   if (typeof payload.status === "number") return `HTTP ${payload.status}`
-  return event.provider ? providerLabels[event.provider] : "Harbor gateway"
+  return event.provider ? providerLabels[event.provider] : "Stolosio gateway"
 }
 
 function statusFor(
@@ -374,9 +374,9 @@ export function OverviewPage({ navigate }: OverviewPageProps) {
 
       <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
-          label="Active sessions"
-          value={gateway.data?.active_sessions ?? 0}
-          detail={`${numberFormatter.format(gateway.data?.capacity ?? 0)} global session capacity`}
+          label="Sessions · 24h"
+          value={gateway.data?.sessions_last_24h ?? 0}
+          detail={`${numberFormatter.format(gateway.data?.active_sessions ?? 0)} active · ${numberFormatter.format(gateway.data?.capacity ?? 0)} capacity`}
           icon={CircleDot}
         />
         <MetricCard
@@ -668,7 +668,7 @@ export function OverviewPage({ navigate }: OverviewPageProps) {
               <Waves className="size-6 text-muted-foreground" aria-hidden />
               <p className="mt-3 text-sm font-medium">No recent activity</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Session events will appear here as Harbor handles work.
+                Session events will appear here as Stolosio handles work.
               </p>
             </div>
           )}
@@ -789,7 +789,7 @@ export function OverviewPage({ navigate }: OverviewPageProps) {
         <div className="border-b px-4 py-3">
           <h2 className="font-semibold">Browser time attribution</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Cumulative provider-and-method totals. Harbor retains these
+            Cumulative provider-and-method totals. Stolosio retains these
             aggregates, not individual successful commands.
           </p>
         </div>

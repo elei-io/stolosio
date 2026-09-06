@@ -11,7 +11,7 @@ from backend.db.models import AcquisitionAttempt, GatewaySession, SessionEventRe
 from backend.fleet import FleetInstanceState, FleetRepository, ObservedInstance
 from backend.messaging import PollingNotifier
 from backend.proxy.attempts import AttemptAdmission
-from backend.proxy.contracts import HarborSession, ProviderName, SessionState
+from backend.proxy.contracts import ProviderName, SessionState, StolosioSession
 from backend.proxy.errors import (
     GatewayCapacityFull,
     ProviderQueueFull,
@@ -25,14 +25,14 @@ from backend.proxy.postgres import (
 )
 from backend.proxy.routing import RoutingRepository
 from backend.proxy.sessions import SessionAdmission
-from backend.proxy.settings import harbor_settings_resolver
+from backend.proxy.settings import stolosio_settings_resolver
 from backend.settings import Settings
 
 
 @pytest.fixture
 def admission_settings() -> Settings:
     return Settings(
-        harbor_max_active_sessions=8,
+        stolosio_max_active_sessions=8,
         session_lease_seconds=2,
         session_heartbeat_seconds=0.1,
         provider_queue_poll_ms=10,
@@ -106,7 +106,7 @@ async def external_provider_capacity(
 
 
 async def requested_and_resolved():
-    return await harbor_settings_resolver.resolve([("harbor.provider.slug", "browserless")])
+    return await stolosio_settings_resolver.resolve([("stolosio.provider.slug", "browserless")])
 
 
 async def admit(
@@ -130,7 +130,7 @@ async def test_global_admission_is_independent_of_provider_capacity(
     session_repository: PostgresSessionRepository,
     admission_settings: Settings,
 ) -> None:
-    settings = admission_settings.model_copy(update={"harbor_max_active_sessions": 2})
+    settings = admission_settings.model_copy(update={"stolosio_max_active_sessions": 2})
     first = await admit(session_repository, settings, "one")
     second = await admit(session_repository, settings, "two")
 
@@ -183,9 +183,9 @@ async def test_transition_replacement_can_overlap_one_active_source_attempt(
     admission_settings: Settings,
 ) -> None:
     session = await admit(session_repository, admission_settings, "transition")
-    _, http = await harbor_settings_resolver.resolve([("harbor.provider.slug", "http")])
-    _, browserbase = await harbor_settings_resolver.resolve(
-        [("harbor.provider.slug", "browserbase")]
+    _, http = await stolosio_settings_resolver.resolve([("stolosio.provider.slug", "http")])
+    _, browserbase = await stolosio_settings_resolver.resolve(
+        [("stolosio.provider.slug", "browserbase")]
     )
     admissions = attempt_admission(attempt_repository, admission_settings)
     source = await admissions.acquire(session.session, http)
@@ -331,7 +331,7 @@ async def test_stale_session_lease_frees_global_and_provider_capacity(
     managed_browserless: None,
 ) -> None:
     settings = Settings(
-        harbor_max_active_sessions=1,
+        stolosio_max_active_sessions=1,
         session_lease_seconds=2,
         session_heartbeat_seconds=10,
     )
@@ -385,7 +385,7 @@ async def test_stale_token_cannot_heartbeat_or_release(
     admission_settings: Settings,
 ) -> None:
     lease = await admit(session_repository, admission_settings, "owner")
-    stale = HarborSession(
+    stale = StolosioSession(
         session_id=lease.session.session_id,
         owner_id=lease.session.owner_id,
         lease_token="stale",
@@ -487,8 +487,8 @@ async def test_retried_release_repairs_live_attempt_on_closed_session(
                 session_id=session.session.session_id,
                 ordinal=1,
                 provider="browserbase",
-                resolved_settings={"harbor.provider.slug": "browserbase"},
-                setting_sources={"harbor.provider.slug": "auto"},
+                resolved_settings={"stolosio.provider.slug": "browserbase"},
+                setting_sources={"stolosio.provider.slug": "auto"},
                 state="active",
                 created_at=datetime.now(UTC) - timedelta(seconds=2),
                 active_at=datetime.now(UTC) - timedelta(seconds=1),
@@ -516,8 +516,8 @@ async def test_client_reference_is_optional_session_metadata(
     admission_settings: Settings,
 ) -> None:
     reference = uuid4()
-    requested, _ = await harbor_settings_resolver.resolve(
-        [("harbor.session.reference", str(reference))]
+    requested, _ = await stolosio_settings_resolver.resolve(
+        [("stolosio.session.reference", str(reference))]
     )
     lease = await SessionAdmission(session_repository, admission_settings).admit(requested)
 
@@ -525,7 +525,7 @@ async def test_client_reference_is_optional_session_metadata(
         row = await database.get(GatewaySession, lease.session.session_id)
     assert row is not None
     assert row.client_reference == str(reference)
-    assert row.requested_settings["harbor.session.reference"] == str(reference)
+    assert row.requested_settings["stolosio.session.reference"] == str(reference)
     await lease.release()
 
 

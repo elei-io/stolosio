@@ -29,7 +29,7 @@ def test_debug_route_streams_by_client_reference_and_closes_at_terminal_event() 
 
     with TestClient(app) as client:
         with client.websocket_connect(
-            f"/v1/debug?harbor.session.reference={REFERENCE}"
+            f"/v1/debug?stolosio.session.reference={REFERENCE}"
         ) as websocket:
             assert websocket.receive_json() == {"event_type": "session.open"}
             with pytest.raises(WebSocketDisconnect) as closed:
@@ -43,8 +43,8 @@ def test_debug_route_streams_by_client_reference_and_closes_at_terminal_event() 
     "query",
     [
         "",
-        "?harbor.session.reference=not-a-uuid",
-        (f"?harbor.session.reference={REFERENCE}&harbor.session.reference={REFERENCE}"),
+        "?stolosio.session.reference=not-a-uuid",
+        (f"?stolosio.session.reference={REFERENCE}&stolosio.session.reference={REFERENCE}"),
     ],
 )
 def test_debug_route_rejects_invalid_references(query: str) -> None:
@@ -68,7 +68,7 @@ def test_debug_route_reports_unavailable_event_backbone() -> None:
     with TestClient(app) as client:
         with pytest.raises(WebSocketDisconnect) as closed:
             with client.websocket_connect(
-                f"/v1/debug?harbor.session.reference={REFERENCE}"
+                f"/v1/debug?stolosio.session.reference={REFERENCE}"
             ) as websocket:
                 websocket.receive_text()
 

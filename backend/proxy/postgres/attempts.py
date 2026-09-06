@@ -16,10 +16,10 @@ from backend.db.models import (
 )
 from backend.proxy.contracts import (
     AttemptState,
-    HarborSession,
     ProviderAttempt,
     ProviderName,
     SessionState,
+    StolosioSession,
 )
 from backend.proxy.postgres.usage import finalize_attempt_usage
 
@@ -45,7 +45,7 @@ class PostgresAttemptRepository:
 
     async def enqueue(
         self,
-        session: HarborSession,
+        session: StolosioSession,
         attempt_id: str,
         provider: ProviderName,
         *,
@@ -57,7 +57,7 @@ class PostgresAttemptRepository:
             now = await self._now(database)
             session_row = await self._owned_session(database, session, now)
             if session_row is None:
-                raise RuntimeError("Harbor session lease is not active")
+                raise RuntimeError("Stolosio session lease is not active")
             await self._lock_provider(database, provider.value)
             await self._expire_stale(database, provider.value, now)
 
@@ -72,13 +72,13 @@ class PostgresAttemptRepository:
                 )
             )
             if replacement_for is None and live_for_session:
-                raise RuntimeError("Harbor session already has a live acquisition attempt")
+                raise RuntimeError("Stolosio session already has a live acquisition attempt")
             if replacement_for is not None and (
                 len(live_for_session) != 1
                 or live_for_session[0].id != replacement_for
                 or live_for_session[0].state != AttemptState.ACTIVE.value
             ):
-                raise RuntimeError("Harbor transition source is not the session's active attempt")
+                raise RuntimeError("Stolosio transition source is not the session's active attempt")
             ordinal = (
                 int(
                     await database.scalar(
@@ -153,7 +153,7 @@ class PostgresAttemptRepository:
 
     async def claim(
         self,
-        session: HarborSession,
+        session: StolosioSession,
         attempt: ProviderAttempt,
     ) -> ProviderAttempt | None:
         async with self._sessions.begin() as database:
@@ -326,7 +326,7 @@ class PostgresAttemptRepository:
     async def _owned_session(
         self,
         database: AsyncSession,
-        session: HarborSession,
+        session: StolosioSession,
         now: datetime,
     ) -> GatewaySession | None:
         return await database.scalar(
