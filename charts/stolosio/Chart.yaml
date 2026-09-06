@@ -2,8 +2,8 @@ apiVersion: v2
 name: stolosio
 description: CDP-compatible browser acquisition gateway
 type: application
-version: 0.1.14
-appVersion: "0.1.14"
+version: 0.1.15
+appVersion: "0.1.15"
 home: https://github.com/elei-io/stolosio
 sources:
   - https://github.com/elei-io/stolosio

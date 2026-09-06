@@ -86,7 +86,7 @@ and fleet controller. Browserless remains the upstream
 images.
 
 Pushes to `main` publish `main` and immutable `sha-<short-commit>` image tags. A
-semantic Git tag such as `v0.1.12` publishes matching versioned images and the OCI Helm
+semantic Git tag such as `v0.1.15` publishes matching versioned images and the OCI Helm
 chart. Use the versioned release for normal GitOps; use a `sha-*` tag only when testing
 an unreleased application build with the chart checked out from Git.
 
@@ -121,7 +121,7 @@ Install Stolosio:
 ```bash
 helm upgrade --install stolosio \
   oci://ghcr.io/elei-io/charts/stolosio \
-  --version 0.1.12 \
+  --version 0.1.15 \
   --namespace stolosio \
   --create-namespace \
   --set database.existingSecret=stolosio-database \

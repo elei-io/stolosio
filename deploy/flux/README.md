@@ -3,7 +3,7 @@
 This directory consumes Stolosio's released OCI Helm chart from GHCR. It assumes:
 
 - Flux source-controller and helm-controller are installed;
-- a `v0.1.12` (or compatible) Stolosio release has published the chart and images;
+- a `v0.1.15` (or compatible) Stolosio release has published the chart and images;
 - PostgreSQL and NATS are reachable from the cluster;
 - `stolosio-connections` and, while GHCR packages are private, `ghcr-auth` exist in
   the `stolosio` namespace.

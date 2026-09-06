@@ -1,11 +1,11 @@
 image:
   repository: ghcr.io/elei-io/stolosio
-  tag: "0.1.14"
+  tag: "0.1.15"
   pullPolicy: IfNotPresent
 
 adminImage:
   repository: ghcr.io/elei-io/stolosio-admin
-  tag: "0.1.14"
+  tag: "0.1.15"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []

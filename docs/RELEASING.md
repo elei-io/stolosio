@@ -23,8 +23,8 @@ NATS are external services, not Stolosio images.
 ## Tags
 
 A `main` build publishes `main` and `sha-<short-commit>` image tags. A tag such as
-`v0.1.12` publishes image tags `0.1.12`, `0.1`, `sha-<short-commit>`, and `latest`, then
-publishes the Helm chart as OCI version `0.1.12`. Pre-release tags do not move `latest`.
+`v0.1.15` publishes image tags `0.1.15`, `0.1`, `sha-<short-commit>`, and `latest`, then
+publishes the Helm chart as OCI version `0.1.15`. Pre-release tags do not move `latest`.
 A manual run always publishes the immutable commit tag and may also publish its branch
 tag.
 
@@ -33,11 +33,11 @@ its `v` prefix, the Python project version, `charts/stolosio/Chart.yaml` `versio
 `appVersion`, and the chart's default Stolosio image tags to match. This check runs
 before any release image is pushed.
 
-To release `0.1.12` after CI passes:
+To release `0.1.15` after CI passes:
 
 ```bash
-git tag v0.1.12
-git push origin v0.1.12
+git tag v0.1.15
+git push origin v0.1.15
 ```
 
 GitHub's repository `GITHUB_TOKEN` publishes all artifacts; no long-lived publishing
@@ -60,3 +60,7 @@ A public repository alone does not make a release production-supported.
 Before making the repository public, review dependency licenses and redistribution notices, enable private vulnerability
 reporting, and review Git history and published
 artifacts for secrets or private data. Automated scans supplement that review.
+
+Version 0.1.15 names the operator UI `stolosio-admin`. Helm values are
+`admin` and `adminImage`; the source directory is `admin/`. The former web package
+is retired. Use 0.1.15 or a pinned newer Git chart with matching images.
