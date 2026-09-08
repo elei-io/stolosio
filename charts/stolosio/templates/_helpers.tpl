@@ -65,6 +65,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{- define "stolosio.browserbaseEnv" -}}
+- name: BROWSERBASE_NETWORK_ISOLATION_VERIFIED
+  value: {{ .Values.browserbase.networkIsolationVerified | quote }}
 - name: BROWSERBASE_API_URL
   value: {{ .Values.browserbase.apiUrl | quote }}
 {{- with .Values.browserbase.existingSecret }}

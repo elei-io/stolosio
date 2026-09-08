@@ -12,3 +12,7 @@ updates:
     directory: /admin
     schedule:
       interval: weekly
+  - package-ecosystem: docker
+    directory: /runtime
+    schedule:
+      interval: weekly

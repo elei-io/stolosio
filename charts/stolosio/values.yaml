@@ -24,6 +24,7 @@ migration:
   ttlSecondsAfterFinished: 86400
 
 browserbase:
+  networkIsolationVerified: false
   apiUrl: https://api.browserbase.com/v1
   existingSecret: ""
   apiKeySecretKey: api-key
@@ -83,8 +84,9 @@ monitoring:
 browserless:
   imagePullSecrets: []
   image:
-    repository: ghcr.io/browserless/chromium
-    tag: v2.55.0
+    repository: ghcr.io/elei-io/stolosio-browserless
+    # Defaults to the matching application image tag.
+    tag: ""
     pullPolicy: IfNotPresent
   service:
     port: 3000
@@ -103,7 +105,27 @@ browserless:
   podAnnotations: {}
   podLabels: {}
   securityContext: {}
-  containerSecurityContext: {}
+  containerSecurityContext:
+    runAsUser: 0
+    capabilities:
+      add: [NET_ADMIN]
+
+# Both runtimes enforce fixed non-public exclusions. Add infrastructure public
+# address ranges here when they must also be inaccessible to page requests.
+egress:
+  extraBlockedCidrs: []
+
+fetchProxy:
+  image:
+    repository: ghcr.io/elei-io/stolosio-fetch-proxy
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
 
 serviceAccount:
   create: true

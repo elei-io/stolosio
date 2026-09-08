@@ -3,7 +3,7 @@
 GitHub Actions provides two paths:
 
 - `CI` applies migrations to PostgreSQL, runs backend lint and tests with
-  JetStream-enabled NATS, runs frontend lint/type-check/build, builds all three containers,
+  JetStream-enabled NATS, runs frontend lint/type-check/build, builds all five containers,
   and validates the Helm/Kubernetes manifests on pull requests and pushes to `main`.
 - `Publish` builds backend/admin images for `linux/amd64` and `linux/arm64`, and
   the public-site image for `linux/amd64` only. It pushes them to GHCR on `main`,
@@ -15,11 +15,14 @@ The published Stolosio artifacts are:
 ghcr.io/elei-io/stolosio
 ghcr.io/elei-io/stolosio-admin
 ghcr.io/elei-io/stolosio-public
+ghcr.io/elei-io/stolosio-browserless
+ghcr.io/elei-io/stolosio-fetch-proxy
 oci://ghcr.io/elei-io/charts/stolosio
 ```
 
 The first image is shared by the API, workers, migration Job, and fleet controller.
-Browserless remains the upstream `ghcr.io/browserless/chromium` image. PostgreSQL and
+The matching `stolosio-browserless` and `stolosio-fetch-proxy` images supply the
+mandatory page-fetch isolation described in [Network policy](NETWORK_POLICY.md). PostgreSQL and
 NATS are external services, not Stolosio images.
 
 The public image serves only static marketing and documentation pages on port 8080.
@@ -51,7 +54,7 @@ git push origin v0.1.15
 GitHub's repository `GITHUB_TOKEN` publishes all artifacts; no long-lived publishing
 credential is required. New packages follow the repository/package visibility
 configuration. For a private package, a homelab needs a classic personal access token
-with `read:packages`. Alternatively, make the four packages public after their first
+with `read:packages`. Alternatively, make the six packages public after their first
 publication.
 
 Enable all `CI` checks as required checks on the default branch before treating a

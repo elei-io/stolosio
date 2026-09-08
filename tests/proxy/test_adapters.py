@@ -247,7 +247,10 @@ async def test_browserbase_releases_session_when_connect_url_is_missing(
     ]
 
 
-def test_registry_has_only_http_browserless_and_browserbase_adapters() -> None:
+def test_registry_has_only_http_browserless_and_browserbase_adapters(monkeypatch) -> None:
+    from backend.proxy.adapters import registry
+    from backend.proxy.errors import ProviderUnavailable
+
     assert isinstance(get_provider_adapter(ProviderName.HTTP), HttpAdapter)
     browserless = get_provider_adapter(
         ProviderName.BROWSERLESS,
@@ -255,6 +258,10 @@ def test_registry_has_only_http_browserless_and_browserbase_adapters() -> None:
     )
     assert isinstance(browserless, DirectCdpAdapter)
     assert browserless.session_timeout_seconds == 600
+    monkeypatch.setattr(registry.settings, "browserbase_network_isolation_verified", False)
+    with pytest.raises(ProviderUnavailable, match="network isolation"):
+        get_provider_adapter(ProviderName.BROWSERBASE)
+    monkeypatch.setattr(registry.settings, "browserbase_network_isolation_verified", True)
     assert isinstance(get_provider_adapter(ProviderName.BROWSERBASE), BrowserbaseAdapter)
 
 

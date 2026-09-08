@@ -160,6 +160,14 @@ jobs:
           - name: stolosio-admin
             context: ./admin
             platforms: linux/amd64,linux/arm64
+          - name: stolosio-browserless
+            context: ./runtime
+            file: ./runtime/Dockerfile.browserless
+            platforms: linux/amd64,linux/arm64
+          - name: stolosio-fetch-proxy
+            context: ./runtime
+            file: ./runtime/Dockerfile.fetch-proxy
+            platforms: linux/amd64,linux/arm64
           - name: stolosio-public
             context: ./public-site
             platforms: linux/amd64
@@ -178,6 +186,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           platforms: ${{ matrix.platforms }}
           push: false
           cache-from: type=gha,scope=ci-${{ matrix.name }}
@@ -213,3 +222,28 @@ jobs:
             --set nats.existingSecret=stolosio-connections \
             | docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0 \
                 -strict -summary -ignore-missing-schemas
+
+  egress:
+    name: Page-fetch isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.29"
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked --dev
+      - name: Build isolated runtimes
+        run: |
+          docker build -f runtime/Dockerfile.browserless -t stolosio-browserless:egress-test runtime
+          docker build -f runtime/Dockerfile.fetch-proxy -t stolosio-fetch-proxy:egress-test runtime
+      - name: Verify the connection boundary
+        run: uv run python tests/runtime/check.py

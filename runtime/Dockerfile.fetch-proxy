@@ -1,0 +1,8 @@
+FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    squid nftables iproute2 python3 util-linux ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY egress.py fetch-proxy-entrypoint.sh /opt/stolosio/
+COPY squid.conf /etc/squid/squid.conf
+EXPOSE 3128
+ENTRYPOINT ["/bin/sh", "/opt/stolosio/fetch-proxy-entrypoint.sh"]

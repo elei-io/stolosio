@@ -3,6 +3,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -945,3 +946,87 @@ async def test_transition_history_is_factual_and_durable(
         )
     assert row is not None
     assert row.transition_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("redirect_status", [301, 302, 303, 307, 308])
+async def test_http_redirect_checks_domain_policy_before_sending(monkeypatch, redirect_status):
+    requests = []
+    original_client = httpx.AsyncClient
+
+    def respond(request):
+        requests.append(str(request.url))
+        return httpx.Response(redirect_status, headers={"location": "https://blocked.test/private"})
+
+    def client(**kwargs):
+        assert kwargs.pop("proxy") == "http://localhost:3128"
+        assert kwargs["trust_env"] is False
+        return original_client(transport=httpx.MockTransport(respond), **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+    facade = transition_session(FakeProviderSession([]))
+    facade._upstream = None
+    facade._upstream_messages = None
+    facade._attempt = object()
+    facade._resolved = replace(facade._resolved, blocked_domain_patterns=("blocked.test",))
+    await facade.send(
+        json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": "https://public.test/"}})
+    )
+    response = json.loads(await anext(facade.messages()))
+    assert response["error"]["message"] == "Navigation blocked by Stolosio network policy"
+    assert requests == ["https://public.test/"]
+    assert facade._upstream is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["denied", "connect_denied", "offline", "firewall"])
+async def test_proxy_failures_are_terminal_without_browser_fallback(monkeypatch, failure):
+    original_client = httpx.AsyncClient
+
+    def respond(request):
+        if failure == "connect_denied":
+            raise httpx.ProxyError("403 Forbidden")
+        if failure == "offline":
+            raise httpx.ConnectError("proxy unreachable")
+        return httpx.Response(
+            403 if failure == "denied" else 503,
+            headers={
+                "x-squid-error": "ERR_ACCESS_DENIED 0"
+                if failure == "denied"
+                else "ERR_CONNECT_FAIL 111",
+            },
+        )
+
+    def client(**kwargs):
+        assert kwargs.pop("proxy") == "http://localhost:3128"
+        return original_client(transport=httpx.MockTransport(respond), **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+    facade = transition_session(FakeProviderSession([]))
+    facade._upstream = None
+    facade._upstream_messages = None
+    facade._attempt = object()
+    await facade.send(
+        json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": "https://public.test/"}})
+    )
+    response = json.loads(await anext(facade.messages()))
+    assert "HTTP fetch" in response["error"]["message"]
+    assert facade._upstream is None
+
+
+@pytest.mark.asyncio
+async def test_missing_proxy_never_attempts_direct_fetch(monkeypatch):
+    def client(**kwargs):
+        pytest.fail("No HTTP client should be created without the required proxy")
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+    facade = transition_session(FakeProviderSession([]))
+    facade._upstream = None
+    facade._upstream_messages = None
+    facade._attempt = object()
+    facade._settings = Settings(http_fetch_proxy_url="")
+    await facade.send(
+        json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": "https://public.test/"}})
+    )
+    response = json.loads(await anext(facade.messages()))
+    assert response["error"]["message"] == "HTTP fetch proxy is required"

@@ -7,8 +7,7 @@ The HTTP facade initially covers `page.goto`, `page.content`, declarative
 `Emulation.setScriptExecutionDisabled` state for replay, and the exact Playwright
 bootstrap commands required by those operations.
 
-Every other non-bootstrap command is a browser requirement. HTTP transport failure,
-non-success status, invalid HTML headers, excessive response size, or failed content
+Every other non-bootstrap command is a browser requirement. An origin non-success status, invalid HTML headers, excessive response size, or failed content
 sanity is also a browser requirement. Stolosio asks the planner
 for Browserless or Browserbase, acquires one browser, replays safe HTTP state, verifies
 document readiness and execution-context catch-up, switches execution, and only then
@@ -37,3 +36,6 @@ primary content. Browserbase is never probed automatically and contributes no
 promotion evidence; operators may run an explicit paid diagnostic probe.
 
 See [Domain Provider Eligibility](ANALYTICS.md).
+
+HTTP page requests require the restricted fetch proxy; see [Network policy](NETWORK_POLICY.md).
+Proxy failures and policy denials are terminal, including on redirects.

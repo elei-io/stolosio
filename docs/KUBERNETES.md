@@ -81,8 +81,10 @@ oci://ghcr.io/elei-io/charts/stolosio
 ```
 
 The Stolosio image is shared by the API, migration Job, maintenance and health workers,
-and fleet controller. Browserless remains the upstream
-`ghcr.io/browserless/chromium` image. There are no Stolosio-owned PostgreSQL or NATS
+and fleet controller. The matching `stolosio-browserless` image wraps pinned upstream Chromium with
+a mandatory outbound firewall. `stolosio-fetch-proxy` isolates HTTP page fetching.
+Both images need `NET_ADMIN` at startup, which their entrypoints drop before serving
+requests. See [Network policy](NETWORK_POLICY.md). There are no Stolosio-owned PostgreSQL or NATS
 images.
 
 Pushes to `main` publish `main` and immutable `sha-<short-commit>` image tags. A

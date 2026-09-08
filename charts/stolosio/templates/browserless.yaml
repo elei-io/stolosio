@@ -58,11 +58,12 @@ data:
             "containers": [
               {
                 "name": "browserless",
-                "image": {{ printf "%s:%s" .Values.browserless.image.repository .Values.browserless.image.tag | quote }},
+                "image": {{ printf "%s:%s" .Values.browserless.image.repository (default .Values.image.tag .Values.browserless.image.tag) | quote }},
                 "imagePullPolicy": {{ .Values.browserless.image.pullPolicy | quote }},
                 "securityContext": {{ toJson .Values.browserless.containerSecurityContext }},
                 "ports": [{"name": "cdp", "containerPort": {{ .Values.browserless.service.port }}}],
                 "env": [
+                  {"name": "EGRESS_EXTRA_BLOCKED_CIDRS", "value": {{ join " " .Values.egress.extraBlockedCidrs | quote }}},
                   {"name": "QUEUED", "value": "0"},
                   {"name": "TIMEOUT", "value": {{ .Values.browserless.timeoutMilliseconds | quote }}}
                 ],

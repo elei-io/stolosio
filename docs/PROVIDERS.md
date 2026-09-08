@@ -45,8 +45,9 @@ explicitly run a Browserbase probe from the domain UI when the diagnostic value
 justifies its cost. A generic "probe all" action remains limited to HTTP and
 Browserless.
 
-Automatic sessions may begin on HTTP. An unsupported command or failed HTTP transport,
+Automatic sessions may begin on HTTP. An unsupported command or failed origin
 status, header, response-size, or content check causes immediate live escalation.
+Proxy failures and network-policy denials are terminal and cannot trigger escalation.
 Successful transitions contribute compact domain-level evidence, allowing Browserless
 to become the preferred starting provider after a small number of browser-required
 sessions and later move back toward HTTP when compatible evidence accumulates.
@@ -66,8 +67,8 @@ providers return their own CDP success or error without Stolosio claiming suppor
 Browserless and Browserbase attempts receive the same operator-managed domain
 blocklist through a Stolosio-owned CDP target bootstrap. Policy injection is required:
 if a provider cannot apply it, Stolosio reports `domain_blocking_unavailable` instead
-of silently running unblocked. The HTTP provider enforces the list on its top-level
-navigation and has no subresource requests to filter. See
+of silently running unblocked. The HTTP provider enforces the list on its navigation
+and every redirect and has no subresource requests to filter. See
 [Network policy](NETWORK_POLICY.md).
 
 ## Time and cost observations

@@ -1,0 +1,21 @@
+FROM ghcr.io/browserless/chromium:v2.55.0@sha256:bba9dc2014f90289d4b845dfe12b38bd00b25b2cd732d5b16778c5229f2da7e1
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends nftables iproute2 util-linux \
+    && rm -rf /var/lib/apt/lists/*
+RUN chown -R root:root /usr/src/app /usr/local/bin/playwright-browsers
+COPY egress.py browser-launch.py browserless-entrypoint.sh /opt/stolosio/
+# Preserve the binary location and resources expected by pinned Playwright. Fail
+# the build if upstream changes its executable layout rather than run unprotected.
+RUN python3 - <<'PY'
+from pathlib import Path
+import shutil
+root = Path('/usr/local/bin/playwright-browsers')
+binaries = [p for p in root.rglob('*') if p.name in ('chrome', 'headless_shell', 'chrome-headless-shell') and p.is_file()]
+assert binaries, 'Pinned Chromium executable was not found'
+for binary in binaries:
+    binary.rename(str(binary) + '.real')
+    shutil.copyfile('/opt/stolosio/browser-launch.py', binary)
+    binary.chmod(0o755)
+PY
+ENTRYPOINT ["/bin/sh", "/opt/stolosio/browserless-entrypoint.sh"]
+CMD []

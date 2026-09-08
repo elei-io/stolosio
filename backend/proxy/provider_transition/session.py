@@ -475,15 +475,38 @@ class ProviderTransitionSession:
             await self._acquire_http_attempt(plan, candidate)
 
         request_headers = _http_request_headers(self._settings)
+        if not self._settings.http_fetch_proxy_url:
+            raise ValueError("HTTP fetch proxy is required")
+
+        async def check_destination(request: httpx.Request) -> None:
+            hostname = request.url.host.rstrip(".").encode("idna").decode("ascii").lower()
+            if request.url.scheme not in {"http", "https"} or any(
+                domain_matches_pattern(hostname, pattern)
+                for pattern in self._resolved.blocked_domain_patterns
+            ):
+                raise ValueError("Navigation blocked by Stolosio network policy")
+
+        async def check_proxy_response(response: httpx.Response) -> None:
+            # Squid's own errors are terminal, including a firewall-denied connection.
+            # An origin spoofing this header can only cause its own request to fail.
+            if response.headers.get("x-squid-error", "").startswith("ERR_"):
+                raise ValueError("HTTP fetch proxy denied or could not reach the destination")
+
         try:
             async with httpx.AsyncClient(
                 follow_redirects=True,
                 trust_env=False,
+                proxy=self._settings.http_fetch_proxy_url,
+                event_hooks={
+                    "request": [check_destination],
+                    "response": [check_proxy_response],
+                },
                 timeout=self._settings.http_request_timeout_seconds,
             ) as client:
                 response = await client.get(url, headers=request_headers)
         except httpx.HTTPError as error:
-            raise _Transition("http_transport_failure") from error
+            # CONNECT denials and proxy outages must not trigger provider fallback.
+            raise ValueError("HTTP fetch through the required proxy failed") from error
         if len(response.content) > self._settings.http_max_response_bytes:
             raise _Transition("http_response_too_large")
         if not 200 <= response.status_code < 300:

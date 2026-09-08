@@ -3,6 +3,7 @@ name: stolosio
 services:
   api:
     build: .
+    networks: [default, page-egress]
     command: >-
       sh -c "uv run alembic upgrade head &&
       uv run uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload"
@@ -14,6 +15,7 @@ services:
       NATS_URL: nats://nats:4222
       BROWSERLESS_URL: ws://browserless:3000
       BROWSERLESS_SESSION_TIMEOUT_SECONDS: "600"
+      HTTP_FETCH_PROXY_URL: http://fetch-proxy:3128
     ports:
       - "127.0.0.1:${STOLOSIO_API_PORT:-8411}:8000"
     volumes:
@@ -128,13 +130,33 @@ services:
       - nats_data:/data
 
   browserless:
-    image: ghcr.io/browserless/chromium:latest
+    image: stolosio-browserless:local
+    networks: [page-egress]
+    build:
+      context: runtime
+      dockerfile: Dockerfile.browserless
+    cap_add:
+      - NET_ADMIN
     environment:
       CONCURRENT: "${STOLOSIO_BROWSERLESS_CONCURRENT:-5}"
       QUEUED: "10"
       TIMEOUT: "600000"
     expose:
       - "3000"
+
+  fetch-proxy:
+    image: stolosio-fetch-proxy:local
+    networks: [page-egress]
+    build:
+      context: runtime
+      dockerfile: Dockerfile.fetch-proxy
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "127.0.0.1:3128:3128"
+
+networks:
+  page-egress: {}
 
 volumes:
   postgres_data:

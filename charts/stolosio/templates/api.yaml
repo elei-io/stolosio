@@ -31,6 +31,8 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/app/.venv/bin/uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
           env:
+            - name: HTTP_FETCH_PROXY_URL
+              value: "http://{{ include "stolosio.fullname" . }}-fetch-proxy:3128"
             {{- include "stolosio.connectionEnv" . | nindent 12 }}
             {{- include "stolosio.browserbaseEnv" . | nindent 12 }}
           ports:

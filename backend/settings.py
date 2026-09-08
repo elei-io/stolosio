@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     browserbase_api_url: AnyUrl = AnyUrl("https://api.browserbase.com/v1")
     browserbase_api_key: str = ""
     browserbase_project_id: str | None = None
+    browserbase_network_isolation_verified: bool = False
     browserbase_session_timeout_seconds: int = 600
     stolosio_max_active_sessions: int = 100
     session_lease_seconds: float = 30
@@ -49,6 +50,8 @@ class Settings(BaseSettings):
     provider_acquisition_timeout_seconds: int = 30
     session_cleanup_timeout_seconds: float = 2
     http_request_timeout_seconds: float = 20
+    # Page acquisition must never inherit the API process's internal network access.
+    http_fetch_proxy_url: str = "http://localhost:3128"
     http_max_response_bytes: int = 10 * 1024 * 1024
     http_user_agent: str = "StolosioBot/0.1 (https://github.com/elei-io/stolosio)"
     http_accept: str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"

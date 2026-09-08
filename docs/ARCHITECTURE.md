@@ -40,8 +40,9 @@ Promotion and escalation are separate mechanisms:
   then update durable domain evidence used by future plans. Promotion never changes a
   live session.
 - **Escalation** is a live correctness path. An automatic HTTP session immediately
-  acquires a browser when HTTP cannot execute a CDP method, its request fails, or its
-  status, headers, response size, or content sanity check fails.
+  acquires a browser when HTTP cannot execute a CDP method or its origin status,
+  headers, response size, or content sanity check fails. Proxy failures and
+  network-policy denials are terminal.
 
 Browserbase is never probed automatically and never contributes promotion evidence.
 Operators may run an explicit paid diagnostic probe. When enabled,
@@ -97,7 +98,7 @@ parameters, page data, credentials, or diagnoses.
 PostgreSQL stores Stolosio's operator-managed global domain blocklist. Each provider
 attempt snapshots the current policy version. Browser attempts apply the list to
 newly attached network-capable CDP targets before exposing them downstream; the HTTP
-facade applies it to top-level navigation. Clients cannot override administrative
+facade applies it to navigation and every redirect. Clients cannot override administrative
 network policy through `stolosio.*` query parameters. See
 [Network policy](NETWORK_POLICY.md).
 
