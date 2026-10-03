@@ -6,36 +6,61 @@ import pwd
 import sys
 from pathlib import Path
 
-user = pwd.getpwnam("blessuser")
-if os.getuid() != 0:
-    raise SystemExit("The browser must be launched by the isolated controller")
 
-# Browserless/Puppeteer creates a private profile before invoking the executable.
-# Transfer only that disposable profile, never an arbitrary path supplied by a client.
-for argument in sys.argv[1:]:
-    if argument.startswith("--user-data-dir="):
-        profile = Path(argument.split("=", 1)[1]).resolve()
-        if not (
-            str(profile).startswith("/tmp/browserless-data-dirs/")
-            or str(profile).startswith("/tmp/puppeteer_dev_chrome_profile-")
-        ):
-            raise SystemExit("Browser profile must be in the disposable runtime directory")
-        profile.mkdir(parents=True, exist_ok=True)
-        os.chown(profile, user.pw_uid, user.pw_gid)
+def transfer_browserless_tmpdir(tmpdir: str, uid: int, gid: int) -> bool:
+    """Transfer only browserless's per-session scratch directory to blessuser."""
+    scratch_root = Path("/tmp/browserless-scratch-dirs").resolve()
+    scratch = Path(tmpdir).resolve()
+    try:
+        relative = scratch.relative_to(scratch_root)
+    except ValueError:
+        return False
+    if relative == Path("."):
+        return False
+    scratch.mkdir(parents=True, exist_ok=True)
+    os.chown(scratch, uid, gid)
+    return True
 
-os.environ["HOME"] = user.pw_dir
-os.execv(
-    "/usr/bin/setpriv",
-    [
-        "setpriv",
-        f"--reuid={user.pw_uid}",
-        f"--regid={user.pw_gid}",
-        "--clear-groups",
-        "--bounding-set=-all",
-        "--inh-caps=-all",
-        "--ambient-caps=-all",
-        "--no-new-privs",
-        str(Path(sys.argv[0]).absolute()) + ".real",
-        *sys.argv[1:],
-    ],
-)
+
+def main() -> None:
+    user = pwd.getpwnam("blessuser")
+    if os.getuid() != 0:
+        raise SystemExit("The browser must be launched by the isolated controller")
+
+    # Browserless/Puppeteer creates a private profile before invoking the executable.
+    # Transfer only that disposable profile, never an arbitrary path supplied by a client.
+    for argument in sys.argv[1:]:
+        if argument.startswith("--user-data-dir="):
+            profile = Path(argument.split("=", 1)[1]).resolve()
+            if not (
+                str(profile).startswith("/tmp/browserless-data-dirs/")
+                or str(profile).startswith("/tmp/puppeteer_dev_chrome_profile-")
+            ):
+                raise SystemExit("Browser profile must be in the disposable runtime directory")
+            profile.mkdir(parents=True, exist_ok=True)
+            os.chown(profile, user.pw_uid, user.pw_gid)
+
+    tmpdir = os.environ.get("TMPDIR")
+    if tmpdir:
+        transfer_browserless_tmpdir(tmpdir, user.pw_uid, user.pw_gid)
+
+    os.environ["HOME"] = user.pw_dir
+    os.execv(
+        "/usr/bin/setpriv",
+        [
+            "setpriv",
+            f"--reuid={user.pw_uid}",
+            f"--regid={user.pw_gid}",
+            "--clear-groups",
+            "--bounding-set=-all",
+            "--inh-caps=-all",
+            "--ambient-caps=-all",
+            "--no-new-privs",
+            str(Path(sys.argv[0]).absolute()) + ".real",
+            *sys.argv[1:],
+        ],
+    )
+
+
+if __name__ == "__main__":
+    main()
