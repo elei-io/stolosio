@@ -141,6 +141,20 @@ class CaptureService:
             evidence=Evidence(versions=self.versions()),
         )
 
+        try:
+            async with asyncio.timeout(budget):
+                return await self._acquire(request, result, t0, remaining)
+        except TimeoutError:
+            if result.evidence.attempts:
+                last = result.evidence.attempts[-1]
+                last.decision, last.decision_reason = "fail", "capture deadline expired"
+                last.reason_code = "acquisition"
+            result.failure = failures.failure("deadline_exceeded", "capture deadline expired")
+            return self._finish(result)
+
+    async def _acquire(self, request: CaptureRequest, result: CaptureResult, t0: float, remaining) -> CaptureResult:
+        s = self.settings
+
         # 1. plain HTTP
         def elapsed_ms() -> float:
             return round((time.monotonic() - t0) * 1000, 1)
@@ -177,11 +191,13 @@ class CaptureService:
         if http.truncated:
             return await self._too_large(request, result, http, remaining)
         http_doc = self._http_document(http)
+        # Keep already-acquired bytes as failure evidence if classification/cache work times out.
+        result.document = http_doc
+        result.final_url, result.response = http.final_url, Response(http.status_code, http.headers, http.redirects)
         if 200 <= http.status_code < 300 and not accepts(request.accept, http_doc.media_type):  # sniffed
             return self._unsupported(result, http, http_doc.media_type)
-        verdict = await asyncio.to_thread(self.classifier.classify, Fetched(request.url, http.as_requests(), None))
-        result.final_url, result.response = http.final_url, Response(http.status_code, http.headers, http.redirects)
         result.evidence.cost.bytes += len(http.body)
+        verdict = await asyncio.to_thread(self.classifier.classify, Fetched(request.url, http.as_requests(), None))
         attempt = Attempt(
             "http",
             "direct",
@@ -424,7 +440,7 @@ class CaptureService:
                 return fallback
             result.document = http_doc
             result.failure = failures.failure(
-                "capacity" if busy else "browser_unavailable",
+                "capacity" if busy else "deadline_exceeded" if isinstance(e, TimeoutError) else "browser_unavailable",
                 repr(e)[:300],
                 getattr(e, "retry_after_seconds", None) if busy else None,
             )
@@ -616,6 +632,9 @@ class CaptureService:
         primary = next((r.code for r in reasons), None)
         state, notes = rendered.final_state or {}, []
         empty = state.get("chars", len(" ".join(rendered.lines))) < MIN_RENDERED_CHARS or state.get("mount", False)
+        if page.stats.main_words == 0 and page.stats.content_words < 5 and page.words >= 20:
+            empty = True
+            notes.append("declared main content is empty; only navigation remains")
         if rendered.early_dom:
             notes.append("the page stopped answering: the HTML is the DOM from early in the render")
         if rendered.transfer_capped:

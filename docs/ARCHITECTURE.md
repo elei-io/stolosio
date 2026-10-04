@@ -52,7 +52,8 @@ envelope needed for correlation and observation, but it does not decide whether 
 individual browser method is supported. One Stolosio attempt owns one upstream browser
 session for its lifetime.
 
-Page capture uses the same admission and capacity. It fetches plain HTTP through the
+Page capture uses the same global session admission and acquires provider capacity only
+when a browser tier is needed. Verified HTTP captures require no browser slot. It fetches plain HTTP through the
 egress proxy and renders on a local Browserless slot when HTTP is not enough; the per-URL
 method cache in PostgreSQL (`capture_method_cache`) records where plain HTTP was
 confirmed sufficient. With `resolve_bot_challenges` enabled, capture tries the internal

@@ -32,13 +32,19 @@ class SharedRenderer:
 
 
 class SlotTier:
-    """Managed rendering or local resolution on the browser slot the capture already holds."""
+    """Acquire a local slot on first render; managed and local tiers reuse its endpoint."""
 
     tier = "managed"
     paid = False
     proxied = False
 
-    def __init__(self, renderer: SharedRenderer, endpoint: str, *, local: bool = False) -> None:
+    def __init__(
+        self,
+        renderer: SharedRenderer,
+        endpoint: Callable[[float], Awaitable[str]],
+        *,
+        local: bool = False,
+    ) -> None:
         self._renderer = renderer
         self._endpoint = endpoint
         self.tier = "local_resolution" if local else "managed"
@@ -46,7 +52,12 @@ class SlotTier:
     async def render(
         self, url: str, deadline_s: float, exclusions: tuple[Exclusion, ...] = ()
     ) -> Rendered:
-        return await self._renderer.render(url, deadline_s, exclusions, self._endpoint)
+        started = asyncio.get_running_loop().time()
+        endpoint = await self._endpoint(deadline_s)
+        remaining = deadline_s - (asyncio.get_running_loop().time() - started)
+        if remaining <= 0:
+            raise TimeoutError("capture deadline expired while acquiring browser capacity")
+        return await self._renderer.render(url, remaining, exclusions, endpoint)
 
 
 class CloudChallengeTier:

@@ -281,3 +281,11 @@ Each attempt carries `reason_code`: `cache_url`, `cache_pattern`, `canary`, `ver
 `assessment`, `content_comparison`, `acquisition`, or `media_type`. This is the stable machine-readable
 reason for the acquisition decision. `decision_reason` is explanatory text; hosts must not parse it
 for accounting or observations. Stolosio copies the code into its redacted completion event.
+
+### Acquisition deadlines and incomplete rendered content
+
+The acquisition deadline bounds HTTP fetching, classification, cache access and browser-tier
+work together, subject to the service cap. A deadline failure retains already-acquired HTTP
+content as evidence. Render timeouts report `deadline_exceeded`. A rendered page with an empty
+declared main section and only navigation cannot verify complete content or add sufficient
+method-cache evidence.

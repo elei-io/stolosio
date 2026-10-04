@@ -11,7 +11,12 @@ CapturePath = Literal["http", "managed", "local_resolution", "challenge_resoluti
 
 WINDOWS = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}
 
-REJECTION_REASONS = ("gateway_capacity_full", "provider_queue_full", "provider_queue_timeout")
+REJECTION_REASONS = (
+    "gateway_capacity_full",
+    "provider_queue_full",
+    "provider_queue_timeout",
+    "session_admission_timeout",
+)
 
 
 def capture_outcome_expression():

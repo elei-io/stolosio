@@ -138,7 +138,9 @@ def test_a_pattern_skips_rendering_after_three_confirmations():
     for i in (101, 102, 103):
         run(svc, url=f"https://shop.test/p/{i}")
     r = run(svc, url="https://shop.test/p/104")
-    assert managed.calls == 3 and r.evidence.attempts[0].decision_reason.startswith("cache: pattern https://shop.test:443/p/{id}")
+    assert managed.calls == 3 and r.evidence.attempts[0].decision_reason.startswith(
+        "cache: pattern https://shop.test:443/p/{id}"
+    )
 
 
 def test_render_adding_content_is_kept_and_not_cached_as_sufficient():
@@ -440,6 +442,35 @@ def test_insufficient_render_budget_preserves_html_as_deadline_failure():
     r = run(svc, deadline_ms=4000)
     assert r.outcome == "failed" and r.failure.code == "deadline_exceeded"
     assert r.document.body == ARTICLE.encode() and svc.managed.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_slow_cache_lookup_is_bounded_and_retains_plain_html():
+    class SlowCache(MemoryMethodCache):
+        async def get(self, key):
+            await asyncio.Event().wait()
+
+    svc = service(FakeFetcher(), managed=FakeTier("managed", ARTICLE), cache=SlowCache())
+    async with asyncio.timeout(3):
+        result = await svc.capture(CaptureRequest(url="https://example.test/slow-cache", deadline_ms=100))
+    assert result.failure.code == "deadline_exceeded"
+    assert result.document.body == ARTICLE.encode()
+    assert result.evidence.cost.bytes == len(ARTICLE.encode())
+    assert result.evidence.attempts[-1].decision == "fail"
+    assert svc.managed.calls == 0
+
+
+def test_navigation_only_render_with_empty_main_cannot_verify_an_article():
+    navigation = (
+        "<html><head><title>Navigation</title></head><body><nav>"
+        + "".join(f"<a href='/year/{i}'>Year in review {i}</a>" for i in range(40))
+        + "</nav><main></main></body></html>"
+    )
+    cache = MemoryMethodCache()
+    result = run(service(FakeFetcher(), managed=FakeTier("managed", navigation), cache=cache))
+    assert result.outcome == "failed" and result.failure.code == "incomplete_content"
+    assert result.document.body == ARTICLE.encode()
+    assert asyncio.run(cache.get(url_keys("https://example.test/page")[0])) is None
 
 
 def test_renderer_restarts_a_dead_driver_once_and_retries():

@@ -23,13 +23,25 @@ There is no authentication: the endpoint is for callers inside the deployment's 
 
 ## Capacity
 
-A capture is a Stolosio session that holds one slot of the local `browserless` fleet from
-admission to response: plain HTTP first, then a render on that slot when needed. Captures and
-`/v1/connect` sessions share the global session limit, the provider queue and its accounting. When
-admission can't finish while at least 10 seconds of the capture's deadline remain, or the queue is
-full, the capture is refused with 503. Admission retries a Postgres deadlock or serialization
-failure a few times; one that still fails refuses the capture with 503 and detail
-`database_conflict`, never 500.
+A capture consumes global logical-session capacity before it fetches HTTP. It acquires
+one local `browserless` slot only when verification, managed rendering, or local challenge
+resolution needs a browser. Verified HTTP cache hits and non-HTML responses require no
+provider attempt and continue under browser saturation. They incur no modeled browser-slot cost.
+
+Provider acquisition uses the existing transactional queue and leaves at least five seconds
+of the tier's remaining budget for rendering. Managed and local resolution reuse the assigned
+slot until completion; paid resolution replaces it, or acquires cloud capacity directly if
+local acquisition was refused. Queue limits and cancellation cleanup still apply.
+
+Global admission refusals, admission deadline expiry, and exhausted admission database conflicts
+return 503. Network-policy lookup and logical admission share the caller's deadline; late
+admissions are drained and released. Once HTTP
+acquisition has begun, browser capacity refusals are completed capture results (HTTP 200,
+failure code `capacity`, with retry guidance and the HTTP body as failure evidence).
+The caller's deadline is capped by `CAPTURE_DEFAULT_DEADLINE_MS`. The remaining deadline
+bounds fetching, classification, method-cache access, provider
+waits and rendering. Expiry returns `deadline_exceeded`, retaining already-fetched content.
+Bounded event recording and capacity cleanup run before the response, outside the acquisition budget.
 
 ## Egress and network policy
 
@@ -44,7 +56,7 @@ domain, which also catches redirect hops.
 ## Challenge resolution
 
 When `resolve_bot_challenges` is true, bot challenges and bot block pages first try
-`local_resolution` on the capture's existing
+`local_resolution` on a lazily acquired
 local fleet slot. The initial resolver is deliberately simple: a fresh browser context using the
 browser's native user agent. Images, fonts and media are permitted, with a transfer cap;
 service workers remain blocked to preserve URL exclusions. The initial 10-second challenge wait

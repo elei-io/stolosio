@@ -1,5 +1,4 @@
-"""POST /v1/capture on Stolosio capacity: one local slot per capture, network policy merged into the
-exclusions, paid challenge resolution behind its own provider limit, and accounting."""
+"""Capture admission, lazy provider capacity, exclusions, challenge resolution and accounting."""
 
 import asyncio
 from types import SimpleNamespace
@@ -51,13 +50,16 @@ CHALLENGE = (
 
 
 class FakeFetcher:
-    def __init__(self, status=200, body=ARTICLE, headers=None):
+    def __init__(self, status=200, body=ARTICLE, headers=None, during=None):
         self.status, self.body = status, body
         self.headers = headers or [("Content-Type", "text/html; charset=utf-8")]
         self.exclusions = None
+        self.during = during
 
     async def fetch(self, url, timeout_s, exclusions=(), accept=None):
         self.exclusions = exclusions
+        if self.during is not None:
+            await self.during()
         return HttpResponse(url, url, self.status, self.headers, self.body.encode(), [], 10.0)
 
     async def close(self):
@@ -191,7 +193,9 @@ async def attempts(database: async_sessionmaker[AsyncSession]) -> list[Acquisiti
 
 
 @pytest.mark.asyncio
-async def test_a_capture_holds_one_local_slot_until_it_answers(runner, database_sessions) -> None:
+async def test_a_render_holds_one_local_slot_until_the_capture_answers(
+    runner, database_sessions
+) -> None:
     held = []
 
     async def during() -> None:
@@ -252,7 +256,10 @@ async def test_the_network_policy_joins_the_request_exclusions(runner) -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_free_slot_is_a_retryable_refusal_not_a_capture(runner, database_sessions) -> None:
+async def test_browser_saturation_fails_verification_but_not_cached_http(
+    runner, database_sessions
+) -> None:
+    runner._page_settings.canary_rate = 0.0
     release = asyncio.Event()
     entered = asyncio.Event()
 
@@ -260,19 +267,29 @@ async def test_no_free_slot_is_a_retryable_refusal_not_a_capture(runner, databas
         entered.set()
         await release.wait()
 
+    # Warm the cache before occupying the only browser slot.
+    await runner.capture(CaptureRequest(url="https://example.test/cached"))
     runner._renderer = FakeRenderer(during=hold)
     first = asyncio.create_task(runner.capture(CaptureRequest(url="https://example.test/a")))
     await entered.wait()
-    with pytest.raises(CaptureUnavailable) as refused:
-        await runner.capture(CaptureRequest(url="https://example.test/b"))
-    release.set()
-    assert (await first).outcome == "captured"
-    assert (
-        refused.value.reason == "provider_queue_timeout" and refused.value.retry_after_seconds > 0
-    )
+    try:
+        cached = await runner.capture(CaptureRequest(url="https://example.test/cached"))
+        assert cached.outcome == "captured" and [a.tier for a in cached.evidence.attempts] == [
+            "direct"
+        ]
+        refused = await runner.capture(CaptureRequest(url="https://example.test/b"))
+        assert refused.failure.code == "capacity" and refused.failure.retry_after_seconds > 0
+        assert refused.document.body == ARTICLE.encode()
+    finally:
+        release.set()
+        assert (await first).outcome == "captured"
     async with database_sessions() as database:
-        states = sorted(await database.scalars(select(GatewaySession.state)))
-    assert states == ["closed", "failed"]
+        sessions = list(await database.scalars(select(GatewaySession)))
+    assert all(session.state == "closed" for session in sessions)
+    # One warmed capture and the blocking render; the cache hit has no provider attempt.
+    rows = await attempts(database_sessions)
+    assert len([a for a in rows if a.state == "completed"]) == 2
+    assert len([a for a in rows if a.state == "failed"]) == 1
 
 
 class DeadlockDetected(RuntimeError):
@@ -280,7 +297,213 @@ class DeadlockDetected(RuntimeError):
 
 
 @pytest.mark.asyncio
-async def test_a_persistent_database_conflict_is_a_retryable_refusal(
+async def test_http_fetch_does_not_reserve_a_provider_slot(runner, database_sessions):
+    async def during():
+        assert await attempts(database_sessions) == []
+        async with database_sessions() as database:
+            session = await database.scalar(select(GatewaySession))
+        assert session.state == "open" and session.requested_settings == {}
+
+    runner._fetcher = FakeFetcher(during=during)
+    result = await runner.capture(CaptureRequest(url="https://example.test/page"))
+    assert result.outcome == "captured"
+    assert len(await attempts(database_sessions)) == 1
+
+
+@pytest.mark.asyncio
+async def test_http_only_work_still_obeys_the_global_session_limit(runner):
+    runner._sessions._settings = runner._settings.model_copy(
+        update={"stolosio_max_active_sessions": 1}
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold():
+        entered.set()
+        await release.wait()
+
+    runner._fetcher = FakeFetcher(during=hold)
+    first = asyncio.create_task(runner.capture(CaptureRequest(url="https://example.test/a")))
+    await entered.wait()
+    try:
+        with pytest.raises(CaptureUnavailable) as refused:
+            await runner.capture(CaptureRequest(url="https://example.test/b"))
+        assert refused.value.reason == "gateway_capacity_full"
+    finally:
+        release.set()
+        await first
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["http", "render"])
+async def test_cancelled_capture_releases_only_the_capacity_it_acquired(
+    runner, database_sessions, stage
+):
+    entered = asyncio.Event()
+
+    async def hold():
+        entered.set()
+        await asyncio.Event().wait()
+
+    if stage == "http":
+        runner._fetcher = FakeFetcher(during=hold)
+    else:
+        runner._renderer = FakeRenderer(during=hold)
+    task = asyncio.create_task(runner.capture(CaptureRequest(url="https://example.test/cancel")))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    rows = await attempts(database_sessions)
+    assert len(rows) == (0 if stage == "http" else 1)
+    assert all(a.state == "failed" and a.terminal_reason == "client_disconnected" for a in rows)
+    async with database_sessions() as database:
+        session = await database.scalar(select(GatewaySession))
+    assert session.state == "failed" and session.terminal_reason == "client_disconnected"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_queued_capture_releases_the_waiter(runner, database_sessions):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold():
+        entered.set()
+        await release.wait()
+
+    runner._renderer = FakeRenderer(during=hold)
+    first = asyncio.create_task(runner.capture(CaptureRequest(url="https://example.test/holder")))
+    await entered.wait()
+    queued = asyncio.Event()
+    enqueue = runner._attempts._repository.enqueue
+
+    async def observe_enqueue(*args, **kwargs):
+        status, attempt = await enqueue(*args, **kwargs)
+        if status.value == "queued":
+            queued.set()
+        return status, attempt
+
+    runner._attempts._repository.enqueue = observe_enqueue
+    waiter = asyncio.create_task(runner.capture(CaptureRequest(url="https://example.test/waiter")))
+    try:
+        async with asyncio.timeout(3):
+            await queued.wait()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        rows = await attempts(database_sessions)
+        assert sorted(a.state for a in rows) == ["active", "failed"]
+        assert next(a for a in rows if a.state == "failed").terminal_reason == "client_disconnected"
+    finally:
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
+        release.set()
+        await first
+
+
+@pytest.mark.asyncio
+async def test_expired_http_deadline_creates_no_provider_attempt(runner, database_sessions):
+    async def hold():
+        await asyncio.Event().wait()
+
+    runner._fetcher = FakeFetcher(during=hold)
+    async with asyncio.timeout(3):
+        result = await runner.capture(
+            CaptureRequest(url="https://example.test/slow", deadline_ms=100)
+        )
+    assert result.failure.code == "deadline_exceeded"
+    assert await attempts(database_sessions) == []
+    async with database_sessions() as database:
+        session = await database.scalar(select(GatewaySession))
+    assert session.state == "closed"
+
+
+@pytest.mark.asyncio
+async def test_admission_deadline_bounds_policy_lookup(runner, database_sessions):
+    async def blocked_policy():
+        await asyncio.Event().wait()
+
+    runner._network_policy.settings = blocked_policy
+    async with asyncio.timeout(3):
+        with pytest.raises(CaptureUnavailable) as refused:
+            await runner.capture(
+                CaptureRequest(url="https://example.test/slow-policy", deadline_ms=100)
+            )
+    assert refused.value.reason == "session_admission_timeout"
+    assert await attempts(database_sessions) == []
+    async with database_sessions() as database:
+        assert await database.scalar(select(GatewaySession)) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_late_global_admission_is_drained_and_released(runner, database_sessions, cancel):
+    admit = runner._sessions.admit
+    entered = asyncio.Event()
+
+    async def late_admit(*args, **kwargs):
+        lease = await admit(*args, **kwargs)
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            return lease  # Model admission committing just as cancellation arrives.
+
+    runner._sessions.admit = late_admit
+    task = asyncio.create_task(
+        runner.capture(CaptureRequest(url="https://example.test/late-admission", deadline_ms=500))
+    )
+    async with asyncio.timeout(3):
+        await entered.wait()
+        if cancel:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(CaptureUnavailable):
+                await task
+    async with database_sessions() as database:
+        session = await database.scalar(select(GatewaySession))
+    assert session.state == "failed"
+    assert session.terminal_reason == (
+        "client_disconnected" if cancel else "session_admission_timeout"
+    )
+    assert await attempts(database_sessions) == []
+
+
+@pytest.mark.asyncio
+async def test_render_timeout_returns_a_deadline_failure_and_releases_the_slot(
+    runner, database_sessions
+):
+    async def expired():
+        raise TimeoutError("page render deadline expired")
+
+    runner._renderer = FakeRenderer(during=expired)
+    result = await runner.capture(CaptureRequest(url="https://example.test/timeout"))
+    assert result.failure.code == "deadline_exceeded" and result.document.body == ARTICLE.encode()
+    [attempt] = await attempts(database_sessions)
+    assert attempt.state == "completed" and attempt.capacity_occupied_ms is not None
+
+
+@pytest.mark.asyncio
+async def test_cloud_can_resolve_when_no_local_slot_was_acquired(runner, database_sessions):
+    fleets = FleetRepository(database_sessions)
+    await fleets.observe_instances(
+        ProviderName.BROWSERLESS, [], platform="test", observation_ttl_seconds=30
+    )
+    runner._fetcher = FakeFetcher(status=403, body=CHALLENGE)
+    result = await runner.capture(
+        CaptureRequest(url="https://example.test/cloud", resolve_bot_challenges=True)
+    )
+    assert result.outcome == "captured" and result.evidence.cost.paid
+    assert runner._local_renderer.calls == [] and runner._cloud.calls == 1
+    rows = await attempts(database_sessions)
+    assert [(a.provider, a.state) for a in rows] == [
+        ("browserless", "failed"),
+        ("browserless_cloud", "completed"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_browser_admission_conflict_is_a_completed_capacity_failure(
     runner, database_sessions
 ) -> None:
     repository = runner._attempts._repository
@@ -292,14 +515,13 @@ async def test_a_persistent_database_conflict_is_a_retryable_refusal(
         raise DeadlockDetected("deadlock detected")
 
     repository.enqueue = deadlocked
-    with pytest.raises(CaptureUnavailable) as refused:
-        await runner.capture(CaptureRequest(url="https://example.test/page"))
-
-    assert refused.value.reason == "database_conflict" and refused.value.retry_after_seconds > 0
+    result = await runner.capture(CaptureRequest(url="https://example.test/page"))
+    assert result.failure.code == "capacity" and result.failure.retry_after_seconds > 0
+    assert result.document.body == ARTICLE.encode()
     assert enqueued == 3
     async with database_sessions() as database:
         states = list(await database.scalars(select(GatewaySession.state)))
-    assert states == ["failed"]
+    assert states == ["closed"]
 
 
 @pytest.mark.asyncio
