@@ -22,3 +22,15 @@ export function extractApiError(error: unknown): string {
 
   return DEFAULT_API_ERROR
 }
+
+export async function apiRequest<T>(
+  url: string,
+  init?: RequestInit
+): Promise<T> {
+  const response = await fetch(url, init)
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => undefined)
+    throw new Error(extractApiError(body))
+  }
+  return (await response.json()) as T
+}

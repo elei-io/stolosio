@@ -1,22 +1,15 @@
 import { useQuery } from "@tanstack/react-query"
-import { extractApiError } from "@/lib/api"
+import { apiRequest } from "@/lib/api"
 import type { CapturePath } from "@/types/contracts"
 import type { OperationsOverview, OverviewWindow } from "@/types/api"
 
-export async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(path)
-  if (!response.ok) {
-    const body: unknown = await response.json().catch(() => undefined)
-    throw new Error(extractApiError(body))
-  }
-  return response.json() as Promise<T>
-}
+export { apiRequest as fetchJson } from "@/lib/api"
 
 export function useOverview(window: OverviewWindow) {
   return useQuery({
     queryKey: ["operations-overview", window],
     queryFn: () =>
-      fetchJson<OperationsOverview>(`/v1/admin/overview?window=${window}`),
+      apiRequest<OperationsOverview>(`/v1/admin/overview?window=${window}`),
     refetchInterval: 15_000,
   })
 }

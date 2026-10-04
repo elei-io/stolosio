@@ -1,3 +1,10 @@
+import { EventDetails } from "@/components/activity-event-details"
+import { eventDetail, eventTone, formatDateTime } from "@/lib/activity-presentation"
+import {
+  mergeEvents,
+  subscribeActivityEvents,
+  type StreamStatus,
+} from "@/lib/activity-stream"
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
@@ -5,13 +12,10 @@ import {
   ArrowDown,
   ChevronDown,
   Clock3,
-  Copy,
-  ExternalLink,
   Pause,
   Play,
   Search,
   WifiOff,
-  X,
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
@@ -24,8 +28,7 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select"
-import { extractApiError } from "@/lib/api"
-import { captureEventDetail, summarizeCommandMethods } from "@/lib/events"
+import { apiRequest, extractApiError } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type {
   ActivityEvent,
@@ -34,7 +37,6 @@ import type {
 } from "@/types/api"
 
 type SortOrder = "oldest" | "newest"
-type StreamStatus = "connecting" | "live" | "reconnecting" | "unavailable"
 type FilterProfile = "operational" | "standard" | "all" | "failures" | "custom"
 type OutcomeFilter = "all" | "success" | "failure" | "interrupted"
 type HistoryWindow = "all" | "15m" | "1h" | "24h" | "7d" | "30d"
@@ -119,39 +121,6 @@ const maxLiveEvents = 1_000
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-function isActivityEvent(value: unknown): value is ActivityEvent {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as Partial<ActivityEvent>).event_id === "string" &&
-    typeof (value as Partial<ActivityEvent>).event_type === "string" &&
-    typeof (value as Partial<ActivityEvent>).occurred_at === "string"
-  )
-}
-
-function mergeEvents(
-  current: ActivityEvent[],
-  incoming: ActivityEvent[],
-  limit?: number
-): ActivityEvent[] {
-  const events = new Map(
-    current
-      .filter(isActivityEvent)
-      .map((event) => [event.event_id, event] as const)
-  )
-  for (const event of incoming) {
-    if (!isActivityEvent(event)) continue
-    events.set(event.event_id, event)
-  }
-  const merged = [...events.values()].sort(
-    (left, right) =>
-      new Date(left.occurred_at).getTime() -
-        new Date(right.occurred_at).getTime() ||
-      left.event_id.localeCompare(right.event_id)
-  )
-  return limit === undefined ? merged : merged.slice(-limit)
-}
-
 function historyCutoff(window: HistoryWindow): string | null {
   const durations: Partial<Record<HistoryWindow, number>> = {
     "15m": 15 * 60_000,
@@ -203,12 +172,7 @@ async function fetchActivityEvents(
   params.set("limit", "100")
   if (cutoff) params.set("occurred_after", cutoff)
   if (before) params.set("before", before)
-  const response = await fetch(`/v1/admin/events?${params.toString()}`)
-  if (!response.ok) {
-    const body: unknown = await response.json().catch(() => undefined)
-    throw new Error(extractApiError(body))
-  }
-  return (await response.json()) as ActivityEventPage
+  return apiRequest<ActivityEventPage>(`/v1/admin/events?${params.toString()}`)
 }
 
 function MultiSelect<T extends string>({
@@ -251,30 +215,6 @@ function MultiSelect<T extends string>({
   )
 }
 
-function eventDetail(event: ActivityEvent) {
-  const payload = event.payload
-  const captureDetail = captureEventDetail(payload)
-  if (captureDetail) return captureDetail
-  const commandSummary = summarizeCommandMethods(payload)
-  if (commandSummary) return commandSummary
-  if (
-    typeof payload.from_provider === "string" &&
-    typeof payload.to_provider === "string"
-  ) {
-    return `${payload.from_provider} → ${payload.to_provider}`
-  }
-  if (typeof payload.reason === "string") {
-    return payload.reason.replaceAll("_", " ")
-  }
-  if (typeof payload.method === "string") return payload.method
-  if (typeof payload.status === "number") {
-    const url = typeof payload.url === "string" ? ` · ${payload.url}` : ""
-    return `HTTP ${payload.status}${url}`
-  }
-  if (typeof payload.url === "string") return payload.url
-  return event.outcome ?? "observed"
-}
-
 function formatTime(value: string) {
   return new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
@@ -285,27 +225,12 @@ function formatTime(value: string) {
   }).format(new Date(value))
 }
 
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "long",
-  }).format(new Date(value))
-}
-
 function statusLabel(status: StreamStatus, paused: boolean) {
   if (paused) return "Paused"
   if (status === "live") return "Live"
   if (status === "connecting") return "Connecting"
   if (status === "reconnecting") return "Reconnecting"
   return "Live unavailable — showing retained history"
-}
-
-function eventTone(event: ActivityEvent) {
-  if (event.outcome === "failure") return "text-rose-300"
-  if (event.outcome === "interrupted") return "text-amber-300"
-  if (event.event_family === "navigation") return "text-sky-300"
-  if (event.event_family === "session") return "text-emerald-300"
-  return "text-slate-300"
 }
 
 function providerTone(provider: ActivityProvider | null) {
@@ -319,179 +244,6 @@ function outcomeGlyph(event: ActivityEvent) {
   if (event.outcome === "interrupted") return "!"
   if (event.outcome === "success") return "✓"
   return "·"
-}
-
-function CommandSummaryDetails({ event }: { event: ActivityEvent }) {
-  const methods = event.payload.methods
-  if (!methods || typeof methods !== "object" || Array.isArray(methods)) {
-    return null
-  }
-  const rows = Object.entries(methods)
-    .flatMap(([method, value]) => {
-      if (!value || typeof value !== "object" || Array.isArray(value)) return []
-      const usage = value as Record<string, unknown>
-      return [
-        {
-          method,
-          count: typeof usage.count === "number" ? usage.count : 0,
-          failures:
-            typeof usage.failed_count === "number" ? usage.failed_count : 0,
-          duration:
-            typeof usage.duration_ms === "number" ? usage.duration_ms : 0,
-        },
-      ]
-    })
-    .sort((left, right) => right.count - left.count)
-
-  return (
-    <section className="mt-6">
-      <h3 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-        Command methods
-      </h3>
-      <div className="mt-2 max-h-72 overflow-auto rounded-lg border">
-        {rows.map((row) => (
-          <div
-            key={row.method}
-            className="grid grid-cols-[minmax(0,1fr)_3.5rem_3.5rem_4.5rem] gap-2 border-b px-3 py-2 font-mono text-xs last:border-b-0"
-          >
-            <span className="truncate" title={row.method}>
-              {row.method}
-            </span>
-            <span className="text-right text-muted-foreground">
-              {row.count}×
-            </span>
-            <span
-              className={cn(
-                "text-right text-muted-foreground",
-                row.failures > 0 && "text-destructive"
-              )}
-            >
-              {row.failures} err
-            </span>
-            <span className="text-right text-muted-foreground">
-              {row.duration} ms
-            </span>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-function EventDetails({
-  event,
-  close,
-  navigate,
-}: {
-  event: ActivityEvent
-  close: () => void
-  navigate: (href: string) => void
-}) {
-  useEffect(() => {
-    const onKeyDown = (keyboardEvent: KeyboardEvent) => {
-      if (keyboardEvent.key === "Escape") close()
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [close])
-
-  return (
-    <div className="fixed inset-0 z-50">
-      <button
-        type="button"
-        className="absolute inset-0 h-full w-full bg-black/45"
-        aria-label="Close event details"
-        onClick={close}
-      />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="activity-event-title"
-        className="absolute inset-y-0 right-0 flex w-full max-w-xl flex-col border-l bg-background shadow-2xl"
-      >
-        <header className="flex items-start justify-between gap-4 border-b px-5 py-4">
-          <div className="min-w-0">
-            <p className="font-mono text-xs text-muted-foreground">
-              {formatDateTime(event.occurred_at)}
-            </p>
-            <h2
-              id="activity-event-title"
-              className="mt-1 truncate font-mono text-lg font-semibold"
-            >
-              {event.event_type}
-            </h2>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Close event details"
-            onClick={close}
-          >
-            <X aria-hidden />
-          </Button>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          <p className={cn("font-mono text-sm", eventTone(event))}>
-            {eventDetail(event)}
-          </p>
-
-          <dl className="mt-6 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-3 text-sm">
-            <dt className="text-muted-foreground">Provider</dt>
-            <dd className="font-mono">{event.provider ?? "Stolosio"}</dd>
-            <dt className="text-muted-foreground">Outcome</dt>
-            <dd className="font-mono">{event.outcome ?? "observation"}</dd>
-            <dt className="text-muted-foreground">Session</dt>
-            <dd className="flex min-w-0 items-center gap-2">
-              <button
-                type="button"
-                className="truncate font-mono text-primary hover:underline"
-                onClick={() =>
-                  navigate(
-                    `/${event.event_family === "capture" ? "captures" : "sessions"}/${event.session_id}`
-                  )
-                }
-              >
-                {event.session_id}
-              </button>
-              <ExternalLink className="size-3 text-muted-foreground" />
-            </dd>
-            <dt className="text-muted-foreground">Attempt</dt>
-            <dd className="truncate font-mono">
-              {event.attempt_id ?? "Not applicable"}
-            </dd>
-            <dt className="text-muted-foreground">Event ID</dt>
-            <dd className="truncate font-mono">{event.event_id}</dd>
-          </dl>
-
-          <CommandSummaryDetails event={event} />
-
-          <section className="mt-6">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-                Sanitized payload
-              </h3>
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() =>
-                  void navigator.clipboard.writeText(
-                    JSON.stringify(event.payload, null, 2)
-                  )
-                }
-              >
-                <Copy aria-hidden />
-                Copy
-              </Button>
-            </div>
-            <pre className="mt-2 overflow-x-auto rounded-lg border bg-muted/40 p-3 font-mono text-xs leading-5 whitespace-pre-wrap">
-              {JSON.stringify(event.payload, null, 2)}
-            </pre>
-          </section>
-        </div>
-      </aside>
-    </div>
-  )
 }
 
 export function ActivityPage({ navigate }: ActivityPageProps) {
@@ -554,17 +306,21 @@ export function ActivityPage({ navigate }: ActivityPageProps) {
 
   useEffect(() => {
     const querySuffix = filterQuery ? `?${filterQuery}` : ""
-    const source = new EventSource(`/v1/admin/events/stream${querySuffix}`)
-    setStatusState({ query: filterQuery, status: "connecting" })
-
-    source.onopen = () => setStatusState({ query: filterQuery, status: "live" })
-    source.onerror = () =>
-      setStatusState({ query: filterQuery, status: "reconnecting" })
-    source.addEventListener("stolosio-event", (message) => {
-      const event: unknown = JSON.parse((message as MessageEvent<string>).data)
-      if (!isActivityEvent(event)) return
-      if (pausedRef.current) {
-        setBufferedState((current) => ({
+    return subscribeActivityEvents(querySuffix, {
+      status: (status) => setStatusState({ query: filterQuery, status }),
+      event: (event) => {
+        if (pausedRef.current) {
+          setBufferedState((current) => ({
+            query: filterQuery,
+            events: mergeEvents(
+              current.query === filterQuery ? current.events : [],
+              [event],
+              maxLiveEvents
+            ),
+          }))
+          return
+        }
+        setLiveState((current) => ({
           query: filterQuery,
           events: mergeEvents(
             current.query === filterQuery ? current.events : [],
@@ -572,31 +328,15 @@ export function ActivityPage({ navigate }: ActivityPageProps) {
             maxLiveEvents
           ),
         }))
-        return
-      }
-      setLiveState((current) => ({
-        query: filterQuery,
-        events: mergeEvents(
-          current.query === filterQuery ? current.events : [],
-          [event],
-          maxLiveEvents
-        ),
-      }))
-      if (!followingRef.current) {
-        setUnseenCount((current) => current + 1)
-      }
+        if (!followingRef.current) {
+          setUnseenCount((current) => current + 1)
+        }
+      },
+      refetchHistory: async () => {
+        await refetchHistory()
+      },
+      restart: () => setStreamGeneration((generation) => generation + 1),
     })
-    source.addEventListener("stream-error", () => {
-      setStatusState({ query: filterQuery, status: "unavailable" })
-      source.close()
-    })
-    source.addEventListener("replay-unavailable", () => {
-      source.close()
-      void refetchHistory()
-      setStreamGeneration((generation) => generation + 1)
-    })
-
-    return () => source.close()
   }, [filterQuery, refetchHistory, streamGeneration])
 
   const togglePause = useCallback(() => {

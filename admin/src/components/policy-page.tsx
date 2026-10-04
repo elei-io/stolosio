@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { extractApiError } from "@/lib/api"
+import { apiRequest, extractApiError } from "@/lib/api"
 import type {
   ActivityProvider,
   NetworkPolicy,
@@ -31,15 +31,6 @@ const providerLabels: Record<ActivityProvider, string> = {
 const providerDescriptions: Record<ActivityProvider, string> = {
   browserless: "The local browser fleet and /v1/connect's default",
   browserless_cloud: "Paid stealth browsers for challenge resolution",
-}
-
-async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init)
-  if (!response.ok) {
-    const body: unknown = await response.json().catch(() => undefined)
-    throw new Error(extractApiError(body))
-  }
-  return (await response.json()) as T
 }
 
 function fetchNetworkPolicy() {
@@ -58,7 +49,10 @@ function updateNetworkPolicy(update: NetworkPolicyUpdate) {
   })
 }
 
-function updateCostRate(provider: ActivityProvider, costUnitsPerSecond: number) {
+function updateCostRate(
+  provider: ActivityProvider,
+  costUnitsPerSecond: number
+) {
   return apiRequest<ProviderCostRate>(`/v1/admin/costs/rates/${provider}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -313,8 +307,14 @@ export function PolicyPage() {
       <div className="py-5">
         {networkPolicy.isPending || rates.isPending ? (
           <LoadingState />
-        ) : networkPolicy.error || rates.error || !networkPolicy.data || !rates.data ? (
-          <ErrorState error={networkPolicy.error ?? rates.error} retry={retry} />
+        ) : networkPolicy.error ||
+          rates.error ||
+          !networkPolicy.data ||
+          !rates.data ? (
+          <ErrorState
+            error={networkPolicy.error ?? rates.error}
+            retry={retry}
+          />
         ) : (
           <div className="space-y-4">
             <NetworkPolicySettings

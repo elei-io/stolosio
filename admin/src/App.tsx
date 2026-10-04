@@ -12,18 +12,47 @@ import {
   Sun,
   X,
 } from "lucide-react"
-import { type ComponentType, useEffect, useState } from "react"
+import { type ComponentType, lazy, Suspense, useEffect, useState } from "react"
 
 import { useTheme } from "@/components/theme-provider"
-import { CapturesPage } from "@/components/captures-page"
-import { ActivityPage } from "@/components/activity-page"
-import { CostPage } from "@/components/cost-page"
-import { FleetsPage } from "@/components/fleets-page"
-import { OverviewPage } from "@/components/overview-page"
-import { PolicyPage } from "@/components/policy-page"
-import { SessionsPage } from "@/components/sessions-page"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+
+const CapturesPage = lazy(() =>
+  import("@/components/captures-page").then((module) => ({
+    default: module.CapturesPage,
+  }))
+)
+const ActivityPage = lazy(() =>
+  import("@/components/activity-page").then((module) => ({
+    default: module.ActivityPage,
+  }))
+)
+const CostPage = lazy(() =>
+  import("@/components/cost-page").then((module) => ({
+    default: module.CostPage,
+  }))
+)
+const FleetsPage = lazy(() =>
+  import("@/components/fleets-page").then((module) => ({
+    default: module.FleetsPage,
+  }))
+)
+const OverviewPage = lazy(() =>
+  import("@/components/overview-page").then((module) => ({
+    default: module.OverviewPage,
+  }))
+)
+const PolicyPage = lazy(() =>
+  import("@/components/policy-page").then((module) => ({
+    default: module.PolicyPage,
+  }))
+)
+const SessionsPage = lazy(() =>
+  import("@/components/sessions-page").then((module) => ({
+    default: module.SessionsPage,
+  }))
+)
 
 type NavigationItem = {
   description: string
@@ -224,21 +253,29 @@ export default function App() {
           </span>
         </header>
 
-        {activeItem.href === "/overview" ? (
-          <OverviewPage navigate={navigate} />
-        ) : activeItem.href === "/activity" ? (
-          <ActivityPage navigate={navigate} />
-        ) : activeItem.href === "/fleets" ? (
-          <FleetsPage provider={fleetProvider} navigate={navigate} />
-        ) : activeItem.href === "/policy" ? (
-          <PolicyPage />
-        ) : activeItem.href === "/sessions" ? (
-          <SessionsPage sessionId={sessionId} navigate={navigate} />
-        ) : activeItem.href === "/captures" ? (
-          <CapturesPage sessionId={captureId} navigate={navigate} />
-        ) : activeItem.href === "/cost" ? (
-          <CostPage navigate={navigate} />
-        ) : null}
+        <Suspense
+          fallback={
+            <div role="status" className="p-6 text-muted-foreground">
+              Loading page…
+            </div>
+          }
+        >
+          {activeItem.href === "/overview" ? (
+            <OverviewPage navigate={navigate} />
+          ) : activeItem.href === "/activity" ? (
+            <ActivityPage navigate={navigate} />
+          ) : activeItem.href === "/fleets" ? (
+            <FleetsPage provider={fleetProvider} navigate={navigate} />
+          ) : activeItem.href === "/policy" ? (
+            <PolicyPage />
+          ) : activeItem.href === "/sessions" ? (
+            <SessionsPage sessionId={sessionId} navigate={navigate} />
+          ) : activeItem.href === "/captures" ? (
+            <CapturesPage sessionId={captureId} navigate={navigate} />
+          ) : activeItem.href === "/cost" ? (
+            <CostPage navigate={navigate} />
+          ) : null}
+        </Suspense>
       </div>
     </div>
   )

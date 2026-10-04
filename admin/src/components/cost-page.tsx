@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { extractApiError } from "@/lib/api"
+import { apiRequest, extractApiError } from "@/lib/api"
 import type {
   ActivityProvider,
   CommandCostStat,
@@ -50,15 +50,6 @@ const windowLabels: Record<CostWindow, string> = {
 }
 
 const numberFormatter = new Intl.NumberFormat()
-
-async function apiRequest<T>(url: string): Promise<T> {
-  const response = await fetch(url)
-  if (!response.ok) {
-    const body: unknown = await response.json().catch(() => undefined)
-    throw new Error(extractApiError(body))
-  }
-  return (await response.json()) as T
-}
 
 function formatMilliseconds(value: number) {
   if (value < 1_000) return `${numberFormatter.format(value)}ms`
