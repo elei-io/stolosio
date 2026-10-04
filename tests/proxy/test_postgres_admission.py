@@ -668,6 +668,12 @@ async def test_fleet_observation_and_admission_lock_instances_in_one_order(
     locked them in observation order. The observation holds z and waits for b; admission holds a
     and waits for b; once b frees, the observation's sweep needs a and each waits on the other."""
     tag = f"lock-order-{uuid4().hex[:12]}"
+    # This test deliberately holds the session row while admission waits. A heartbeat
+    # on the same tagged engine would become a third lock waiter and invalidate the
+    # two-worker barrier. Keep the lease alive without heartbeats during this test.
+    admission_settings = admission_settings.model_copy(
+        update={"session_lease_seconds": 30, "session_heartbeat_seconds": 30}
+    )
     async with database_sessions() as database:
         schema = await database.scalar(text("SELECT current_schema()"))
     engine = create_async_engine(

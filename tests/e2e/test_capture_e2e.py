@@ -1,8 +1,6 @@
 import base64
 import json
 import os
-import subprocess
-from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -49,51 +47,6 @@ def test_an_unaccepted_media_type_fails_without_a_body() -> None:
 
     assert result["failure"]["code"] == "unsupported_media_type"
     assert result["document"] is None
-
-
-@pytest.fixture(scope="module")
-def local_challenge_site():
-    """Temporary origin on a Docker-only public-address subnet: egress policy stays intact."""
-    network = f"stolosio-challenge-e2e-{uuid4().hex[:8]}"
-    container = network + "-origin"
-    connected = []
-
-    def docker(*args):
-        return subprocess.check_output(["docker", *args], text=True).strip()
-
-    # Special-use IPs are intentionally refused by the real egress firewall. This subnet
-    # exists only inside Docker; fixture traffic cannot leave it. No firewall is relaxed.
-    docker("network", "create", "--subnet", "11.254.254.0/24", network)
-    try:
-        docker(
-            "run",
-            "--detach",
-            "--rm",
-            "--name",
-            container,
-            "--network",
-            network,
-            "--ip",
-            "11.254.254.2",
-            "--network-alias",
-            container,
-            "--mount",
-            f"type=bind,src={Path(__file__).with_name('challenge_origin.py').resolve()},dst=/origin.py,readonly",
-            "python:3.13-alpine",
-            "python",
-            "/origin.py",
-        )
-        for service in ("fetch-proxy", "browserless"):
-            target = docker("compose", "ps", "--quiet", service)
-            assert target, f"Compose {service} must be running"
-            docker("network", "connect", network, target)
-            connected.append(target)
-        yield f"http://{container}"
-    finally:
-        for target in connected:
-            subprocess.run(["docker", "network", "disconnect", network, target], check=False)
-        subprocess.run(["docker", "rm", "--force", container], check=False, capture_output=True)
-        subprocess.run(["docker", "network", "rm", network], check=False, capture_output=True)
 
 
 @pytest.mark.parametrize("allow_resolution", [False, True])

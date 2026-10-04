@@ -5,6 +5,9 @@ GitHub Actions provides two paths:
 - `CI` applies migrations to PostgreSQL, runs backend lint and tests with
   JetStream-enabled NATS, runs frontend lint/type-check/build, builds all five containers,
   and validates the Helm/Kubernetes manifests on pull requests and pushes to `main`.
+- `Gateway and capture smoke` exercises CDP, capture, and capacity cleanup against a
+  Docker-only origin, without external websites or paid providers. Backend CI requires
+  PostgreSQL and NATS; unavailable services fail instead of skipping coverage.
 - `Publish` builds backend/admin images for `linux/amd64` and `linux/arm64`, and
   the public-site image for `linux/amd64` only. It pushes them to GHCR on `main`,
   semantic version tags, and manual runs.

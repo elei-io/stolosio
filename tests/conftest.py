@@ -10,6 +10,27 @@ from backend.db.session import Base
 from backend.settings import Settings
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--require-integration-services",
+        action="store_true",
+        help="Fail instead of skipping tests when PostgreSQL or NATS is unavailable",
+    )
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
+    report = yield
+    if (
+        item.config.getoption("--require-integration-services")
+        and report.skipped
+        and "integration service is not available" in str(report.longrepr)
+    ):
+        report.outcome = "failed"
+        report.longrepr = "Required integration service is unavailable: " + str(report.longrepr)
+    return report
+
+
 @pytest_asyncio.fixture
 async def database_sessions() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     settings = Settings()
