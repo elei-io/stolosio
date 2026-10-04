@@ -33,6 +33,7 @@
         "decision_reason": "redirected to an excluded URL: https://news.example.test/wp-admin/",
         "steps": [],
         "notes": [],
+        "reason_code": "acquisition",
         "comparison": null
       }
     ],

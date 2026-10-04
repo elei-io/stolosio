@@ -22,6 +22,7 @@ def test_capture_observations_do_not_publish_free_text_or_cache_keys():
                     Assessment(None),
                     "accept",
                     f"cache: pattern {secret} HTTP-sufficient",
+                    reason_code="cache_pattern",
                     notes=[secret],
                     steps=[{"url": secret}],
                 ),
@@ -52,6 +53,8 @@ def test_capture_observations_do_not_publish_free_text_or_cache_keys():
         },
     )
     assert attempts[0]["reason"] == "cache_pattern"
+    result.evidence.attempts[0].decision_reason = "Entirely different explanatory wording"
+    assert capture_attempts(result)[0]["reason"] == "cache_pattern"
     assert attempts[1]["assessment"] is None
     assert attempts[1]["http_sufficient"] is True
     assert "secret" not in str(payload)

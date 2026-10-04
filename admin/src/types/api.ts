@@ -1,3 +1,5 @@
+import type { CapturePath, CaptureTier, CaptureDecisionCode, CaptureDecision } from "./contracts"
+
 export type ApiErrorResponse = {
   detail?: string
   message?: string
@@ -111,7 +113,7 @@ export type SessionListItem = {
     | "unknown"
     | "in_progress"
     | null
-  capture_path: "http" | "managed" | "challenge_resolution" | null
+  capture_path: CapturePath | null
   id: string
   client_reference: string | null
   state: StolosioSessionState
@@ -275,20 +277,12 @@ export type AcquisitionOverview = {
 
 export type CaptureAttempt = {
   path: "http" | "browser"
-  tier: "direct" | "managed" | "local_resolution" | "challenge_resolution"
+  tier: CaptureTier
   status_code?: number
   duration_ms: number
   assessment?: string
-  decision: "accept" | "escalate" | "fail"
-  reason:
-    | "cache_url"
-    | "cache_pattern"
-    | "canary"
-    | "verify_http"
-    | "assessment"
-    | "content_comparison"
-    | "acquisition"
-    | "media_type"
+  decision: CaptureDecision
+  reason: CaptureDecisionCode
   http_coverage?: number
   http_sufficient?: boolean
 }

@@ -80,3 +80,10 @@ Concurrent command durations are capped by the attempt's measured browser time, 
 the residual recorded as unattributed session time. A separate bounded attempt phase
 summary measures command-active union time and fixed internal lifecycle phases without
 changing provider behavior or the cumulative attribution.
+
+## Unsupported discovery endpoints
+
+The CDP WebSocket entrypoint is `/v1/connect`. The registered HTTP discovery/target
+management and `/v1/connect/devtools/*` WebSocket routes return HTTP 501 with
+`unsupported_endpoint` before accepting a connection. They do not expose provider
+addresses or claim support for browser discovery.

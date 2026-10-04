@@ -55,6 +55,8 @@ export function captureEventDetail(
   const tiers = Array.isArray(payload.tiers) ? payload.tiers : []
   const path = tiers.includes("challenge_resolution")
     ? "challenge resolution"
+    : tiers.includes("local_resolution")
+      ? "internal challenge resolution"
     : tiers.includes("managed")
       ? "local browser"
       : "HTTP only"

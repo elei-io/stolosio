@@ -1,7 +1,7 @@
-"""Capture acquisition and validation, with automatic local challenge resolution.
+"""Capture acquisition and validation, with caller-gated challenge resolution.
 
-Plain HTTP and managed rendering precede local resolution; only paid challenge
-resolution requires resolve_bot_challenges. Each stage is assessed independently.
+Plain HTTP and managed rendering precede local resolution; both local and paid
+resolution require resolve_bot_challenges. Each stage is assessed independently.
 The local resolver retries with a native browser identity and a bounded wait.
 Exclusions, content validation and the capture deadline apply to every local attempt.
 """
@@ -191,12 +191,14 @@ class CaptureService:
             "accept",
             "",
             notes=list(verdict.notes),
+            reason_code="assessment" if verdict.reason else "acquisition",
         )
         result.evidence.attempts.append(attempt)
         reason = verdict.reason
 
         if (reason is None or reason in ESCALATE_TO_BROWSER) and is_xml(http_doc.media_type):
             # A browser would replace XML with its XML viewer page: return the bytes as sent, never render them.
+            attempt.reason_code = "media_type"
             attempt.decision_reason = f"XML ({http_doc.media_type}): returned as sent"
             return self._captured(result, http_doc)
         if reason is None:
@@ -204,7 +206,8 @@ class CaptureService:
             # on evidence that plain HTTP is enough here (cache), except for a canary share that re-checks it.
             cached = await self.policy.http_sufficient(request.url, len(http.body))
             if cached and random.random() >= s.canary_rate:
-                attempt.decision_reason = cached
+                attempt.reason_code = cached.code
+                attempt.decision_reason = cached.detail
                 return self._captured(result, http_doc)
             if self.managed is None:
                 attempt.decision = "fail"
@@ -213,6 +216,7 @@ class CaptureService:
                 result.failure = failures.failure("browser_unavailable", attempt.decision_reason)
                 return self._finish(result)
             attempt.decision = "escalate"
+            attempt.reason_code = "canary" if cached else "verify_http"
             attempt.decision_reason = (
                 "canary: re-checking a cached HTTP-sufficient page"
                 if cached
@@ -230,6 +234,7 @@ class CaptureService:
             )
         if reason == "payload_mismatch":
             if http.body.strip():
+                attempt.reason_code = "media_type"
                 attempt.decision_reason = f"not HTML ({http_doc.media_type}): returned as sent"
                 return self._captured(result, http_doc)
             attempt.decision, attempt.decision_reason = "fail", "empty response body"
@@ -276,6 +281,7 @@ class CaptureService:
                 Assessment(primary=None),
                 "fail",
                 f"media type {media} not accepted",
+                reason_code="media_type",
             )
         )
         result.failure = failures.failure("unsupported_media_type", f"media type {media} is not accepted")
@@ -454,6 +460,7 @@ class CaptureService:
             "",
             steps=rendered.steps,
             notes=notes,
+            reason_code="assessment" if assessment.primary else "acquisition",
         )
         result.evidence.attempts.append(attempt)
         rendered_doc = (
@@ -550,6 +557,7 @@ class CaptureService:
         share = coverage(http_windows(http_page), rendered.lines) if http.body else 0.0
         sufficient = http_usable and share >= self.settings.sufficient_coverage
         await self.policy.record(request.url, sufficient, len(http.body))
+        attempt.reason_code = "content_comparison"
         attempt.comparison = {"http_coverage": round(share, 3), "http_sufficient": sufficient}
         if sufficient:  # verified: the exact bytes the server sent hold the content
             attempt.decision_reason = (

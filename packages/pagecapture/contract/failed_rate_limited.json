@@ -59,6 +59,7 @@
         "decision_reason": "rate_limited",
         "steps": [],
         "notes": [],
+        "reason_code": "assessment",
         "comparison": null
       }
     ],

@@ -1,10 +1,13 @@
 """Capture classifications shared by history and aggregate queries."""
 
 from datetime import timedelta
+from typing import Literal
 
 from sqlalchemy import case
 
 from backend.db.models import GatewaySession
+
+CapturePath = Literal["http", "managed", "local_resolution", "challenge_resolution"]
 
 WINDOWS = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}
 

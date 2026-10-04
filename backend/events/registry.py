@@ -1,6 +1,7 @@
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
+from pagecapture.api import DecisionCode, Path, Tier
 from pydantic import BaseModel, ConfigDict, Field
 
 COMMAND_SUMMARY_METHOD_LIMIT = 256
@@ -87,22 +88,13 @@ class ObservationPayload(_Payload):
 
 
 class CaptureAttemptPayload(_Payload):
-    path: Literal["http", "browser"]
-    tier: Literal["direct", "managed", "local_resolution", "challenge_resolution"]
+    path: Path
+    tier: Tier
     status_code: int | None = Field(default=None, ge=100, le=599)
     duration_ms: float = Field(ge=0)
     assessment: str | None = Field(default=None, pattern=r"^[a-z_]{1,64}$")
     decision: Literal["accept", "escalate", "fail"]
-    reason: Literal[
-        "cache_url",
-        "cache_pattern",
-        "canary",
-        "verify_http",
-        "assessment",
-        "content_comparison",
-        "acquisition",
-        "media_type",
-    ]
+    reason: DecisionCode
     http_coverage: float | None = Field(default=None, ge=0, le=1)
     http_sufficient: bool | None = None
 

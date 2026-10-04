@@ -62,6 +62,7 @@
         "decision_reason": "app_shell: content missing without a browser",
         "steps": [],
         "notes": [],
+        "reason_code": "assessment",
         "comparison": null
       },
       {
@@ -86,6 +87,7 @@
           }
         ],
         "notes": [],
+        "reason_code": "content_comparison",
         "comparison": {
           "http_coverage": 0.12,
           "http_sufficient": false

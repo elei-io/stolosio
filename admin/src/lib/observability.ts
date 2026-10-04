@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { extractApiError } from "@/lib/api"
+import type { CapturePath } from "@/types/contracts"
 import type { OperationsOverview, OverviewWindow } from "@/types/api"
 
 export async function fetchJson<T>(path: string): Promise<T> {
@@ -42,4 +43,4 @@ export const pathLabels = {
   managed: "Local browser",
   local_resolution: "Internal challenge resolution",
   challenge_resolution: "External challenge resolution",
-}
+} satisfies Record<CapturePath, string>

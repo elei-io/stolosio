@@ -19,6 +19,10 @@ Outcome = Literal["captured", "failed"]
 Representation = Literal["response_body", "rendered_html"]
 FailureCategory = Literal["website", "network", "gateway", "content"]
 Path = Literal["http", "browser"]
+DecisionCode = Literal[
+    "cache_url", "cache_pattern", "canary", "verify_http", "assessment",
+    "content_comparison", "acquisition", "media_type",
+]
 Tier = Literal["direct", "managed", "local_resolution", "challenge_resolution"]
 
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
@@ -200,6 +204,7 @@ class Attempt:
     decision_reason: str
     steps: list[dict] = field(default_factory=list)  # browser attempts: what each wait / scroll added
     notes: list[str] = field(default_factory=list)
+    reason_code: DecisionCode = "acquisition"  # stable machine reason; decision_reason is explanatory prose
     comparison: dict | None = None  # browser attempts: {"http_coverage": 0.97, "http_sufficient": true}
 
 

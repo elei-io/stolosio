@@ -20,7 +20,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import parse_qsl, quote, urlparse
 
 from .config import Settings
@@ -140,6 +140,12 @@ class SqliteMethodCache:
                 )
 
 
+@dataclass(frozen=True)
+class CacheDecision:
+    code: Literal["cache_url", "cache_pattern"]
+    detail: str
+
+
 class MethodPolicy:
     """Decides from the cache whether a capture may skip rendering, and records comparisons."""
 
@@ -152,7 +158,7 @@ class MethodPolicy:
             return None  # expired: start over
         return entry
 
-    async def http_sufficient(self, url: str, http_bytes: int) -> str | None:
+    async def http_sufficient(self, url: str, http_bytes: int) -> CacheDecision | None:
         """A reason to trust the plain response without rendering, or None."""
         now = time.time()
         exact_key, pattern_key = url_keys(url)
@@ -164,7 +170,9 @@ class MethodPolicy:
         if exact and exact.contradictions:
             return None  # A known insufficient URL must never borrow its pattern's evidence.
         if exact and exact.last_sufficient and usual(exact):
-            return f"cache: this URL was HTTP-sufficient ({exact.sufficient}/{exact.comparisons})"
+            return CacheDecision(
+                "cache_url", f"cache: this URL was HTTP-sufficient ({exact.sufficient}/{exact.comparisons})"
+            )
         pattern = await self._fresh(pattern_key, now)
         if (
             pattern
@@ -172,9 +180,10 @@ class MethodPolicy:
             and pattern.contradictions < self.s.pattern_max_contradictions
             and usual(pattern)
         ):
-            return (
+            return CacheDecision(
+                "cache_pattern",
                 f"cache: pattern {pattern_key.removeprefix('pattern:')} HTTP-sufficient "
-                f"({pattern.sufficient}/{pattern.comparisons})"
+                f"({pattern.sufficient}/{pattern.comparisons})",
             )
         return None
 

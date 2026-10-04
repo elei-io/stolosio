@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import tomllib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 import nats
 from fastapi import FastAPI
@@ -225,7 +227,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await engine.dispose()
 
 
-app = FastAPI(title=settings.app_name, version="0.1.14", lifespan=lifespan)
+app = FastAPI(
+    title=settings.app_name,
+    version=tomllib.loads(
+        Path(__file__).resolve().parents[2].joinpath("pyproject.toml").read_text()
+    )["project"]["version"],
+    lifespan=lifespan,
+)
 app.include_router(admin_command_costs_router)
 app.include_router(admin_costs_router)
 app.include_router(admin_captures_router)

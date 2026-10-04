@@ -58,22 +58,6 @@ def capture_attempts(result: CaptureResult) -> list[dict[str, object]]:
     """Persist bounded facts, never free-text decisions, cache keys, URLs or renderer notes."""
     summaries = []
     for attempt in result.evidence.attempts:
-        reason = "acquisition"
-        text = attempt.decision_reason
-        if text.startswith("cache: this URL"):
-            reason = "cache_url"
-        elif text.startswith("cache: pattern"):
-            reason = "cache_pattern"
-        elif text.startswith("canary:"):
-            reason = "canary"
-        elif attempt.comparison is not None:
-            reason = "content_comparison"
-        elif attempt.assessment.primary in REASONS:
-            reason = "assessment"
-        elif text.startswith("XML (") or text.startswith("not HTML ("):
-            reason = "media_type"
-        elif attempt.decision == "escalate" and attempt.tier == "direct":
-            reason = "verify_http"
         comparison = attempt.comparison or {}
         summaries.append(
             {
@@ -85,7 +69,7 @@ def capture_attempts(result: CaptureResult) -> list[dict[str, object]]:
                     attempt.assessment.primary if attempt.assessment.primary in REASONS else None
                 ),
                 "decision": attempt.decision,
-                "reason": reason,
+                "reason": attempt.reason_code,
                 "http_coverage": comparison.get("http_coverage"),
                 "http_sufficient": comparison.get("http_sufficient"),
             }

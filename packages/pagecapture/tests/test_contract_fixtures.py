@@ -54,6 +54,7 @@ def captured() -> CaptureResult:
                     Assessment("app_shell", [Reason("app_shell", 0.9, "rule")], "empty", 0.9),
                     "escalate",
                     "app_shell: content missing without a browser",
+                    reason_code="assessment",
                 ),
                 Attempt(
                     "browser",
@@ -63,6 +64,7 @@ def captured() -> CaptureResult:
                     Assessment(None, [], "complete", 0.9),
                     "accept",
                     "rendered content is complete (plain response had 12% of it)",
+                    reason_code="content_comparison",
                     steps=[{"step": "parsed", "t": 0.9, "new_lines": 12, "new_items": 0}],
                     comparison={"http_coverage": 0.12, "http_sufficient": False},
                 ),
@@ -95,6 +97,7 @@ def rate_limited() -> CaptureResult:
                     Assessment("rate_limited", [Reason("rate_limited", 0.99, "rule")], None, 0.99),
                     "fail",
                     "rate_limited",
+                    reason_code="assessment",
                 )
             ],
             cost=Cost(bytes=len(body)),
@@ -125,6 +128,7 @@ def unsupported_media_type() -> CaptureResult:
                     Assessment(None),
                     "fail",
                     "media type application/pdf not accepted",
+                    reason_code="media_type",
                 )
             ],
             versions=VERSIONS,

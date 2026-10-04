@@ -5,6 +5,7 @@ from pydantic import AwareDatetime, BaseModel
 
 from backend.proxy.contracts import ProviderName
 from backend.proxy.session_queries import SessionFilters
+from backend.proxy.workload_facts import CapturePath
 
 router = APIRouter(prefix="/v1/admin/sessions", tags=["admin"])
 
@@ -23,7 +24,7 @@ async def list_sessions(
     workload: Literal["automation", "capture"] | None = None,
     outcome: Literal["captured", "failed", "rejected", "interrupted", "unknown", "in_progress"]
     | None = None,
-    path: Literal["http", "managed", "local_resolution", "challenge_resolution"] | None = None,
+    path: CapturePath | None = None,
     since: AwareDatetime | None = None,
     window: Literal["24h", "7d", "30d"] | None = None,
     reason: Annotated[str | None, Query(min_length=1, max_length=64)] = None,

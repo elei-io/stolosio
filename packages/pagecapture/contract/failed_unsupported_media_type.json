@@ -46,6 +46,7 @@
         "decision_reason": "media type application/pdf not accepted",
         "steps": [],
         "notes": [],
+        "reason_code": "media_type",
         "comparison": null
       }
     ],

@@ -16,6 +16,7 @@ from backend.db.models import (
 )
 from backend.proxy.workload_facts import (
     WINDOWS,
+    CapturePath,
     capture_outcome_expression,
     capture_path_expression,
 )
@@ -28,7 +29,7 @@ class SessionFilters:
     provider: str | None = None
     workload: Literal["automation", "capture"] | None = None
     outcome: str | None = None
-    path: Literal["http", "managed", "local_resolution", "challenge_resolution"] | None = None
+    path: CapturePath | None = None
     since: datetime | None = None
     window: Literal["24h", "7d", "30d"] | None = None
     reason: str | None = None

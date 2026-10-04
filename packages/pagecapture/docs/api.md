@@ -150,13 +150,13 @@ request; **503** only when the service can't accept requests at all (same body s
         "path": "http", "tier": "direct", "status_code": 200, "duration_ms": 612.0,
         "assessment": {"primary": "app_shell", "completeness": "empty", "confidence": 0.9,
                        "reasons": [{"code": "app_shell", "confidence": 0.9, "source": "rule"}]},
-        "decision": "escalate", "decision_reason": "app_shell: content missing without a browser",
+        "decision": "escalate", "reason_code": "assessment", "decision_reason": "app_shell: content missing without a browser",
         "steps": [], "notes": []
       },
       {
         "path": "browser", "tier": "managed", "status_code": 200, "duration_ms": 23600.0,
         "assessment": {"primary": null, "completeness": "complete", "confidence": 0.9, "reasons": []},
-        "decision": "accept", "decision_reason": "rendered content is complete (plain response had 12% of it)",
+        "decision": "accept", "reason_code": "content_comparison", "decision_reason": "rendered content is complete (plain response had 12% of it)",
         "comparison": {"http_coverage": 0.12, "http_sufficient": false},
         "steps": [{"step": "parsed", "t": 0.9, "new_lines": 12, "new_items": 0},
                   {"step": "scroll 1", "t": 2.1, "new_lines": 3, "new_items": 20}],
@@ -274,3 +274,10 @@ Pattern keys intentionally generalize article/product path segments and retain o
 Hosts record both keys atomically. Contradictions are retained until the entry expires; later successful
 comparisons cannot erase them. A contradicted exact URL cannot borrow pattern evidence to skip rendering.
 Old development cache keys are invalidated by the new origin-bearing identity; clear the cache when updating.
+
+### Structured acquisition reasons
+
+Each attempt carries `reason_code`: `cache_url`, `cache_pattern`, `canary`, `verify_http`,
+`assessment`, `content_comparison`, `acquisition`, or `media_type`. This is the stable machine-readable
+reason for the acquisition decision. `decision_reason` is explanatory text; hosts must not parse it
+for accounting or observations. Stolosio copies the code into its redacted completion event.
