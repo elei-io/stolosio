@@ -2,8 +2,8 @@
 
 Every render is compared with the plain response already fetched. The result is recorded at two levels:
 
-- exact URL (host + path + query): pays off on recrawls;
-- URL pattern (host + path with ids and slugs generalised, the last segment of paths two or more segments deep
+- exact URL (origin + path + raw query): pays off on recrawls;
+- URL pattern (origin + path with ids and slugs generalised, the last segment of paths two or more segments deep
   always generalised, query parameter names only): pays off on new pages that share a known layout, e.g.
   `en.wikipedia.org/wiki/*` or `news.example.com/{id}/{id}/{id}/*`.
 
@@ -18,18 +18,23 @@ import re
 import sqlite3
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Protocol
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, quote, urlparse
 
 from .config import Settings
 
 DAY = 86400.0
 
 
-def _host(url: str) -> str:
-    return urlparse(url).netloc.lower().split(":")[0].removeprefix("www.")
+def _origin(url: str) -> str:
+    u = urlparse(url)
+    host = (u.hostname or "").encode("idna").decode().lower()
+    if ":" in host:
+        host = f"[{host}]"
+    port = u.port or (443 if u.scheme.lower() == "https" else 80)
+    return f"{u.scheme.lower()}://{host}:{port}"
 
 
 def _generalise(segment: str) -> str:
@@ -48,15 +53,17 @@ def _generalise(segment: str) -> str:
 def url_keys(url: str) -> tuple[str, str]:
     """(exact key, pattern key) for a URL."""
     u = urlparse(url)
-    query = sorted(parse_qsl(u.query, keep_blank_values=True))
+    query = parse_qsl(u.query, keep_blank_values=True)
     path = u.path or "/"
-    exact = _host(url) + path + ("?" + "&".join(f"{k}={v}" for k, v in query) if query else "")
+    exact = _origin(url) + path + ("?" + u.query if u.query else "")
     raw = [s for s in path.split("/") if s]
     segments = [_generalise(s) for s in raw]
     if len(raw) >= 2 and segments[-1] != "{id}":
         segments[-1] = "*"  # the last segment is almost always the page's own identifier (title, slug, id)
     names = sorted({k for k, _ in query})
-    pattern = _host(url) + "/" + "/".join(segments) + ("?" + "&".join(names) if names else "")
+    pattern = (
+        _origin(url) + "/" + "/".join(segments) + ("?" + "&".join(quote(n, safe="") for n in names) if names else "")
+    )
     return "url:" + exact, "pattern:" + pattern
 
 
@@ -70,11 +77,27 @@ class MethodEntry:
     last_sufficient: bool = False
 
 
+def record_comparison(
+    entry: MethodEntry | None, sufficient: bool, http_bytes: int, now: float, ttl_s: float
+) -> MethodEntry:
+    """A contradiction is sticky until expiry; later successes cannot erase it."""
+    entry = replace(entry) if entry and now - entry.last_seen <= ttl_s else MethodEntry()
+    entry.comparisons += 1
+    entry.sufficient += int(sufficient)
+    entry.contradictions += int(not sufficient)
+    entry.last_sufficient = sufficient
+    entry.typical_bytes = http_bytes if entry.typical_bytes <= 0 else 0.8 * entry.typical_bytes + 0.2 * http_bytes
+    entry.last_seen = now
+    return entry
+
+
 class MethodCache(Protocol):
-    """Storage for method entries; a host service backs it with its own database (stolosio: PostgreSQL)."""
+    """Hosts atomically record comparisons for both keys; no read/overwrite update path."""
 
     async def get(self, key: str) -> MethodEntry | None: ...
-    async def put(self, key: str, entry: MethodEntry) -> None: ...
+    async def record(
+        self, keys: tuple[str, str], sufficient: bool, http_bytes: int, now: float, ttl_s: float
+    ) -> None: ...
 
 
 class MemoryMethodCache:
@@ -82,15 +105,16 @@ class MemoryMethodCache:
         self._data: dict[str, MethodEntry] = {}
 
     async def get(self, key: str) -> MethodEntry | None:
-        return self._data.get(key)
+        entry = self._data.get(key)
+        return replace(entry) if entry else None
 
-    async def put(self, key: str, entry: MethodEntry) -> None:
-        self._data[key] = entry
+    async def record(self, keys: tuple[str, str], sufficient: bool, http_bytes: int, now: float, ttl_s: float) -> None:
+        for key in keys:
+            self._data[key] = record_comparison(self._data.get(key), sufficient, http_bytes, now, ttl_s)
 
 
 class SqliteMethodCache:
-    """A small persistent cache for single-process use (the CLI and benchmarks). Lookups are sub-millisecond, so
-    they run inline."""
+    """CLI storage. A transaction and process lock cover both keys and their read/update."""
 
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,12 +127,17 @@ class SqliteMethodCache:
             row = self._db.execute("SELECT entry FROM method WHERE key = ?", (key,)).fetchone()
         return MethodEntry(**json.loads(row[0])) if row else None
 
-    async def put(self, key: str, entry: MethodEntry) -> None:
-        with self._lock:
-            self._db.execute(
-                "INSERT OR REPLACE INTO method (key, entry) VALUES (?, ?)", (key, json.dumps(asdict(entry)))
-            )
-            self._db.commit()
+    async def record(self, keys: tuple[str, str], sufficient: bool, http_bytes: int, now: float, ttl_s: float) -> None:
+        with self._lock, self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            for key in sorted(keys):
+                row = self._db.execute("SELECT entry FROM method WHERE key = ?", (key,)).fetchone()
+                entry = record_comparison(
+                    MethodEntry(**json.loads(row[0])) if row else None, sufficient, http_bytes, now, ttl_s
+                )
+                self._db.execute(
+                    "INSERT OR REPLACE INTO method (key, entry) VALUES (?, ?)", (key, json.dumps(asdict(entry)))
+                )
 
 
 class MethodPolicy:
@@ -132,6 +161,8 @@ class MethodPolicy:
             return e.typical_bytes <= 0 or 0.5 * e.typical_bytes <= http_bytes <= 2.0 * e.typical_bytes
 
         exact = await self._fresh(exact_key, now)
+        if exact and exact.contradictions:
+            return None  # A known insufficient URL must never borrow its pattern's evidence.
         if exact and exact.last_sufficient and usual(exact):
             return f"cache: this URL was HTTP-sufficient ({exact.sufficient}/{exact.comparisons})"
         pattern = await self._fresh(pattern_key, now)
@@ -148,22 +179,7 @@ class MethodPolicy:
         return None
 
     async def record(self, url: str, sufficient: bool, http_bytes: int) -> None:
-        now = time.time()
-        for key in url_keys(url):
-            entry = await self._fresh(key, now) or MethodEntry()
-            entry.comparisons += 1
-            if sufficient:
-                entry.sufficient += 1
-            else:
-                entry.contradictions += 1
-                if key.startswith("url:"):
-                    entry.sufficient = 0  # a URL contradicted once is invalid at once
-            entry.last_sufficient = sufficient
-            entry.typical_bytes = (
-                http_bytes if entry.typical_bytes <= 0 else 0.8 * entry.typical_bytes + 0.2 * http_bytes
-            )
-            entry.last_seen = now
-            await self.cache.put(key, entry)
+        await self.cache.record(url_keys(url), sufficient, http_bytes, time.time(), self.s.cache_ttl_days * DAY)
 
 
 def default_cache(settings: Settings) -> MethodCache:

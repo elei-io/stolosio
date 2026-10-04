@@ -250,7 +250,7 @@ and notes. `cost` sums the capture: browser seconds, whether a costlier tier was
 ## Host integration
 
 A host provides two adapters (`src/pagecapture/adapters.py`) and, optionally, the method cache's storage
-(`src/pagecapture/cache.py`, `MethodCache`: async get/put of small entries by key — stolosio would keep it next to its
+(`src/pagecapture/cache.py`, `MethodCache`: async get and atomic record of comparison evidence for exact/pattern keys — stolosio would keep it next to its
 per-domain evidence in Postgres; the default is in memory, or SQLite via `PAGECAPTURE_METHOD_CACHE`):
 
 - a `Fetcher` — plain HTTP through the host's egress (proxy, network policy), returning an `HttpResponse` with
@@ -265,3 +265,12 @@ per-domain evidence in Postgres; the default is in memory, or SQLite via `PAGECA
 Defaults use `HttpxFetcher`, the CDP endpoint in `PAGECAPTURE_BROWSER_WS`, and for challenge resolution
 `PAGECAPTURE_CHALLENGE_BROWSER_WS`: a Browserless BrowserQL URL (unblock server-side, then render over CDP) or any
 CDP endpoint.
+
+### Method-cache identity and concurrency
+
+Exact keys preserve scheme, hostname (including `www`), effective port, path and raw query order/encoding.
+Default and explicit default ports share an origin; different origins never share either exact or pattern evidence.
+Pattern keys intentionally generalize article/product path segments and retain only encoded query names.
+Hosts record both keys atomically. Contradictions are retained until the entry expires; later successful
+comparisons cannot erase them. A contradicted exact URL cannot borrow pattern evidence to skip rendering.
+Old development cache keys are invalidated by the new origin-bearing identity; clear the cache when updating.

@@ -138,7 +138,7 @@ def test_a_pattern_skips_rendering_after_three_confirmations():
     for i in (101, 102, 103):
         run(svc, url=f"https://shop.test/p/{i}")
     r = run(svc, url="https://shop.test/p/104")
-    assert managed.calls == 3 and r.evidence.attempts[0].decision_reason.startswith("cache: pattern shop.test/p/{id}")
+    assert managed.calls == 3 and r.evidence.attempts[0].decision_reason.startswith("cache: pattern https://shop.test:443/p/{id}")
 
 
 def test_render_adding_content_is_kept_and_not_cached_as_sufficient():
@@ -162,8 +162,8 @@ def test_browser_challenged_while_http_was_usable_keeps_http_as_failure_evidence
 
 def test_url_keys_generalise_ids_and_slugs():
     exact, pattern = url_keys("https://www.news.test/world/2026/some-long-article-title-here?id=5&utm=x")
-    assert exact == "url:news.test/world/2026/some-long-article-title-here?id=5&utm=x"
-    assert pattern == "pattern:news.test/world/{id}/*?id&utm"
+    assert exact == "url:https://www.news.test:443/world/2026/some-long-article-title-here?id=5&utm=x"
+    assert pattern == "pattern:https://www.news.test:443/world/{id}/*?id&utm"
     assert (
         url_keys("https://en.wikipedia.org/wiki/Finland")[1] == url_keys("https://en.wikipedia.org/wiki/Web_crawler")[1]
     )

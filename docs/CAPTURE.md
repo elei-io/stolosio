@@ -98,7 +98,9 @@ deadlines and bot protection keep their specific failure codes. Unverified HTML 
 success because a browser attempt failed, and failed verification adds no method-cache evidence.
 
 - The method cache (`capture_method_cache`) remembers, per URL and URL pattern, where rendering
-  confirmed that plain HTTP is enough. It is the only thing Stolosio learns about sites; the
+  confirmed that plain HTTP is enough. Evidence updates are atomic; contradicted exact URLs
+  require rendering until their evidence expires. Keys preserve the origin, path and raw query.
+  Clear development method-cache entries when updating to the origin-aware key format. It is the only thing Stolosio learns about sites; the
   maintenance worker purges entries unseen for `CAPTURE_METHOD_CACHE_RETENTION_DAYS` (30).
 - Every capture writes a `capture.completed` outbox event: outcome, failure code and category,
   tiers used, duration, browser seconds, whether a paid tier was used, bytes, and bounded
