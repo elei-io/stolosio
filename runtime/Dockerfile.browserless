@@ -1,4 +1,4 @@
-FROM ghcr.io/browserless/chromium:v2.55.0@sha256:bba9dc2014f90289d4b845dfe12b38bd00b25b2cd732d5b16778c5229f2da7e1
+FROM ghcr.io/browserless/chromium:v2.57.0@sha256:6bac628b3d8293f8fb251d3a6b63030dfc5a1cb0c7e5c39abe5efd8f4b25360b
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends nftables iproute2 util-linux \
     && rm -rf /var/lib/apt/lists/*
